@@ -49,7 +49,7 @@ const (
 // by drift on another. Values are the measured counts on this tree.
 var receiverMethodCeilings = map[string]int{
 	"AgentHandler":       agentHandlerMethodCeiling,
-	"RobotHandler":       68,
+	"RobotHandler":       63,
 	"ConfigHandler":      38,
 	"BatchTaskManager":   40,
 	"C2Handler":          39,

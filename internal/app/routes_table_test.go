@@ -68,7 +68,10 @@ func TestEveryDomainRegistrarIsWired(t *testing.T) {
 		}
 		for _, match := range registrarPattern.FindAllStringSubmatch(string(data), -1) {
 			fn := match[1]
-			if !strings.Contains(body, "deps."+fn+"(protected)") {
+			// Any single group argument counts: the public platform callbacks are registered on
+			// the api group with no session middleware, so insisting on "(protected)" here would
+			// push a future registrar to name its parameter something it is not.
+			if !regexp.MustCompile(`deps\.` + fn + `\((?:protected|api|router)\)`).MatchString(body) {
 				t.Errorf("%s declares %s but setupRoutes never calls it", name, fn)
 			}
 			checked++

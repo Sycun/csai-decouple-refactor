@@ -1,6 +1,9 @@
 package app
 
 import (
+	"cyberstrike-ai/internal/security"
+	"time"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -19,4 +22,24 @@ func (deps routeDeps) registerRobotRoutes(protected *gin.RouterGroup) {
 	protected.GET("/robot/wechat/qrcode/status", wechatRobotHandler.HandleWechatQRCodeStatus)
 	protected.POST("/robot/wechat/qrcode/verify", wechatRobotHandler.HandleWechatVerifyCode)
 	protected.GET("/robot/wechat/status", wechatRobotHandler.HandleWechatStatus)
+}
+
+// registerRobotCallbackRoutes registers the machine-to-machine callbacks. They cannot be
+// behind the session: the platforms POST to them with no login and no bearer token, so the
+// defenses are the per-IP rate limit and each platform's own signature check inside the
+// handler. Split out of setupRoutes for the same reason as the rest: the route table is
+// asserted as a whole, and a registration buried in the wiring function is one nobody
+// greps for.
+func (deps routeDeps) registerRobotCallbackRoutes(api *gin.RouterGroup) {
+	robotHandler := deps.robotHandler
+
+	robotRL := security.NewRateLimiter(60, 1*time.Minute)
+	robotGroup := api.Group("/robot")
+	robotGroup.Use(security.RateLimitMiddleware(robotRL))
+	{
+		robotGroup.GET("/wecom", robotHandler.Wecom().HandleWecomGET)
+		robotGroup.POST("/wecom", robotHandler.Wecom().HandleWecomPOST)
+		robotGroup.POST("/dingtalk", robotHandler.HandleDingtalkPOST)
+		robotGroup.POST("/lark", robotHandler.HandleLarkPOST)
+	}
 }

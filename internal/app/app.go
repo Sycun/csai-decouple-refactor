@@ -1126,18 +1126,6 @@ func setupRoutes(deps routeDeps) {
 		authRoutes.DELETE("/robot-bindings/:id", security.AuthMiddleware(authManager), security.RequirePermission("auth:self"), robotHandler.DeleteMyRobotBinding)
 	}
 
-	// 机器人回调（无需登录，供企业微信/钉钉/飞书服务器调用）
-	// 添加速率限制：每个 IP 每分钟最多 60 次请求，防止滥用
-	robotRL := security.NewRateLimiter(60, 1*time.Minute)
-	robotGroup := api.Group("/robot")
-	robotGroup.Use(security.RateLimitMiddleware(robotRL))
-	{
-		robotGroup.GET("/wecom", robotHandler.HandleWecomGET)
-		robotGroup.POST("/wecom", robotHandler.HandleWecomPOST)
-		robotGroup.POST("/dingtalk", robotHandler.HandleDingtalkPOST)
-		robotGroup.POST("/lark", robotHandler.HandleLarkPOST)
-	}
-
 	protected := api.Group("")
 	protected.Use(security.AuthMiddleware(authManager))
 	protected.Use(security.RBACMiddlewareWithDenyHook(app.db, func(c *gin.Context, reason, permission string) {
@@ -1173,6 +1161,7 @@ func setupRoutes(deps routeDeps) {
 	deps.registerProjectRoutes(protected)
 	deps.registerRbacRoutes(protected)
 	deps.registerRobotRoutes(protected)
+	deps.registerRobotCallbackRoutes(api)
 	deps.registerRoleRoutes(protected)
 	deps.registerPluginRoutes(protected)
 	deps.registerUpdateRoutes(protected)

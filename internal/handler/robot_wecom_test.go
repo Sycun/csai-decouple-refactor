@@ -12,19 +12,34 @@ import (
 	"go.uber.org/zap"
 )
 
-func newWecomTestHandler(token string, aesKey string) *RobotHandler {
-	return &RobotHandler{
-		config: &config.Config{
-			Robots: config.RobotsConfig{
-				Wecom: config.RobotWecomConfig{
-					Enabled:        true,
-					Token:          token,
-					EncodingAESKey: aesKey,
-				},
+// newWecomTestGateway builds the wire layer alone: the conversation half is a stub, because
+// these tests are about signatures, encryption and the reply envelope - none of which may
+// depend on sessions or the agent answering.
+type stubWecomInbound struct{ reply string }
+
+func (s *stubWecomInbound) acceptFreshWecomRequest(timestamp, nonce, signature string) bool {
+	return true
+}
+func (s *stubWecomInbound) handleRobotCommand(platform, userID, text string) (string, bool) {
+	return "", false
+}
+func (s *stubWecomInbound) HandleMessage(platform, userID, text string) string {
+	if s.reply == "" {
+		return "stub reply"
+	}
+	return s.reply
+}
+
+func newWecomTestHandler(token string, aesKey string) *WecomGateway {
+	return NewWecomGateway(&config.Config{
+		Robots: config.RobotsConfig{
+			Wecom: config.RobotWecomConfig{
+				Enabled:        true,
+				Token:          token,
+				EncodingAESKey: aesKey,
 			},
 		},
-		logger: zap.NewNop(),
-	}
+	}, zap.NewNop(), &stubWecomInbound{})
 }
 
 func TestHandleWecomPOST_rejectsWhenTokenEmpty(t *testing.T) {

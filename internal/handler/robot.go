@@ -6,16 +6,13 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base32"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -88,6 +85,7 @@ type RobotHandler struct {
 	cancelMu             sync.Mutex                    // 保护 runningCancels
 	runningCancels       map[string]context.CancelFunc // key: "platform_userID", 用于停止命令中断任务
 	wecomReplay          map[string]time.Time
+	wecom                *WecomGateway
 	pendingConfirmations map[string]robotPendingConfirmation
 	alertWake            chan struct{}
 	audit                *audit.Service
@@ -95,7 +93,7 @@ type RobotHandler struct {
 
 // NewRobotHandler 创建机器人处理器
 func NewRobotHandler(cfg *config.Config, db *database.DB, agentHandler *AgentHandler, logger *zap.Logger) *RobotHandler {
-	return &RobotHandler{
+	handler := &RobotHandler{
 		config:               cfg,
 		db:                   database.Narrow[database.RobotStore](db),
 		agentHandler:         agentHandler,
@@ -108,7 +106,15 @@ func NewRobotHandler(cfg *config.Config, db *database.DB, agentHandler *AgentHan
 		pendingConfirmations: make(map[string]robotPendingConfirmation),
 		alertWake:            make(chan struct{}, 1),
 	}
+	// Built after the handler exists because the gateway calls back into it: the transport
+	// cannot answer "is this conversation already bound to a project" on its own.
+	handler.wecom = NewWecomGateway(cfg, logger, handler)
+	return handler
 }
+
+// Wecom exposes the 企业微信 wire layer to the route table. Paths and methods are unchanged by
+// the split, so testdata/routes.golden.txt does not move.
+func (h *RobotHandler) Wecom() *WecomGateway { return h.wecom }
 
 func (h *RobotHandler) SetAudit(s *audit.Service) {
 	h.audit = s
@@ -1400,72 +1406,6 @@ type wecomReplyXML struct {
 	Content      string   `xml:"Content"`
 }
 
-// wecomRequireToken 企业微信回调必须配置 Token；未配置时拒绝请求，防止未授权触发 Agent。
-func (h *RobotHandler) wecomRequireToken(c *gin.Context) (string, bool) {
-	token := strings.TrimSpace(h.config.Robots.Wecom.Token)
-	if token == "" {
-		h.logger.Warn("企业微信已启用但未配置 token，已拒绝回调（请在配置中设置 robots.wecom.token）")
-		c.String(http.StatusForbidden, "")
-		return "", false
-	}
-	return token, true
-}
-
-// HandleWecomGET 企业微信 URL 校验（GET）
-func (h *RobotHandler) HandleWecomGET(c *gin.Context) {
-	if !h.config.Robots.Wecom.Enabled {
-		c.String(http.StatusNotFound, "")
-		return
-	}
-	token, ok := h.wecomRequireToken(c)
-	if !ok {
-		return
-	}
-	// Gin 的 Query() 会自动 URL 解码，拿到的就是正确的 base64 字符串
-	echostr := c.Query("echostr")
-	msgSignature := c.Query("msg_signature")
-	timestamp := c.Query("timestamp")
-	nonce := c.Query("nonce")
-
-	// 验证签名：将 token、timestamp、nonce、echostr 四个参数排序后拼接计算 SHA1
-	signature := h.signWecomRequest(token, timestamp, nonce, echostr)
-	if signature != msgSignature {
-		h.logger.Warn("企业微信 URL 验证签名失败", zap.String("expected", msgSignature), zap.String("got", signature))
-		c.String(http.StatusBadRequest, "invalid signature")
-		return
-	}
-
-	if echostr == "" {
-		c.String(http.StatusBadRequest, "missing echostr")
-		return
-	}
-
-	// 如果配置了 EncodingAESKey，说明是加密模式，需要解密 echostr
-	if h.config.Robots.Wecom.EncodingAESKey != "" {
-		decrypted, err := wecomDecrypt(h.config.Robots.Wecom.EncodingAESKey, echostr)
-		if err != nil {
-			h.logger.Warn("企业微信 echostr 解密失败", zap.Error(err))
-			c.String(http.StatusBadRequest, "decrypt failed")
-			return
-		}
-		c.String(http.StatusOK, string(decrypted))
-		return
-	}
-
-	// 明文模式直接返回 echostr
-	c.String(http.StatusOK, echostr)
-}
-
-// signWecomRequest 生成企业微信请求签名
-// 企业微信签名算法：将 token、timestamp、nonce、echostr 四个值排序后拼接成字符串，再计算 SHA1
-func (h *RobotHandler) signWecomRequest(token, timestamp, nonce, echostr string) string {
-	strs := []string{token, timestamp, nonce, echostr}
-	sort.Strings(strs)
-	s := strings.Join(strs, "")
-	hash := sha1.Sum([]byte(s))
-	return fmt.Sprintf("%x", hash)
-}
-
 // wecomDecrypt 企业微信消息解密（AES-256-CBC，PKCS7，明文格式：16字节随机+4字节长度+消息+corpID）
 func wecomDecrypt(encodingAESKey, encryptedB64 string) ([]byte, error) {
 	key, err := base64.StdEncoding.DecodeString(encodingAESKey + "=")
@@ -1546,229 +1486,6 @@ func wecomEncrypt(encodingAESKey, message, corpID string) (string, error) {
 	mode := cipher.NewCBCEncrypter(block, iv)
 	mode.CryptBlocks(ciphertext, plain)
 	return base64.StdEncoding.EncodeToString(ciphertext), nil
-}
-
-// HandleWecomPOST 企业微信消息回调（POST），支持明文与加密模式
-func (h *RobotHandler) HandleWecomPOST(c *gin.Context) {
-	if !h.config.Robots.Wecom.Enabled {
-		h.logger.Debug("企业微信机器人未启用，跳过请求")
-		c.String(http.StatusOK, "")
-		return
-	}
-	// 从 URL 获取签名参数（加密模式回复时需要用到）
-	timestamp := c.Query("timestamp")
-	nonce := c.Query("nonce")
-	msgSignature := c.Query("msg_signature")
-
-	// 先读取请求体，后续解析/签名验证都会用到
-	bodyRaw, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		h.logger.Warn("企业微信 POST 读取请求体失败", zap.Error(err))
-		c.String(http.StatusOK, "")
-		return
-	}
-	h.logger.Debug("企业微信 POST 收到请求", zap.String("body", string(bodyRaw)))
-
-	// 验证请求签名防止伪造。企业微信签名算法同 URL 验证，使用 token、timestamp、nonce、 Encrypt 四个字段。
-	// 启用企业微信时必须配置 token 并校验签名，避免未授权请求触发 Agent。
-	token, ok := h.wecomRequireToken(c)
-	if !ok {
-		return
-	}
-	if msgSignature == "" {
-		h.logger.Warn("企业微信 POST 缺少签名，已拒绝（需确保回调携带 msg_signature）")
-		c.String(http.StatusOK, "")
-		return
-	}
-	var tmp wecomXML
-	if err := xml.Unmarshal(bodyRaw, &tmp); err != nil {
-		h.logger.Warn("企业微信 POST 签名验证前解析 XML 失败", zap.Error(err))
-		c.String(http.StatusOK, "")
-		return
-	}
-	expected := h.signWecomRequest(token, timestamp, nonce, tmp.Encrypt)
-	if expected != msgSignature {
-		h.logger.Warn("企业微信 POST 签名验证失败", zap.String("expected", expected), zap.String("got", msgSignature))
-		c.String(http.StatusOK, "")
-		return
-	}
-	if !h.acceptFreshWecomRequest(timestamp, nonce, msgSignature) {
-		h.logger.Warn("企业微信 POST 时间戳过期或请求重放，已拒绝")
-		c.String(http.StatusOK, "")
-		return
-	}
-
-	var body wecomXML
-	if err := xml.Unmarshal(bodyRaw, &body); err != nil {
-		h.logger.Warn("企业微信 POST 解析 XML 失败", zap.Error(err))
-		c.String(http.StatusOK, "")
-		return
-	}
-	h.logger.Debug("企业微信 XML 解析成功", zap.String("ToUserName", body.ToUserName), zap.String("FromUserName", body.FromUserName), zap.String("MsgType", body.MsgType), zap.String("Content", body.Content), zap.String("Encrypt", body.Encrypt))
-
-	// 保存企业 ID（用于明文模式回复）
-	enterpriseID := body.ToUserName
-
-	// 配置了 EncodingAESKey 时必须走加密消息，拒绝明文 XML 绕过
-	if strings.TrimSpace(h.config.Robots.Wecom.EncodingAESKey) != "" && strings.TrimSpace(body.Encrypt) == "" {
-		h.logger.Warn("企业微信已配置加密模式但收到明文消息，已拒绝")
-		c.String(http.StatusOK, "")
-		return
-	}
-
-	// 加密模式：先解密再解析内层 XML
-	if body.Encrypt != "" && h.config.Robots.Wecom.EncodingAESKey != "" {
-		h.logger.Debug("企业微信进入加密模式解密流程")
-		decrypted, err := wecomDecrypt(h.config.Robots.Wecom.EncodingAESKey, body.Encrypt)
-		if err != nil {
-			h.logger.Warn("企业微信消息解密失败", zap.Error(err))
-			c.String(http.StatusOK, "")
-			return
-		}
-		h.logger.Debug("企业微信解密成功", zap.String("decrypted", string(decrypted)))
-		if err := xml.Unmarshal(decrypted, &body); err != nil {
-			h.logger.Warn("企业微信解密后 XML 解析失败", zap.Error(err))
-			c.String(http.StatusOK, "")
-			return
-		}
-		h.logger.Debug("企业微信内层 XML 解析成功", zap.String("FromUserName", body.FromUserName), zap.String("Content", body.Content))
-	}
-
-	tenantKey := strings.TrimSpace(enterpriseID)
-	if tenantKey == "" {
-		tenantKey = strings.TrimSpace(h.config.Robots.Wecom.CorpID)
-	}
-	if tenantKey == "" {
-		tenantKey = "default"
-	}
-	rawUserID := strings.TrimSpace(body.FromUserName)
-	replyUserID := rawUserID
-	userID := ""
-	if rawUserID != "" {
-		userID = "t:" + tenantKey + "|u:" + rawUserID
-	}
-	text := strings.TrimSpace(body.Content)
-	if userID == "" {
-		h.logger.Warn("企业微信消息缺少可用用户标识，已忽略")
-		c.String(http.StatusOK, "success")
-		return
-	}
-
-	// 限制回复内容长度（企业微信限制 2048 字节）
-	maxReplyLen := 2000
-	limitReply := func(s string) string {
-		if len(s) > maxReplyLen {
-			return s[:maxReplyLen] + "\n\n（内容过长，已截断）"
-		}
-		return s
-	}
-
-	if body.MsgType != "text" {
-		h.logger.Debug("企业微信收到非文本消息", zap.String("MsgType", body.MsgType))
-		h.sendWecomReply(c, replyUserID, enterpriseID, limitReply("暂仅支持文本消息，请发送文字。"), timestamp, nonce)
-		return
-	}
-
-	// 文本消息：先判断是否为内置命令（如 帮助/列表/新对话 等），这类命令处理很快，可以直接走被动回复，避免依赖主动发送 API。
-	if cmdReply, ok := h.handleRobotCommand("wecom", userID, text); ok {
-		h.logger.Debug("企业微信收到命令消息，走被动回复", zap.String("userID", userID), zap.String("text", text))
-		h.sendWecomReply(c, replyUserID, enterpriseID, limitReply(cmdReply), timestamp, nonce)
-		return
-	}
-
-	h.logger.Debug("企业微信开始处理消息（异步 AI）", zap.String("userID", userID), zap.String("text", text))
-
-	// 企业微信被动回复有 5 秒超时限制，而 AI 调用通常超过该时长。
-	// 这里采用推荐做法：立即返回 success（或空串），然后通过主动发送接口推送完整回复。
-	c.String(http.StatusOK, "success")
-
-	// 异步处理消息并通过企业微信主动消息接口发送结果
-	go func() {
-		reply := h.HandleMessage("wecom", userID, text)
-		reply = limitReply(reply)
-		h.logger.Debug("企业微信消息处理完成", zap.String("userID", userID), zap.String("reply", reply))
-		// 调用企业微信 API 主动发送消息
-		h.sendWecomMessageViaAPI(rawUserID, enterpriseID, reply)
-	}()
-}
-
-// sendWecomReply 发送企业微信回复（加密模式自动加密）
-// 参数：toUser=用户 ID, fromUser=企业 ID（明文模式）/CorpID（加密模式）, content=回复内容，timestamp/nonce=请求参数
-func (h *RobotHandler) sendWecomReply(c *gin.Context, toUser, fromUser, content, timestamp, nonce string) {
-	// 加密模式：判断 EncodingAESKey 是否配置
-	if h.config.Robots.Wecom.EncodingAESKey != "" {
-		// 加密模式使用 CorpID 进行加密
-		corpID := h.config.Robots.Wecom.CorpID
-		if corpID == "" {
-			h.logger.Warn("企业微信加密模式缺少 CorpID 配置")
-			c.String(http.StatusOK, "")
-			return
-		}
-
-		// 构造完整的明文 XML 回复（格式严格按企业微信文档要求）
-		plainResp := fmt.Sprintf(`<xml>
-<ToUserName><![CDATA[%s]]></ToUserName>
-<FromUserName><![CDATA[%s]]></FromUserName>
-<CreateTime>%d</CreateTime>
-<MsgType><![CDATA[text]]></MsgType>
-<Content><![CDATA[%s]]></Content>
-</xml>`, toUser, fromUser, time.Now().Unix(), content)
-
-		encrypted, err := wecomEncrypt(h.config.Robots.Wecom.EncodingAESKey, plainResp, corpID)
-		if err != nil {
-			h.logger.Warn("企业微信回复加密失败", zap.Error(err))
-			c.String(http.StatusOK, "")
-			return
-		}
-		// 使用请求中的 timestamp/nonce 生成签名（企业微信要求回复时使用与请求相同的 timestamp 和 nonce）
-		msgSignature := h.signWecomRequest(h.config.Robots.Wecom.Token, timestamp, nonce, encrypted)
-
-		h.logger.Debug("企业微信发送加密回复",
-			zap.String("Encrypt", encrypted[:50]+"..."),
-			zap.String("MsgSignature", msgSignature),
-			zap.String("TimeStamp", timestamp),
-			zap.String("Nonce", nonce))
-
-		// 加密模式仅返回 4 个核心字段（企业微信官方要求）
-		xmlResp := fmt.Sprintf(`<xml><Encrypt><![CDATA[%s]]></Encrypt><MsgSignature><![CDATA[%s]]></MsgSignature><TimeStamp><![CDATA[%s]]></TimeStamp><Nonce><![CDATA[%s]]></Nonce></xml>`, encrypted, msgSignature, timestamp, nonce)
-		// also log the final response body so we can cross-check with the
-		// network traffic or developer console
-		h.logger.Debug("企业微信加密回复包", zap.String("xml", xmlResp))
-		// for additional confidence, decrypt the payload ourselves and log it
-		if dec, err2 := wecomDecrypt(h.config.Robots.Wecom.EncodingAESKey, encrypted); err2 == nil {
-			h.logger.Debug("企业微信加密回复解密检查", zap.String("plain", string(dec)))
-		} else {
-			h.logger.Warn("企业微信加密回复解密检查失败", zap.Error(err2))
-		}
-
-		// 使用 c.Writer.Write 直接写入响应，避免 c.String 的转义问题
-		c.Writer.WriteHeader(http.StatusOK)
-		// use text/xml as that's what WeCom examples show
-		c.Writer.Header().Set("Content-Type", "text/xml; charset=utf-8")
-		_, _ = c.Writer.Write([]byte(xmlResp))
-		h.logger.Debug("企业微信加密回复已发送")
-		return
-	}
-
-	// 明文模式
-	h.logger.Debug("企业微信发送明文回复", zap.String("ToUserName", toUser), zap.String("FromUserName", fromUser), zap.String("Content", content[:50]+"..."))
-
-	// 手动构造 XML 响应（使用 CDATA 包裹所有字段，并包含 AgentID）
-	xmlResp := fmt.Sprintf(`<xml>
-<ToUserName><![CDATA[%s]]></ToUserName>
-<FromUserName><![CDATA[%s]]></FromUserName>
-<CreateTime>%d</CreateTime>
-<MsgType><![CDATA[text]]></MsgType>
-<Content><![CDATA[%s]]></Content>
-</xml>`, toUser, fromUser, time.Now().Unix(), content)
-
-	// log the exact plaintext response for debugging
-	h.logger.Debug("企业微信明文回复包", zap.String("xml", xmlResp))
-
-	// use text/xml as recommended by WeCom docs
-	c.Header("Content-Type", "text/xml; charset=utf-8")
-	c.String(http.StatusOK, xmlResp)
-	h.logger.Debug("企业微信明文回复已发送")
 }
 
 // —————— 测试接口（需登录，用于验证机器人逻辑，无需钉钉/飞书客户端） ——————
@@ -1865,87 +1582,6 @@ func (h *RobotHandler) HandleRobotTest(c *gin.Context) {
 	}
 	reply := h.HandleMessage(platform, userID, req.Text)
 	c.JSON(http.StatusOK, gin.H{"reply": reply})
-}
-
-// sendWecomMessageViaAPI 通过企业微信 API 主动发送消息（用于异步处理后的结果发送）
-func (h *RobotHandler) sendWecomMessageViaAPI(toUser, toParty, content string) {
-	if !h.config.Robots.Wecom.Enabled {
-		return
-	}
-
-	secret := h.config.Robots.Wecom.Secret
-	corpID := h.config.Robots.Wecom.CorpID
-	agentID := h.config.Robots.Wecom.AgentID
-
-	if secret == "" || corpID == "" {
-		h.logger.Warn("企业微信主动 API 缺少 secret 或 corpID 配置")
-		return
-	}
-
-	// 第 1 步：获取 access_token
-	tokenURL := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=%s&corpsecret=%s", corpID, secret)
-	resp, err := http.Get(tokenURL)
-	if err != nil {
-		h.logger.Warn("企业微信获取 token 失败", zap.Error(err))
-		return
-	}
-	defer resp.Body.Close()
-
-	var tokenResp struct {
-		AccessToken string `json:"access_token"`
-		ErrCode     int    `json:"errcode"`
-		ErrMsg      string `json:"errmsg"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		h.logger.Warn("企业微信 token 响应解析失败", zap.Error(err))
-		return
-	}
-	if tokenResp.ErrCode != 0 {
-		h.logger.Warn("企业微信 token 获取错误", zap.String("errmsg", tokenResp.ErrMsg), zap.Int("errcode", tokenResp.ErrCode))
-		return
-	}
-
-	// 第 2 步：构造发送消息请求
-	msgReq := map[string]interface{}{
-		"touser":  toUser,
-		"msgtype": "text",
-		"agentid": agentID,
-		"text": map[string]interface{}{
-			"content": content,
-		},
-	}
-
-	msgBody, err := json.Marshal(msgReq)
-	if err != nil {
-		h.logger.Warn("企业微信消息序列化失败", zap.Error(err))
-		return
-	}
-
-	// 第 3 步：发送消息
-	sendURL := fmt.Sprintf("https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=%s", tokenResp.AccessToken)
-	msgResp, err := http.Post(sendURL, "application/json", bytes.NewReader(msgBody))
-	if err != nil {
-		h.logger.Warn("企业微信主动发送消息失败", zap.Error(err))
-		return
-	}
-	defer msgResp.Body.Close()
-
-	var sendResp struct {
-		ErrCode     int    `json:"errcode"`
-		ErrMsg      string `json:"errmsg"`
-		InvalidUser string `json:"invaliduser"`
-		MsgID       string `json:"msgid"`
-	}
-	if err := json.NewDecoder(msgResp.Body).Decode(&sendResp); err != nil {
-		h.logger.Warn("企业微信发送响应解析失败", zap.Error(err))
-		return
-	}
-
-	if sendResp.ErrCode == 0 {
-		h.logger.Debug("企业微信主动发送消息成功", zap.String("msgid", sendResp.MsgID))
-	} else {
-		h.logger.Warn("企业微信主动发送消息失败", zap.String("errmsg", sendResp.ErrMsg), zap.Int("errcode", sendResp.ErrCode), zap.String("invaliduser", sendResp.InvalidUser))
-	}
 }
 
 // —————— 钉钉 ——————
