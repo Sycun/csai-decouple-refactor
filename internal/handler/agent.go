@@ -326,18 +326,21 @@ func NewAgentHandler(agent *agent.Agent, db *database.DB, cfg *config.Config, lo
 	if cfg != nil {
 		llmCfg = &cfg.OpenAI
 	}
+	// The manager is built before the handler because the queue answers a pending interrupt
+	// through it: it is a constructor argument, not something wired after the fact.
+	hitlManager := NewHITLManager(db, logger)
 	handler := &AgentHandler{
 		agent:            agent,
 		db:               database.Narrow[database.AgentStore](db),
 		hitlStore:        newHITLStore(db),
-		hitlQueue:        newHITLQueue(database.Narrow[database.AgentStore](db), newHITLStore(db), cfg),
+		hitlQueue:        newHITLQueue(database.Narrow[database.AgentStore](db), newHITLStore(db), cfg, hitlManager),
 		sessions:         newSessionStore(db),
 		logger:           logger,
 		tasks:            tm,
 		taskEventBus:     bus,
 		batchTaskManager: batchTaskManager,
 		config:           cfg,
-		hitlManager:      NewHITLManager(db, logger),
+		hitlManager:      hitlManager,
 		batchCronParser:  cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor),
 		auditLLM:         openai.NewClient(llmCfg, llmHTTP, logger),
 	}

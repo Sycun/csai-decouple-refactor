@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -37,7 +38,7 @@ func newHITLEndpointHandler(t *testing.T) (*AgentHandler, *database.DB) {
 	h := &AgentHandler{
 		db:          db,
 		hitlStore:   store.NewHITL(db.DB),
-		hitlQueue:   newHITLQueue(database.Narrow[database.AgentStore](db), store.NewHITL(db.DB), &config.Config{}),
+		hitlQueue:   newHITLQueue(database.Narrow[database.AgentStore](db), store.NewHITL(db.DB), &config.Config{}, manager),
 		hitlManager: manager,
 		config:      &config.Config{},
 		logger:      zap.NewNop(),
@@ -77,13 +78,13 @@ func hitlEndpointRouter(h *AgentHandler, session *security.Session) *gin.Engine 
 		}
 		c.Next()
 	})
-	router.GET("/api/hitl/pending", h.ListHITLPending)
+	router.GET("/api/hitl/pending", h.HITLQueue().ListHITLPending)
 	// Same wiring as internal/app/routes_hitl.go: the log surface lives on the extracted
 	// collaborator now, so this contract test exercises the object production actually serves.
 	router.GET("/api/hitl/logs", h.HITLQueue().ListHITLLogs)
 	router.GET("/api/hitl/logs/:id", h.HITLQueue().GetHITLLog)
 	router.DELETE("/api/hitl/logs", h.HITLQueue().DeleteHITLLogs)
-	router.POST("/api/hitl/dismiss", h.DismissHITLInterrupt)
+	router.POST("/api/hitl/dismiss", h.HITLQueue().DismissHITLInterrupt)
 	return router
 }
 
@@ -347,6 +348,41 @@ func TestHITLDismissEndpointCancelsAPendingInterruptOnce(t *testing.T) {
 	}
 	if code, _ := serveHITLEndpoint(t, router, http.MethodPost, "/api/hitl/dismiss", `{}`); code != http.StatusBadRequest {
 		t.Fatalf("missing interruptId = %d, want 400", code)
+	}
+}
+
+// The dismiss endpoint's other job: the tool call blocked in waitDecision must wake with a
+// rejection. That step used to reach into HITLManager's lock and pending map from the transport
+// layer, and it is HITLManager.DropPending now - which is only checkable from the wire, so this
+// test is the behaviour proof of the move. decideCh is buffered, so the wakeup lands whether or
+// not the waiter was already blocked; the pending set has to be empty afterwards.
+func TestDismissWakesTheWaitingToolCall(t *testing.T) {
+	h, db := newHITLEndpointHandler(t)
+	conv := hitlTestConversation(t, db, "dismiss-wakes")
+	p, err := h.hitlManager.CreatePendingInterrupt(conv, "msg-1", "approval", "exec", "call-1", `{"toolName":"exec"}`, "human")
+	if err != nil {
+		t.Fatalf("create pending: %v", err)
+	}
+
+	router := hitlEndpointRouter(h, &security.Session{UserID: "owner", Scope: database.RBACScopeAll})
+	code, body := serveHITLEndpoint(t, router, http.MethodPost, "/api/hitl/dismiss", `{"interruptId":"`+p.InterruptID+`"}`)
+	if code != http.StatusOK {
+		t.Fatalf("dismiss status = %d: %s", code, body)
+	}
+
+	d, err := h.hitlManager.waitDecision(context.Background(), p, 2*time.Second)
+	if err != nil {
+		t.Fatalf("waitDecision: %v", err)
+	}
+	if d.Decision != "reject" || d.Comment != "dismissed by user" {
+		t.Fatalf("the waiter woke with %+v, want reject / dismissed by user", d)
+	}
+
+	h.hitlManager.mu.RLock()
+	_, still := h.hitlManager.pending[p.InterruptID]
+	h.hitlManager.mu.RUnlock()
+	if still {
+		t.Fatal("the dismissed interrupt is still in the pending set")
 	}
 }
 

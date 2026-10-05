@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -15,7 +14,6 @@ import (
 	"cyberstrike-ai/internal/multiagent"
 	"cyberstrike-ai/internal/store"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -426,6 +424,29 @@ func (m *HITLManager) ResolveInterrupt(interruptID, decision, comment string, ed
 	}
 }
 
+// DropPending removes an interrupt from the in-memory pending set and wakes whatever is
+// waiting on it with a rejection. The durable half is the store's own Dismiss; this is the
+// process half of the same operation. It exists as a method rather than a few lines at the
+// call site because `mu`/`pending`/`decideCh` are the manager's private state - an HTTP
+// handler reaching in there has to know the locking and the channel's buffer semantics, and
+// nothing outside this type should have to.
+func (m *HITLManager) DropPending(interruptID, comment string) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.pending[interruptID]
+	if !ok {
+		return
+	}
+	delete(m.pending, interruptID)
+	select {
+	case p.decideCh <- hitlDecision{Decision: "reject", Comment: comment}:
+	default:
+	}
+}
+
 func (m *HITLManager) SaveConversationConfig(conversationID string, req *HITLRequest) error {
 	if strings.TrimSpace(conversationID) == "" {
 		return errors.New("conversationId is required")
@@ -720,95 +741,6 @@ func (h *AgentHandler) handleHITLToolCall(runCtx context.Context, cancelRun cont
 			}
 		}
 	}
-}
-
-func (h *AgentHandler) ListHITLPending(c *gin.Context) {
-	page, pageSize, offset := hitlListPaging(c)
-	f := hitlFilterFromRequest(c)
-	f.Access = hitlAccessFromRequest(c)
-	f.Limit, f.Offset = pageSize, offset
-	items, total, err := h.hitlQueue.listHitlInterrupts(store.InterruptsAwaitingHuman, f)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"items": hitlInterruptMaps(items), "page": page, "pageSize": pageSize, "total": total})
-}
-
-type hitlDecisionReq struct {
-	InterruptID     string                 `json:"interruptId" binding:"required"`
-	Decision        string                 `json:"decision" binding:"required"`
-	Comment         string                 `json:"comment,omitempty"`
-	EditedArguments map[string]interface{} `json:"editedArguments,omitempty"`
-}
-
-func (h *AgentHandler) DecideHITLInterrupt(c *gin.Context) {
-	var req hitlDecisionReq
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	if h.hitlManager == nil {
-		c.JSON(500, gin.H{"error": "hitl manager unavailable"})
-		return
-	}
-	if !h.hitlQueue.hitlInterruptAllowed(c, req.InterruptID) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
-		return
-	}
-	if err := h.hitlManager.ResolveInterrupt(req.InterruptID, req.Decision, req.Comment, req.EditedArguments); err != nil {
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-		return
-	}
-	if h.audit != nil {
-		h.audit.RecordOK(c, "hitl", "decision", "HITL 审批决策", "hitl_interrupt", req.InterruptID, map[string]interface{}{
-			"decision": req.Decision,
-		})
-	}
-	c.JSON(http.StatusOK, gin.H{"ok": true})
-}
-
-func (h *AgentHandler) DismissHITLInterrupt(c *gin.Context) {
-	var req struct {
-		InterruptID string `json:"interruptId" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(400, gin.H{"error": err.Error()})
-		return
-	}
-	if h.hitlManager == nil {
-		c.JSON(500, gin.H{"error": "hitl manager unavailable"})
-		return
-	}
-	if !h.hitlQueue.hitlInterruptAllowed(c, req.InterruptID) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
-		return
-	}
-	s, storeErr := h.hitlQueue.hitlStoreOrErr()
-	if storeErr != nil {
-		c.JSON(500, gin.H{"error": storeErr.Error()})
-		return
-	}
-	n, err := s.Dismiss(req.InterruptID, "dismissed by user")
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	if n == 0 {
-		c.JSON(404, gin.H{"error": "interrupt not found or already resolved"})
-		return
-	}
-	// Also drain from in-memory map if present
-	h.hitlManager.mu.Lock()
-	if p, ok := h.hitlManager.pending[req.InterruptID]; ok {
-		delete(h.hitlManager.pending, req.InterruptID)
-		select {
-		case p.decideCh <- hitlDecision{Decision: "reject", Comment: "dismissed by user"}:
-		default:
-		}
-	}
-	h.hitlManager.mu.Unlock()
-	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (h *AgentHandler) interceptHITLForEinoTool(runCtx context.Context, cancelRun context.CancelCauseFunc, conversationID, assistantMessageID string, sendEventFunc func(eventType, message string, data interface{}), toolName, arguments string) (string, error) {

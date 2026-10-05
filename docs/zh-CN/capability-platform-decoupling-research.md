@@ -1084,6 +1084,59 @@ handler 字段随即窄化，债面 **6 → 3**（`knowledge.go` 的死字段与
 测出 31，真实 8（那一轮的值，此后又降到 7）。**基线若按 31 钉，上线即松了近四倍**，这正是"先声明遍历域再数"的意义所在；
 现在只遍历 `*ast.StructType` 的字段列表。
 
+### P6 分解第 3–5 刀 —— 按"为什么改"切，并把 6,816 行手写 OpenAPI 拆到域
+
+**边界先定义，再动刀**（上一轮留下的阻塞点正是"没定边界就切"）。判据是三个互斥的问题：
+规则*是什么*——在没有任何东西运行的时候被编辑 → 归 `HitlPolicy`；
+已经挂起的审批——谁在等、等什么 → 归 `HITLQueue`（第一刀已落）；
+工具调用里等一个决定 → **留在 run loop**，因为它和 task、会话历史、SSE 写入器同呼吸，
+搬走它就得为搬运再造两层接口。
+
+| 面 | 数字 | 门禁 |
+|---|---|---|
+| `AgentHandler` 方法 / 文件 | 130（起点）→ 112（两刀）→ **91 / 21** | `agentHandlerMethodCeiling = 91`、`agentHandlerFileCeiling = 21`，只准降；扫描下限 85 防"读到一个空表" |
+| 第三刀 `a8b2105` | 11 个审批配置端点搬进 `HitlPolicy`（它自己持有写通道、manager、queue），112 → 102 | 路由表必须把这 11 条按 (path, method) 逐条挂在 `HitlPolicy()` 上；`AgentHandler` 不许长回旧名字（探针：加一个同名孪生方法即红） |
+| 第四刀 `0a81f48` | 第三刀只搬端点、留下 10 个方法的接口回读 agent —— 挂着边界名字的访问器袋。改成策略自己持有已加载配置与共享快照：有效默认值、豁免名单合并、审计引擎解析、"这个会话跑在哪条规则下"全部内聚。102 → 91，handler 包净减 131 行 | `SetSettings` 必须转发给策略：构造期捕获快照 = 运维者改默认值只落进 `config.yaml`、不落进运行规则，正是活快照存在的理由（真机点验 PUT 后回读） |
+| 第五刀 `73d00f7` | 企业微信传输面（签名校验、AES 信封、被动回复体、主动发送）从 `RobotHandler` 抽进 `WecomGateway`；replay guard **留在** handler（Lark 回调共用），网关经 3 方法 inbound 接口问它自己答不了的问题。68 → 63（原先 64 个方法挤在 1,979 行单文件） | 逐 (path, method) 断言网关注册；注册器门禁从只认 `(protected)` 扩到接受 `api` 组（把参数名收窄去凑检查是撒谎）；探针：把任一线协议方法长回 `RobotHandler` 即红 |
+| 第六刀 | 挂起审批的**应答面**（`ListHITLPending`/`DecideHITLInterrupt`/`DismissHITLInterrupt`）从 `AgentHandler` 归 `HITLQueue` —— 按已定的边界，"谁在等人、等什么"这件事本来就归它。顺带修掉一处真实的私有状态泄漏：`DismissHITLInterrupt` 原先在传输层里自己锁 manager、从 `pending` map 删除、往 `decideCh` 塞拒绝 —— 一个类型的加锁规则内联进另一个类型的 HTTP 代码；现由 `HITLManager.DropPending` 承担。`q.manager` 经构造函数注入，不新增 setter（整包 64 未动）。91 → **88** | `TestPendingInterruptRoutesAnswerFromTheQueue` + `TestPendingInterruptMethodsAreNotOnAgentHandler`（agent 长回即红、queue 丢掉即红）；`TestHITLManagerPrivateStateStaysPrivate` 走 AST 禁止 manager 方法之外经字段句柄触碰 `mu/pending/runtime/approvedExec/globalWhitelist/decideCh`；`TestDismissWakesTheWaitingToolCall` 从线上验证"关掉审批会叫醒等待中的工具调用" |
+
+**第六刀的三条私有状态门禁踩过的三个坑**（都记在这里，因为它们对任何"文本式门禁"都成立）：
+① 用 regexp 扫行会把注释当代码 —— `batch_task_manager.go` 里两句"必须在持有
+`BatchTaskManager.mu` 下调用"被报成泄漏；改用 `go/ast` 后注释天然不在场。
+② `*ast.Field` 同时覆盖**结构体字段、函数参数、接收者**：按"类型为 `*HITLManager` 的 Field 名字"
+收句柄，收到 manager 自己的接收者名 `m`，于是全包每一处 `m.mu`（含 `AgentTaskManager` 的）都红了。
+③ 修正后只认**结构体声明的字段**且只看两跳形状（`h.hitlManager.mu`、`q.manager.pending`），
+接收者/参数不算句柄；已知盲区是"先 `local := h.hitlManager` 再读 `local.mu`"，
+用可读性（`DropPending` 是显而易见的调用）与 review 兜，而不是把门禁做成类型推断。
+④ 探针三连：新增一处 `len(h.hitlManager.pending)` → 隐私门禁红；把 `ListHITLPending` 作为孪生方法长回
+agent → 接线门禁红；把 `DropPending` 改成空函数 → 唤醒断言按"超时自动拒绝"失败（等待方确实被叫不醒）。
+
+**手写 OpenAPI 文档按域拆（`6d7e905`）**：`handler/openapi.go` 6,816 行、3 个函数，内联
+map 字面量独占第 31–6,774 行 —— 报告 §1 记的"契约面最陡的一处"。现按域分成
+`openapi_paths_{chat,knowledge,capabilities,mcp,ops}.go`（41/25/32/6/14 条路径）+
+`openapi_components.go`，handler 只剩组装（110 行）。数据保持**函数而非常量**：
+`enrichSpecWithI18nKeys` 会就地往每个 operation 写 `x-i18n-tags`，提成包级共享 map 就是两个
+并发 `GET /api/openapi/spec` 同时写同一块内存。
+
+验收按"最硬的那条"来：拆前拆后各取一份**服务出来的**文档，`cmp` 无差异
+（155,278 B、118 路径、157 操作）。留下的永久门禁三条，都跑过探针确认会红：
+
+| 门禁 | 探针 | 现象 |
+|---|---|---|
+| `TestOpenAPIGroupsDoNotOverlap`（分组不相交 + 部分之和 = 合并总数） | 把 ops 组一条 path 改成 chat 组已有的 | `path /api/agent-loop/cancel is declared by both the chat and the ops group`，并在合并器 panic 之前先报出两个文件 |
+| `TestOpenAPIGroupFloors`（每组路径数下限，只准升） | 删掉 `/api/robot/lark` 整块 | `the ops group documents 13 paths, floor is 14` |
+| `TestOpenAPIOperationsGolden`（`METHOD /path\|operationId\|tag` 157 行 golden） | 改一个 path 名 | dropped/added 两个方向各打印该行；golden 空文件本身判失败 |
+
+复现：
+
+```sh
+go test -count=1 -run 'TestOpenAPI' ./internal/handler/                  # 拆分的三条门禁
+go test -count=1 -run 'TestHandlerSizesOnlyShrink|TestHandlerSettersOnlyShrink|TestHandlerLayerScanIsSane' ./internal/layering/
+go test -count=1 -run 'TestPendingInterrupt' ./internal/app/             # 应答面的接线与"不许长回 agent"
+go test -count=1 -run 'TestHITLManagerPrivateStateStaysPrivate|TestDismissWakes' ./internal/handler/
+CSAI_WRITE_OPENAPI_GOLDEN=1 go test ./internal/handler -run TestOpenAPIOperationsGolden   # 故意改文档时才重生成
+```
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
@@ -1091,9 +1144,13 @@ handler 字段随即窄化，债面 **6 → 3**（`knowledge.go` 的死字段与
   **没有任何结构体再持有 `*database.DB` 或 `*sql.DB`**（19 → 0；18 个域换成各自的窄接口字段，
   另 1 个是没人读的死字段，直接删。见 §11「P6 数据层第五片」与 §12.1 表）；
   `internal/database` 那 361 个方法本身也按域继续切）、
-  `AgentHandler` 分解（**水位实测 + 门禁 + 两刀已落**：起点 130 方法/23 文件，
-  现已搬到 **112 方法/21 文件**——中断队列读面 9 个方法进 `HITLQueue`、收尾链路 10 个方法进
-  `runFinalizer`，见 §11「分解第一刀」「第二刀」；
+  `AgentHandler` 分解（**水位实测 + 门禁 + 六刀已落**：起点 130 方法/23 文件，
+  现已搬到 **88 方法/21 文件**——中断队列读面 9 个方法进 `HITLQueue`、收尾链路 10 个方法进
+  `runFinalizer`、11 个审批配置端点 + 它们读的配置状态进 `HitlPolicy`、挂起审批的应答面 3 个端点
+  回 `HITLQueue`，见 §11「分解第 3–5 刀」；
+  边界已定：剩下的 **13 个方法/6 个文件**（`hitl.go` 4、`hitl_context.go` 3、`hitl_audit_agent.go` 3、
+  `hitl_execution.go`/`hitl_config_savers.go`/`batch_hitl.go` 各 1）是"工具调用里等一个决定"那一族，
+  与 task/会话/SSE 同呼吸，**按边界就是留**；再搬要为搬运造两层接口；
   `internal/handler` 整包 64 个 `Set*` 未增；
   另落地 1 处内聚塌陷 + 1 道审计注入完整性门禁，见 §11「P6 `AgentHandler` 分解」；
   报告原记的"19 个文件/26 处 SetXxx"是低估）、Eino 收口至 ≤1 包（**已进门禁并在收**：
@@ -1118,11 +1175,12 @@ handler 字段随即窄化，债面 **6 → 3**（`knowledge.go` 的死字段与
 | P3 契约与前端 | **部分：三套事件名契约已完成并双侧比对**；逐文件 ES 模块未做 | `go test -count=1 -run 'TestSSEPage|TestPersistedDetail|TestGeneratedSSEEnum|TestPageLoads' ./internal/handler/`；手拼帧基线 0 |
 | P4 进程外插件宿主 | **部分：进程外 ABI + 软出网已落**；netns/seccomp 硬边界与内嵌 CPython **未做** | `ls internal/pluginhost`；`grep -rl 'seccomp\|CLONE_NEWNET' internal/` → **无匹配**（这就是"未做"的证据） |
 | P5 审核流水线/商店 | **部分：客户端强制 + 制品签名/撤销已落**；registry 服务端、气隙离线包、沙箱引爆自动化 **未做** | `ls internal/artifact`；`ls internal/registry` → **不存在** |
-| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、数据层 5 个 Store 面、**handler 层不再持有任何数据库句柄**（18 个域用各自的窄接口 + 1 个死字段删除）、handler 裸 SQL 0、Eino 6 包（适配外 3 包）、`AgentHandler` 水位与审计注入门禁 | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `0 structs hold *database.DB, 18 hold their own store interface, 990 struct fields scanned` |
+| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、数据层 5 个 Store 面、**handler 层不再持有任何数据库句柄**（18 个域用各自的窄接口 + 1 个死字段删除）、handler 裸 SQL 0、Eino 6 包（适配外 3 包）、`AgentHandler` 六刀至 **88 方法/21 文件**、审计注入门禁、手写 OpenAPI 文档按域拆成 5 个分组文件 + golden（157 操作逐字节等值） | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `0 structs hold *database.DB, 18 hold their own store interface, 990 struct fields scanned`；`go test -count=1 -run 'TestOpenAPI' ./internal/handler/` |
 | §6.1 社区知识控制 | **代码层已落**（围栏 + 入库拒绝 + 装配点守卫）；是否按运行期不可信处理仍待裁决（决策项 4） | `go test -count=1 ./internal/contentpolicy/` |
 
-**没有做成的事**（不假装完成）：`AgentHandler` 分解本体（112 方法/21 文件，仍是全仓最大的类型；
-只搬出了中断队列读面与收尾链路两族，见 §11「分解第一刀」「第二刀」）、
+**没有做成的事**（不假装完成）：`AgentHandler` 分解本体（88 方法/21 文件，仍是全仓最大的类型；
+六刀搬出中断队列读面、收尾链路、审批配置面与其状态、挂起审批应答面四族，
+剩下的 13 个方法按已定边界属于运行链路、就该留在这里，见 §11「分解第 3–5 刀」）、
 ~~剩余 3 个域的窄接口~~（**已在第五片做完**：阻塞点是 `h.db` 逃逸进别包签名，解法是给那些函数
 声明消费者接口——`project.Store`/`agentfinalizer.Store`/`attackchain.Store`/`workflow.Store`，
 19 → 0）、Eino 收到 ≤1 包、
@@ -1158,18 +1216,24 @@ origin  https://github.com/AIPentest/CyberStrikeAI.git  # 上游父仓库，只�
 
 1. **窄接口的下一层（原任务 #18）已完成**：handler 层持有裸句柄的结构体 **3 → 0**，
    判据也从"只许降"翻成硬零 `TestHandlerLayerHoldsNoGodObject` + 形状门禁
-   `TestNarrowedFieldsAreOnlyAssignedThroughNarrow`。**`AgentHandler` 分解两刀已落**：
-   中断队列读面 9 个方法进 `HITLQueue`、收尾链路 10 个方法进 `runFinalizer`，
-   水位 **130 → 112 方法、23 → 21 文件**，上限已收紧并逐刀探针验红（见 §11「分解第一刀」「第二刀」）。
-   下一刀继续 HITL 这一族：剩下的 **32 个方法/7 个文件**（`hitl.go` 20、`hitl_audit_agent.go` 5、
-   `hitl_context.go` 3，`hitl_execution.go`/`hitl_config_savers.go`/`hitl_audit_backend.go`/
-   `batch_hitl.go` 各 1），它们与 agent run loop 共享任务/会话/SSE 状态，
-   切之前要先决定"运行链路"和"审批链路"的边界在哪；
-   做法沿用本轮验证过的顺序：先给被搬方法依赖的跨域调用声明消费者接口，再移方法，再降基线、复跑探针。
-   第二刀已经示范过一次"该留就留"：`tryAutoContinueAfterFinalization` 驱动 Runner 续跑、
-   拿着 `progressCallback`/`curHistory`，为了搬它再造两层接口就是把分解做成搬运。
-   三条只降门禁（方法数 112、文件数 21、整包 setter 64）会把它锁住：搬走得让数字下降，塞回来会红。
-2. 需要你插队的只有一件：**§10 决策项 1**（`agent:local-execute` 是否作为阻断项立即处理），
+   `TestNarrowedFieldsAreOnlyAssignedThroughNarrow`。**`AgentHandler` 分解六刀已落**：
+   中断队列读面 9 个方法进 `HITLQueue`、收尾链路 10 个方法进 `runFinalizer`、
+   11 个审批配置端点与其配置状态进 `HitlPolicy`、挂起审批的应答面 3 个端点回 `HITLQueue`，
+   水位 **130 → 88 方法、23 → 21 文件**，上限逐刀收紧并探针验红（见 §11「分解第 3–5 刀」）。
+   **HITL 这一族的边界已经定完并落地**：规则*是什么*归 `HitlPolicy`，谁在等人归 `HITLQueue`，
+   "工具调用里等一个决定"那 **13 个方法/6 个文件**留在 run loop —— 它们与 task/会话/SSE 同呼吸，
+   再搬就是为搬运造两层接口（第二刀的 `tryAutoContinueAfterFinalization` 已示范过一次"该留就留"）。
+   三条只降门禁（方法数 88、文件数 21、整包 setter 64）会把它锁住：搬走得让数字下降，塞回来会红；
+   另加两条防回潮：`TestPendingInterruptMethodsAreNotOnAgentHandler`（应答面长回 agent 即红）与
+   `TestHITLManagerPrivateStateStaysPrivate`（manager 私有状态被第二个主人经字段触碰即红）。
+2. **下一处真正的大头是前端，不是 handler**：`web/static/js/chat.js` 11,232 行、
+   `monitor.js` 9,712 行（`wc -l web/static/js/chat.js web/static/js/monitor.js`），
+   逐文件 ES 模块改造仍在报告 P3 的"去重 2,800–3,200 行"上；
+   后端 API 错误串未 i18n——口径与数字都要可复验：
+   `grep -rhoE '"(error|message)": "[^"]*"' internal/handler/*.go | grep -c '[一-龥]'` = **391 条中文**
+   （同一条命令去掉 `grep -c` 换 `-vc` = 132 条 ASCII）。属契约变更，要连同前端字典一起动。
+   再往后才是 `internal/database` 那 361 个方法按域继续切、Eino 收到 ≤1 包、session 事件溯源。
+3. 需要你插队的只有一件：**§10 决策项 1**（`agent:local-execute` 是否作为阻断项立即处理），
    它决定社区制品的攻击面；其余决策项可以在 P4/P5 动工前再定。
 
 ## 附录 A：如何复现本报告的关键数字

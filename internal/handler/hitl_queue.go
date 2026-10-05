@@ -19,11 +19,12 @@ type conversationAccessSource interface {
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 
-// HITLQueue owns the human-in-the-loop interrupt *read* surface: listing the pending queue and the
-// decided log, rendering them for the API, the per-conversation permission checks that decide what a
-// caller may see, and the delete endpoints that go through those checks.
+// HITLQueue owns the human-in-the-loop interrupt surface that is *not* the run loop: listing
+// the pending queue and the decided log, rendering them for the API, the per-conversation
+// permission checks that decide what a caller may see, and the endpoints that answer a pending
+// interrupt (decision, dismissal) or delete through those checks.
 //
-// It came out of AgentHandler because those nine methods shared only four things - the HITL domain
+// It came out of AgentHandler because those methods shared only four things - the HITL domain
 // store, a conversation-access check, the retention setting and the audit service - while the rest of
 // AgentHandler is the agent run loop. The state that stays in AgentHandler (tasks, sessions, SSE,
 // the agent client) is genuinely the conversation-execution concern; this was not.
@@ -31,15 +32,21 @@ type conversationAccessSource interface {
 // The audit service is a plain field rather than a SetAudit method: internal/app injects it by
 // assignment from AgentHandler.SetAudit, which keeps the "how many injection setters the wiring must
 // remember" number going down instead of up.
+//
+// `manager` is a constructor argument rather than something wired after the fact, because
+// NewAgentHandler builds the manager first and the queue needs it to answer an interrupt. It is
+// only ever asked two questions - release this interrupt, drop it from the in-memory set - so the
+// queue reaches HITLManager through its methods, never through `mu`/`pending`/`decideCh`.
 type HITLQueue struct {
 	access    conversationAccessSource
 	hitlStore *store.HITL
 	config    *config.Config
 	audit     *audit.Service
+	manager   *HITLManager
 }
 
-func newHITLQueue(access conversationAccessSource, hitlStore *store.HITL, cfg *config.Config) *HITLQueue {
-	return &HITLQueue{access: access, hitlStore: hitlStore, config: cfg}
+func newHITLQueue(access conversationAccessSource, hitlStore *store.HITL, cfg *config.Config, manager *HITLManager) *HITLQueue {
+	return &HITLQueue{access: access, hitlStore: hitlStore, config: cfg, manager: manager}
 }
 
 // hitlStoreOrErr is where the HTTP layer reaches the interrupt table now: through the domain store
@@ -227,4 +234,88 @@ func (q *HITLQueue) hitlConversationAllowed(c *gin.Context, conversationID strin
 		return false
 	}
 	return q.access.UserCanAccessResource(session.UserID, session.Scope, "conversation", conversationID)
+}
+
+// The pending interrupt's answer surface. These three endpoints used to sit on AgentHandler and
+// only forwarded to this queue's own store and access checks - DecideHITLInterrupt even reached into
+// HITLManager's mutex and pending map to drain a dismissed interrupt, which the manager now does
+// through DropPending. Wiring them here means one object owns "what is waiting on a human".
+func (q *HITLQueue) ListHITLPending(c *gin.Context) {
+	page, pageSize, offset := hitlListPaging(c)
+	f := hitlFilterFromRequest(c)
+	f.Access = hitlAccessFromRequest(c)
+	f.Limit, f.Offset = pageSize, offset
+	items, total, err := q.listHitlInterrupts(store.InterruptsAwaitingHuman, f)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": hitlInterruptMaps(items), "page": page, "pageSize": pageSize, "total": total})
+}
+
+type hitlDecisionReq struct {
+	InterruptID     string                 `json:"interruptId" binding:"required"`
+	Decision        string                 `json:"decision" binding:"required"`
+	Comment         string                 `json:"comment,omitempty"`
+	EditedArguments map[string]interface{} `json:"editedArguments,omitempty"`
+}
+
+func (q *HITLQueue) DecideHITLInterrupt(c *gin.Context) {
+	var req hitlDecisionReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if q.manager == nil {
+		c.JSON(500, gin.H{"error": "hitl manager unavailable"})
+		return
+	}
+	if !q.hitlInterruptAllowed(c, req.InterruptID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+		return
+	}
+	if err := q.manager.ResolveInterrupt(req.InterruptID, req.Decision, req.Comment, req.EditedArguments); err != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	if q.audit != nil {
+		q.audit.RecordOK(c, "hitl", "decision", "HITL 审批决策", "hitl_interrupt", req.InterruptID, map[string]interface{}{
+			"decision": req.Decision,
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (q *HITLQueue) DismissHITLInterrupt(c *gin.Context) {
+	var req struct {
+		InterruptID string `json:"interruptId" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	if q.manager == nil {
+		c.JSON(500, gin.H{"error": "hitl manager unavailable"})
+		return
+	}
+	if !q.hitlInterruptAllowed(c, req.InterruptID) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
+		return
+	}
+	s, storeErr := q.hitlStoreOrErr()
+	if storeErr != nil {
+		c.JSON(500, gin.H{"error": storeErr.Error()})
+		return
+	}
+	n, err := s.Dismiss(req.InterruptID, "dismissed by user")
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+	if n == 0 {
+		c.JSON(404, gin.H{"error": "interrupt not found or already resolved"})
+		return
+	}
+	q.manager.DropPending(req.InterruptID, "dismissed by user")
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

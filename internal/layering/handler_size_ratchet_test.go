@@ -16,10 +16,13 @@ import (
 //	Set* methods in internal/handler: 64 across 21 receiver types,
 //	18 of which are the same SetAudit repeated handler by handler
 //
-// Those became the ceilings. Two cuts have landed since: the HITL interrupt read surface (nine
-// methods, hitl_queue.go) and the finalization service (ten methods, runFinalizer in
-// finalization_helpers.go), which is why the numbers below are 112/21 rather than 130/23 - and why
-// the setter ceiling did not move: neither collaborator declares a Set* method. The finalizer takes
+// Those became the ceilings. Five cuts have landed since, which is why the numbers below are
+// 88/21 rather than 130/23: the HITL interrupt read surface (nine methods, hitl_queue.go), the
+// finalization service (ten methods, runFinalizer in finalization_helpers.go), the eleven
+// approval-configuration endpoints (HitlPolicy), the configuration state those endpoints read
+// (same type - the cut was only real when the policy stopped reading back through the agent),
+// and the pending interrupt's answer surface (list / decide / dismiss, back on HITLQueue). The
+// setter ceiling never moved: not one of them declared a Set* method. The finalizer takes
 // four things and nothing else (narrowed storage, logger, one cancel call, one message-content
 // write), and AgentHandler hands itself in for the single write it needs.
 //
@@ -28,7 +31,7 @@ import (
 // something adds one more method to the biggest type because that is the path of least
 // resistance, and the doc's diagnosis quietly becomes worse.
 //
-// The tool layer is the third cut and the reason the ConfigHandler ceiling is 38 rather than 45.
+// The tool layer is a cut on a different type, and the reason the ConfigHandler ceiling is 38 rather than 45.
 // Making the capability table the source of the recipe list needed five methods' worth of logic
 // (read the table, refresh the recipe layer, re-register the tool surface, rebuild those three
 // under one lock, snapshot the injected closures) plus a mutex of its own. Adding them to
@@ -40,7 +43,7 @@ import (
 // the map below - it has no ambition to be a handler; if it grows into one, it gets a ceiling then.
 
 const (
-	agentHandlerMethodCeiling = 91
+	agentHandlerMethodCeiling = 88
 	agentHandlerFileCeiling   = 21
 	setterCeiling             = 64
 )

@@ -10,16 +10,17 @@ import (
 // is verified against testdata/routes.golden.txt.
 func (deps routeDeps) registerHitlRoutes(protected *gin.RouterGroup) {
 	agentHandler := deps.agentHandler
-	// The interrupt log surface moved onto its own collaborator; the paths and methods did not, so
+	// Everything an operator does *to* an interrupt - list what is waiting, read the decided log,
+	// answer one, dismiss one - is on HITLQueue now. Paths and methods are unchanged, so
 	// testdata/routes.golden.txt still has to match registration-for-registration.
 	hitlQueue := agentHandler.HITLQueue()
 
-	protected.GET("/hitl/pending", agentHandler.ListHITLPending)
+	protected.GET("/hitl/pending", hitlQueue.ListHITLPending)
 	protected.GET("/hitl/logs", hitlQueue.ListHITLLogs)
 	protected.DELETE("/hitl/logs", hitlQueue.DeleteHITLLogs)
 	protected.GET("/hitl/logs/:id", hitlQueue.GetHITLLog)
-	protected.POST("/hitl/decision", agentHandler.DecideHITLInterrupt)
-	protected.POST("/hitl/dismiss", agentHandler.DismissHITLInterrupt)
+	protected.POST("/hitl/decision", hitlQueue.DecideHITLInterrupt)
+	protected.POST("/hitl/dismiss", hitlQueue.DismissHITLInterrupt)
 	protected.GET("/hitl/config/:conversationId", agentHandler.HitlPolicy().GetConversationConfig)
 	protected.PUT("/hitl/config", agentHandler.HitlPolicy().UpsertConversationConfig)
 	protected.GET("/hitl/tool-whitelist", agentHandler.HitlPolicy().GetGlobalToolWhitelist)
