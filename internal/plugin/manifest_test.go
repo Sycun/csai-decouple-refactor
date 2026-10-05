@@ -133,7 +133,7 @@ func TestResolveDerivesNamesAndStampsOwnership(t *testing.T) {
 	if b.Name != "webapp pack" || b.Version != "1.0.0" {
 		t.Fatalf("bundle metadata = %q/%q", b.Name, b.Version)
 	}
-	wantIDs := []string{"role/webapp-lead", "agent/webapp", "skill/webapp-triage", "tool/webapp-scan"}
+	wantIDs := []string{"role/webapp-lead", "agent/webapp", "skill/webapp-triage", "tool/webapp-scan", "plugin/webapp"}
 	got := make([]string, 0, len(b.Units))
 	for _, u := range b.Units {
 		got = append(got, u.ID)

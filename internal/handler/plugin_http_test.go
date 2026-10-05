@@ -22,14 +22,18 @@ import (
 // it, and get an honest served/not-served flag per unit.
 
 type pluginTestEnv struct {
-	plugins  *PluginHandler
-	roles    *RoleHandler
-	tools    *recordingToolLayer
-	mcp      *recordingMCP
-	switches *recordingSwitches
-	table    *plugin.Table
-	bundles  string
-	recorder *httptest.ResponseRecorder
+	plugins *PluginHandler
+	roles   *RoleHandler
+	tools   *recordingToolLayer
+	mcp     *recordingMCP
+	// pluginsProvisioner stands in for the live plug-in host + capability table. It is nil in the
+	// shared environment because most tests never touch a plugin unit; a plugin test installs its
+	// own recording provisioner and rebuilds the handler with it.
+	pluginsProvisioner PluginProvisioner
+	switches           *recordingSwitches
+	table              *plugin.Table
+	bundles            string
+	recorder           *httptest.ResponseRecorder
 }
 
 // recordingMCP stands in for the external MCP manager so the test can see what a pack declared,
@@ -136,7 +140,7 @@ func newPluginTestEnv(t *testing.T, withBuiltInBundle bool) *pluginTestEnv {
 		},
 		switches: &recordingSwitches{},
 	}
-	env.plugins = NewPluginHandler(table, bundlesDir, roles, env.tools, env.mcp, env.switches, nil, zap.NewNop())
+	env.plugins = NewPluginHandler(table, bundlesDir, roles, env.tools, env.mcp, env.pluginsProvisioner, env.switches, nil, zap.NewNop())
 
 	if withBuiltInBundle {
 		// The real example pack, copied next to the test config so the install path is exercised
@@ -448,7 +452,7 @@ func TestPluginUnitDetachRespectsOwnership(t *testing.T) {
 }
 
 func TestPluginHandlerWithoutATableIsUnavailableNotPanic(t *testing.T) {
-	h := NewPluginHandler(nil, "", nil, nil, nil, nil, nil, zap.NewNop())
+	h := NewPluginHandler(nil, "", nil, nil, nil, nil, nil, nil, zap.NewNop())
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.GET("/api/plugins", h.GetState)

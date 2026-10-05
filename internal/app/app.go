@@ -582,7 +582,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	if externalMCPMgr != nil {
 		mcpProvisioner = externalMCPMgr
 	}
-	pluginHandler := handler.NewPluginHandler(pluginTable, filepath.Join(configDir, "bundles"), roleHandler, configHandler.Tools, mcpProvisioner, unitSwitches, auditSvc, log.Logger)
+	pluginHandler := handler.NewPluginHandler(pluginTable, filepath.Join(configDir, "bundles"), roleHandler, configHandler.Tools, mcpProvisioner, newPackPluginProvisioner(log.Logger), unitSwitches, auditSvc, log.Logger)
 	skillsHandler := handler.NewSkillsHandler(cfg, configPath, log.Logger)
 	bindAudit(skillsHandler, auditSvc)
 	fofaHandler := handler.NewFofaHandler(cfg, log.Logger)

@@ -60,6 +60,11 @@ func TestBuiltInCapabilityScanCoversEveryServedKind(t *testing.T) {
 		// MCP servers are live-managed declarations, not files in a scanned directory.
 		plugin.KindRole: "RoleHandler.Reload owns the roles directory",
 		plugin.KindMCP:  "external MCP servers are runtime declarations, not a scanned directory",
+		// A plugin unit is code that arrives inside a pack and is provisioned when the operator
+		// switches it on, after its binary has been checked against the reviewed list. There is no
+		// built-in plugins directory to scan, and adding one would mean the server ships a binary
+		// nobody reviewed.
+		plugin.KindPlugin: "pack plugins are declared by a bundle and verified on the switch",
 	}
 	for _, kind := range plugin.Kinds {
 		if sources[kind] || exempt[kind] != "" {

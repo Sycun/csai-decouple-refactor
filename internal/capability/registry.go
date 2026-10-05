@@ -67,6 +67,12 @@ const (
 	LayerBuiltin = "builtin"
 	LayerRecipe  = "recipe"
 	LayerRemote  = "remote"
+	// LayerPlugin holds the capabilities a capability pack's plugin binary provides, one subset per
+	// unit. They are their own layer because their authority chain is different: a recipe is
+	// content the operator wrote, a remote tool is inventory a server reported, and a plugin
+	// capability is code that arrived in a pack and was verified against a reviewed list at the
+	// moment the operator switched it on. Unplugging the pack must be able to erase exactly those.
+	LayerPlugin = "plugin"
 )
 
 func NewRegistry() *Registry {

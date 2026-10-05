@@ -28,6 +28,13 @@ func sampleBundleDir(t *testing.T, id, version string) string {
 	writeFile(t, filepath.Join(dir, "agents", id+".md"), "---\nname: "+id+"\n---\nbody\n")
 	writeFile(t, filepath.Join(dir, "skills", id+"-triage", "SKILL.md"), "---\nname: "+id+"-triage\n---\nsteps\n")
 	writeFile(t, filepath.Join(dir, "tools", id+"-scan.yaml"), "name: "+id+"-scan\ncommand: /bin/true\n")
+	writeFile(t, filepath.Join(dir, "bin", id+"-plugin"), "#!/bin/sh\nexit 0\n")
+	if err := os.Chmod(filepath.Join(dir, "bin", id+"-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The binary is resolved against the pack directory (not the declaration's own folder), which is
+	// what makes "must stay inside the pack" a single rule a reader can check.
+	writeFile(t, filepath.Join(dir, "plugins", id+".yaml"), "pluginId: "+id+"\nbinary: bin/"+id+"-plugin\ncapabilities:\n  - id: "+id+".scan\n    class: readonly\n")
 	writeFile(t, filepath.Join(dir, ManifestFileName), fmt.Sprintf(`id: %s
 name: %s pack
 version: %s
@@ -41,7 +48,9 @@ units:
     path: skills/%s-triage
   - kind: tool
     path: tools/%s-scan.yaml
-`, id, id, version, id, id, id, id))
+  - kind: plugin
+    path: plugins/%s.yaml
+`, id, id, version, id, id, id, id, id))
 	return dir
 }
 

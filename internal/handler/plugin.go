@@ -31,6 +31,10 @@ type PluginHandler struct {
 	// mcp is the live external-MCP manager. A pack that declares a server writes it there and
 	// removes it from there, so the declaration has one home; installing never starts it.
 	mcp MCPProvisioner
+	// plugins is the live plug-in host plus capability table for the kind that ships executable
+	// code: a pack's plugin unit declares a trust domain, gets checked against what its binary
+	// actually provides, and only then becomes callable.
+	plugins PluginProvisioner
 	// switches remembers the operator's on/off decision outside this process. A bundle's files
 	// must not be edited after install, so the console's switch had nowhere durable to go, and a
 	// restart rebuilt every bundled unit as enabled.
@@ -64,10 +68,10 @@ type catalogPublisher interface {
 // SetAudit method on purpose: every other handler is wired with a setter that the assembly has
 // to remember, which is why an audit-completeness gate exists for them. Here forgetting is a
 // compile error, so the handler is also deliberately outside that gate's scope.
-func NewPluginHandler(table *plugin.Table, bundlesDir string, publisher catalogPublisher, tools toolLayerRebuilder, mcpManager MCPProvisioner, switches switchMemory, auditSvc *audit.Service, logger *zap.Logger) *PluginHandler {
+func NewPluginHandler(table *plugin.Table, bundlesDir string, publisher catalogPublisher, tools toolLayerRebuilder, mcpManager MCPProvisioner, pluginProvisioner PluginProvisioner, switches switchMemory, auditSvc *audit.Service, logger *zap.Logger) *PluginHandler {
 	return &PluginHandler{
 		table: table, bundles: bundlesDir, republish: publisher, tools: tools,
-		mcp: mcpManager, switches: switches, audit: auditSvc, logger: logger,
+		mcp: mcpManager, plugins: pluginProvisioner, switches: switches, audit: auditSvc, logger: logger,
 	}
 }
 
@@ -93,6 +97,10 @@ var servedKinds = map[plugin.Kind]string{
 	plugin.KindSkill: "",
 	plugin.KindTool:  "",
 	plugin.KindMCP:   "",
+	// A plugin unit is served once its binary's advertised entry points have been checked against
+	// the reviewed list and registered; until then the table holds a declaration nobody can call.
+	// liveUnitView reports that per unit, which is why this entry is empty rather than a reason.
+	plugin.KindPlugin: "",
 }
 
 func unitServed(u plugin.Unit) (bool, string) {
@@ -117,6 +125,10 @@ func toUnitView(u plugin.Unit) unitView {
 // declaration of the same name (the file wins there, and the pack loses the live slot).
 func (h *PluginHandler) liveUnitView(u plugin.Unit) unitView {
 	v := toUnitView(u)
+	if u.Kind == plugin.KindPlugin && v.Served {
+		v.Served, v.Reason = h.pluginServedState(u)
+		return v
+	}
 	if u.Kind != plugin.KindMCP || !v.Served {
 		return v
 	}
@@ -208,11 +220,18 @@ func (h *PluginHandler) Install(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
+	if err := h.checkPluginUnits(bundle); err != nil {
+		// Same rule for code: a pack whose plugin declaration does not resolve, or whose capability
+		// list is unusable, is refused before it can be half-installed.
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	if err := h.table.InstallBundle(bundle); err != nil {
 		h.replyMutationError(c, "install", bundle.ID, err)
 		return
 	}
 	declared, mcpMessage := h.installMCPDeclarations(bundle)
+	pluginDeclared, pluginMessage := h.declarePluginUnits(bundle)
 	report := h.republishCatalog(c, bundleHasKind(bundle, plugin.KindTool))
 	if h.audit != nil {
 		h.audit.RecordOK(c, "plugin", "bundle_install", "安装能力包", "plugin_bundle", bundle.ID, map[string]interface{}{
@@ -232,6 +251,13 @@ func (h *PluginHandler) Install(c *gin.Context) {
 		body["mcp_started"] = false
 		if mcpMessage != "" {
 			body["mcp_message"] = mcpMessage
+		}
+	}
+	if pluginDeclared > 0 || pluginMessage != "" {
+		body["plugin_declared"] = pluginDeclared
+		body["plugin_started"] = false
+		if pluginMessage != "" {
+			body["plugin_message"] = pluginMessage
 		}
 	}
 	c.JSON(http.StatusOK, body)
@@ -295,6 +321,7 @@ func (h *PluginHandler) Uninstall(c *gin.Context) {
 		return
 	}
 	removed, mcpMessage := h.dropMCP(existing.Units)
+	pluginsRemoved, pluginsMessage := h.dropPluginUnits(existing.Units)
 	report := h.republishCatalog(c, wantTools)
 	if h.audit != nil {
 		h.audit.RecordOK(c, "plugin", "bundle_uninstall", "卸载能力包", "plugin_bundle", id, map[string]interface{}{
@@ -311,6 +338,12 @@ func (h *PluginHandler) Uninstall(c *gin.Context) {
 		body["mcp_removed"] = removed
 		if mcpMessage != "" {
 			body["mcp_message"] = mcpMessage
+		}
+	}
+	if pluginsRemoved > 0 || pluginsMessage != "" {
+		body["plugin_removed"] = pluginsRemoved
+		if pluginsMessage != "" {
+			body["plugin_message"] = pluginsMessage
 		}
 	}
 	c.JSON(http.StatusOK, body)
@@ -346,6 +379,27 @@ func (h *PluginHandler) EnableUnit(c *gin.Context) {
 	}
 	report := h.republishCatalog(c, unitIDKind(id) == plugin.KindTool)
 	mcpStarted, mcpMessage := false, ""
+	pluginCaps, pluginMessage := []string(nil), ""
+	if unitIDKind(id) == plugin.KindPlugin {
+		// The switch is the operator's consent to run the binary, so this is where a plugin's trust
+		// domain is declared and its entry points verified. A refusal reverts the unit: the console
+		// must not show a plugin as enabled that nothing can call.
+		ids, message, ok := h.applyPluginSwitch(unit)
+		if !ok {
+			if _, err := h.table.SetEnabled(id, false); err != nil {
+				message = fmt.Sprintf("%s；且开关回滚失败：%v", message, err)
+			}
+			unit.Enabled = false
+			if h.audit != nil {
+				h.audit.RecordOK(c, "plugin", "unit_enable_refused", "拒绝启用插件单元", "plugin_unit", id, map[string]interface{}{
+					"reason": message,
+				})
+			}
+			c.JSON(http.StatusConflict, gin.H{"error": message, "unit": h.liveUnitView(unit)})
+			return
+		}
+		pluginCaps, pluginMessage = ids, message
+	}
 	if unitIDKind(id) == plugin.KindMCP {
 		// The switch is the operator's decision to run the process, so this is where a declared
 		// server is allowed to start - never install.
@@ -369,6 +423,15 @@ func (h *PluginHandler) EnableUnit(c *gin.Context) {
 			respBody["mcp_message"] = mcpMessage
 		}
 	}
+	if unitIDKind(id) == plugin.KindPlugin {
+		// What came back is the set the running binary proved it provides, so the console can show
+		// the operator the entry points they just made callable.
+		respBody["plugin_applied"] = unit.Enabled
+		respBody["plugin_capabilities"] = pluginCaps
+		if pluginMessage != "" {
+			respBody["plugin_message"] = pluginMessage
+		}
+	}
 	if switchMessage != "" {
 		respBody["switch_message"] = switchMessage
 	}
@@ -385,6 +448,13 @@ func (h *PluginHandler) EnableUnit(c *gin.Context) {
 func (h *PluginHandler) rememberSwitch(u plugin.Unit) (bool, string) {
 	if u.Kind == plugin.KindMCP {
 		return false, "包声明的 MCP 服务器每次启动都回到停用状态，这个开关只在本次进程内有效；要跨重启常驻请把它写进 config.yaml"
+	}
+	if u.Kind == plugin.KindPlugin {
+		// Same rule, stricter reason: a pack's binary is code, and re-verifying it against the
+		// reviewed list at every start is what keeps an updated pack from running something nobody
+		// re-approved. So an "on" here is not durable, and saying so beats recording a promise the
+		// boot path will not keep.
+		return false, "包声明的插件每次启动都回到停用状态（需要重新核对二进制提供的能力），这个开关只在本次进程内有效"
 	}
 	if h.switches == nil {
 		return false, "开关未落库：装配没有传入开关存储，重启后本单元回到源文件声明的状态"

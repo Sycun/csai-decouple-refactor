@@ -96,7 +96,7 @@ func matches(kind Kind, path string, isDir bool) (bool, error) {
 		return false, nil
 	}
 	switch kind {
-	case KindRole, KindTool, KindMCP:
+	case KindRole, KindTool, KindMCP, KindPlugin:
 		if isDir {
 			return false, nil
 		}

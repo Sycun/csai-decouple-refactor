@@ -38,10 +38,13 @@ const (
 	KindSkill Kind = "skill" // skills/<name>/SKILL.md
 	KindTool  Kind = "tool"  // tools/<name>.yaml -> security tool recipe
 	KindMCP   Kind = "mcp"   // an external MCP server declaration
+	// KindPlugin is the only kind that ships executable code: a plugin binary inside the pack plus
+	// the reviewed list of the entry points it provides. The other five ship content.
+	KindPlugin Kind = "plugin"
 )
 
 // Kinds is every accepted value, in the order a bundle should report them.
-var Kinds = []Kind{KindRole, KindAgent, KindSkill, KindTool, KindMCP}
+var Kinds = []Kind{KindRole, KindAgent, KindSkill, KindTool, KindMCP, KindPlugin}
 
 func (k Kind) Valid() bool {
 	for _, want := range Kinds {

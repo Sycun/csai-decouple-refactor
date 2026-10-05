@@ -16,9 +16,17 @@ import (
 // capability that declares a plugin runtime fail closed at execution instead of
 // silently running in-process.
 func buildPluginHost(cfg *config.Config, configPath string, logger *zap.Logger) *pluginhost.Service {
-	if cfg == nil || !cfg.PluginHost.Enabled || len(cfg.PluginHost.Domains) == 0 {
+	if cfg == nil || !cfg.PluginHost.Enabled {
 		pluginhost.InstallService(nil)
 		return nil
+	}
+	if len(cfg.PluginHost.Domains) == 0 {
+		// Enabled with no domains is not "no host": a capability pack may declare the first trust
+		// domain itself, which is the whole point of letting a pack ship code. Returning nil here
+		// would make the operator's own config a prerequisite for somebody else's plug-in.
+		service := pluginhost.NewService(nil, logger)
+		pluginhost.InstallService(service)
+		return service
 	}
 
 	domains := map[string]pluginhost.Config{}

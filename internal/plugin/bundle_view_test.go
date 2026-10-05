@@ -9,8 +9,8 @@ import "testing"
 func TestBundleViewsFollowTheUnitSwitch(t *testing.T) {
 	table := NewTable()
 	bundle := installSample(t, table, "parity", "1.0.0")
-	if len(bundle.Units) != 4 {
-		t.Fatalf("sample bundle has %d units, want 4", len(bundle.Units))
+	if len(bundle.Units) != 5 {
+		t.Fatalf("sample bundle has %d units, want 5 (one per kind except mcp)", len(bundle.Units))
 	}
 
 	target := bundle.Units[0]
