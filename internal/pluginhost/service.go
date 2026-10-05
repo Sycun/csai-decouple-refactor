@@ -21,6 +21,13 @@ type Service struct {
 	instances map[string]*Instance
 	logger    *zap.Logger
 	closed    bool
+
+	// fileDomains is the set of domains that arrived from config.yaml at construction, and
+	// packDomains the ones a capability pack declared since. They are kept apart because the
+	// authority question - can this name be taken over, or removed by an unplug - is answered by
+	// who declared it, not by what the live table happens to contain.
+	fileDomains map[string]bool
+	packDomains map[string]packDomainEntry
 }
 
 // NewService prepares the domain table without starting anything.
@@ -29,6 +36,7 @@ func NewService(configs map[string]Config, logger *zap.Logger) *Service {
 		logger = zap.NewNop()
 	}
 	domains := map[string]Config{}
+	fileOwned := make(map[string]bool, len(configs))
 	for name, cfg := range configs {
 		if cfg.PluginID == "" {
 			cfg.PluginID = name
@@ -37,8 +45,15 @@ func NewService(configs map[string]Config, logger *zap.Logger) *Service {
 			cfg.TrustDomain = name
 		}
 		domains[name] = cfg
+		fileOwned[name] = true
 	}
-	return &Service{configs: domains, instances: map[string]*Instance{}, logger: logger}
+	return &Service{
+		configs:     domains,
+		instances:   map[string]*Instance{},
+		logger:      logger,
+		fileDomains: fileOwned,
+		packDomains: map[string]packDomainEntry{},
+	}
 }
 
 // Enabled reports whether any trust domain is configured. A capability that asks
