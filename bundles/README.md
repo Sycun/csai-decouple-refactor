@@ -132,6 +132,18 @@ capabilities:
 也就是说：`class`、`permission`、`grants` 只来自这份声明文件（人写的、跟着包一起签的），
 **永远不来自插件的自我描述**——能自我描述的组件就能把自己描述成 `destructive`。
 
+**指纹盖住二进制**：`plugin` 单元的 digest 不是声明文件那一份，而是「声明 + 它点名的可执行文件」
+合成的一份（`plugin.DigestPaths`，按文件名+字节共同 framing，换文件/换名字都算改动）。
+安装期取一次，`Drifted()` 每次按同样算法重算——所以"装完之后有人把包里的可执行文件换了"
+会被报成漂移，而不是继续被当成没动过的单元执行下去。其他 kind 一个文件就是全部，走原来的单文件路径。
+
+**能按构建撤销**：登记进能力表的每个插件能力都带 `Publisher`（发布者）与 `ArtifactDigest`
+（**只含二进制本身**的摘要——撤销针对的是一次构建，改一行说明文字不该让黑名单条目指向别的东西）。
+执行路径上的 `revocation` stage 每次都查这两个字段（`CheckProvenance`），所以
+① 按摘要撤销某个构建 → 下一次调用即拒；② 按发布者撤销 → 该包所有能力一起失效；
+③  shipped 产品代码不受影响。没有 provenance 的能力等于不可撤销，因此这一项不是可选装饰：
+`TestRevokedPackPluginBuildIsNotCallable` 直接断言注册出来的 spec 带摘要，并走真实 authorizer 验拒绝。
+
 其余规则与 MCP 声明同源：安装只进表不启动；`plugin_host.enabled` 为假时装配不装宿主，
 启用会被明确拒绝（不会退化成"在本进程里跑一跑看"）；宿主里 config.yaml 已声明的同名信任域
 **优先级更高**，包不能覆盖它，卸载包也不能把它删掉；出网一律走 `StrictEgress`，

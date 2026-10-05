@@ -59,16 +59,20 @@ type pluginUnitFile struct {
 // PluginUnitDeclaration is a validated plugin unit: the publisher, the binary inside the pack, and
 // the reviewed capability list.
 type PluginUnitDeclaration struct {
-	Publisher  string
-	Binary     string // absolute, inside the pack directory
-	Args       []string
-	EnvAllow   []string
-	Grants     []string
-	CallIdle   time.Duration
-	CallExec   time.Duration
-	Restarts   int
-	Version    string
-	Capability []PluginCapabilityDeclaration
+	Publisher string
+	Binary    string // absolute, inside the pack directory
+	// BinaryDigest fingerprints the executable alone, not the declaration-plus-binary pair: a
+	// revocation names a build, and rewriting a description line must not change which build a
+	// block list entry points at.
+	BinaryDigest string
+	Args         []string
+	EnvAllow     []string
+	Grants       []string
+	CallIdle     time.Duration
+	CallExec     time.Duration
+	Restarts     int
+	Version      string
+	Capability   []PluginCapabilityDeclaration
 }
 
 // PluginCapabilityDeclaration is one reviewed entry point of the plugin.
@@ -132,17 +136,22 @@ func LoadPluginUnitDeclaration(path, packDir string) (*PluginUnitDeclaration, er
 	if len(f.Capabilities) == 0 {
 		return nil, fmt.Errorf("插件 %s 没有声明任何能力：没有已审阅入口的插件不可调用", publisher)
 	}
+	binaryDigest, err := plugin.Digest(binary)
+	if err != nil {
+		return nil, fmt.Errorf("插件 %s: 无法为 binary 取摘要: %w", publisher, err)
+	}
 	decl := &PluginUnitDeclaration{
-		Publisher:  publisher,
-		Binary:     binary,
-		Args:       f.Args,
-		EnvAllow:   f.EnvAllow,
-		Grants:     f.Grants,
-		CallExec:   time.Duration(f.CallTimeout) * time.Second,
-		CallIdle:   time.Duration(f.IdleTimeout) * time.Second,
-		Restarts:   f.MaxRestarts,
-		Version:    strings.TrimSpace(f.Version),
-		Capability: make([]PluginCapabilityDeclaration, 0, len(f.Capabilities)),
+		Publisher:    publisher,
+		Binary:       binary,
+		BinaryDigest: binaryDigest,
+		Args:         f.Args,
+		EnvAllow:     f.EnvAllow,
+		Grants:       f.Grants,
+		CallExec:     time.Duration(f.CallTimeout) * time.Second,
+		CallIdle:     time.Duration(f.IdleTimeout) * time.Second,
+		Restarts:     f.MaxRestarts,
+		Version:      strings.TrimSpace(f.Version),
+		Capability:   make([]PluginCapabilityDeclaration, 0, len(f.Capabilities)),
 	}
 	seen := map[string]bool{}
 	for _, c := range f.Capabilities {
@@ -266,20 +275,25 @@ func approvalOf(raw string, class capability.Class) (capability.Approval, error)
 // governs recipe-plugin capabilities - there is no "plugin" branch to get wrong.
 func (d *PluginUnitDeclaration) SpecFor(c PluginCapabilityDeclaration) *capability.Spec {
 	return &capability.Spec{
-		ID:           c.ID,
-		Version:      d.Version,
-		Name:         c.ID,
-		Title:        c.Title,
-		Description:  c.Description,
-		Class:        c.Class,
-		Runtime:      capability.RuntimePluginAbi,
-		Permission:   c.Permission,
-		Approval:     c.Approval,
-		Grants:       parseGrantsOrEmpty(d.Grants),
-		Timeout:      c.Timeout,
-		Source:       "pack-plugin",
-		Publisher:    d.Publisher,
-		ParamsSchema: schemaOrNull(c.ParamsSchema),
+		ID:          c.ID,
+		Version:     d.Version,
+		Name:        c.ID,
+		Title:       c.Title,
+		Description: c.Description,
+		Class:       c.Class,
+		Runtime:     capability.RuntimePluginAbi,
+		Permission:  c.Permission,
+		Approval:    c.Approval,
+		Grants:      parseGrantsOrEmpty(d.Grants),
+		Timeout:     c.Timeout,
+		Source:      "pack-plugin",
+		Publisher:   d.Publisher,
+		// Provenance is what the execution-path revocation stage keys on
+		// (app.capability_policy.go: CheckProvenance(Publisher, ArtifactDigest)). Without the
+		// digest here a revoked pack build would stay callable, because nothing else on the call
+		// path knows which bytes the plugin it is starting was installed from.
+		ArtifactDigest: d.BinaryDigest,
+		ParamsSchema:   schemaOrNull(c.ParamsSchema),
 	}
 }
 

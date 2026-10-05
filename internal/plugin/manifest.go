@@ -130,7 +130,10 @@ func (m *Manifest) Resolve() (*Bundle, error) {
 		}
 		u.Bundle = b.ID
 		u.Enabled = true
-		digest, err := Digest(abs)
+		// For a kind with companions (plugin: declaration + the binary it names) this covers every
+		// file that defines the unit, and Drifted re-computes it the same way - so replacing a
+		// pack's executable after install is reported instead of executed silently.
+		digest, err := digestUnit(kind, abs)
 		if err != nil {
 			return nil, fmt.Errorf("bundle %s: digest %s: %w", b.ID, u.ID, err)
 		}

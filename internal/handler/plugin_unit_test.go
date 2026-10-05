@@ -394,3 +394,47 @@ func TestPluginSwitchWithoutAProvisionerIsRefused(t *testing.T) {
 		t.Fatalf("enabling without a provisioner returned %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// The packaging layer resolves the same `binary:` key to digest the executable, and it does so
+// without importing this package's schema knowledge. Two derivations of one path is a split waiting
+// to happen - so the two are compared here, on the same declaration, rather than assumed equal.
+func TestPluginCompanionAgreesWithTheLoader(t *testing.T) {
+	dir := packWith(t, pluginDeclaration)
+	decl, err := loadPack(t, dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	companion, err := plugin.PluginBinaryPath(filepath.Join(dir, "plugins", "ref.yaml"))
+	if err != nil {
+		t.Fatalf("companion: %v", err)
+	}
+	if companion != decl.Binary {
+		t.Fatalf("the packaging layer resolved %q and the loader %q", companion, decl.Binary)
+	}
+	// Revocation addresses a build, so the digest on the identity is the binary's own - not the
+	// declaration-plus-binary pair the unit's drift fingerprint uses.
+	want, err := plugin.Digest(companion)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decl.BinaryDigest != want {
+		t.Fatalf("decl.BinaryDigest = %q, want the binary digest %q", decl.BinaryDigest, want)
+	}
+	spec := decl.SpecFor(decl.Capability[0])
+	if spec.ArtifactDigest != want || spec.Publisher != "ref" {
+		t.Fatalf("the registered capability carries no provenance a revocation could name: %+v", spec)
+	}
+
+	// Editing only the binary changes the fingerprint the table records, and leaves the
+	// declaration's own digest alone.
+	if err := os.WriteFile(companion, []byte("#!/bin/sh\nexit 9\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	after, err := loadPack(t, dir)
+	if err != nil {
+		t.Fatalf("reload after the binary changed: %v", err)
+	}
+	if after.BinaryDigest == want {
+		t.Fatal("the binary digest survived the binary changing, so a revoked build stays callable")
+	}
+}

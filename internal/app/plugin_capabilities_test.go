@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"cyberstrike-ai/internal/authctx"
 	"cyberstrike-ai/internal/capability"
 	"cyberstrike-ai/internal/handler"
 	"cyberstrike-ai/internal/plugin"
@@ -274,4 +275,77 @@ func TestPackPluginProvisionerSatisfiesTheHandlerContract(t *testing.T) {
 	// Compile-time proof that the pack surface and the assembly agree on the interface; if this
 	// stops holding, the plug-in kind silently degrades to "declared, nobody can run it".
 	var _ handler.PluginProvisioner = newPackPluginProvisioner(nil)
+}
+
+// The point of recording provenance on a pack's plugin capability is that the block list can name
+// it. This walks the real path: install the pack's binary, provision it, revoke the build by
+// digest, and ask the MCP tool authorizer - the entry point a call actually goes through.
+func TestRevokedPackPluginBuildIsNotCallable(t *testing.T) {
+	usePluginHost(t)
+	dir := t.TempDir()
+	declarePlugin(t, dir, buildReferencePlugin(t), reviewedCapabilities())
+
+	unit := pluginUnit(dir)
+	decl, err := handler.LoadPluginUnitDeclaration(unit.Path, dir)
+	if err != nil {
+		t.Fatalf("declaration: %v", err)
+	}
+	provisioner := newPackPluginProvisioner(zap.NewNop())
+	if _, err := provisioner.ProvisionPackPlugin(unit, decl); err != nil {
+		t.Fatalf("provision: %v", err)
+	}
+	t.Cleanup(func() { provisioner.DropPackPlugin(unit) })
+
+	spec, err := capability.Global().Lookup("ref.echo")
+	if err != nil {
+		t.Fatalf("the capability never became addressable: %v", err)
+	}
+	if spec.ArtifactDigest == "" || spec.Publisher != "ref" {
+		t.Fatalf("a pack plugin capability registered without provenance: %+v", spec)
+	}
+
+	ctxFor := func() context.Context {
+		principal := authctx.NewPrincipal("u1", "user", "all", map[string]bool{"agent:local-execute": true})
+		return authctx.WithPrincipal(context.Background(), principal)
+	}
+	authorize := mcpToolAuthorizer(nil)
+	if err := authorize(ctxFor(), "ref.echo", nil); err != nil {
+		t.Fatalf("a freshly installed pack capability was refused before any revocation: %v", err)
+	}
+
+	path := writeRevocations(t, t.TempDir(), map[string]any{
+		"digests": map[string]any{spec.ArtifactDigest: map[string]any{"reason": "revoked build"}},
+	})
+	if err := LoadRevocations(path, zap.NewNop()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		empty := writeRevocations(t, t.TempDir(), map[string]any{"digests": map[string]any{}})
+		if err := LoadRevocations(empty, zap.NewNop()); err != nil {
+			t.Fatalf("reset the block list: %v", err)
+		}
+	})
+
+	err = authorize(ctxFor(), "ref.echo", nil)
+	if err == nil {
+		t.Fatal("a revoked pack build is still callable - the digest recorded on the identity is decorative")
+	}
+	if !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("the denial did not come from the revocation stage: %v", err)
+	}
+
+	// Publisher-level revocation reaches the same pack through the same stage, and shipped product
+	// code is untouched by either.
+	pubList := writeRevocations(t, t.TempDir(), map[string]any{
+		"publishers": map[string]any{"ref": map[string]any{"reason": "vendor pulled"}},
+	})
+	if err := LoadRevocations(pubList, zap.NewNop()); err != nil {
+		t.Fatal(err)
+	}
+	if err := authorize(ctxFor(), "ref.echo", nil); err == nil {
+		t.Fatal("a publisher revocation did not reach the pack's capability")
+	}
+	if _, err := capability.Global().Lookup("record_vulnerability"); err != nil {
+		t.Fatalf("shipped code disappeared during a publisher sweep: %v", err)
+	}
 }

@@ -299,7 +299,7 @@ func (t *Table) Drifted() []string {
 		if u.Digest == "" {
 			continue
 		}
-		now, err := Digest(u.Path)
+		now, err := digestUnit(u.Kind, u.Path)
 		if err != nil {
 			out = append(out, fmt.Sprintf("%s: source unreadable (%v)", id, err))
 			continue
