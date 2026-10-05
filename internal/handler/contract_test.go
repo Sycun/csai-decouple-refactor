@@ -154,7 +154,8 @@ func TestOpenAPIDocumentsOnlyRealRoutes(t *testing.T) {
 // Lower the bound as paths get documented - never raise it.
 func TestUndocumentedRouteRatchet(t *testing.T) {
 	// Measured against the current hand-written spec: 278 registered routes, 132 of
-	// them absent from openapi.go. Lower this as paths get documented; never raise it.
+	// them absent from the openapi_paths_*.go groups. Lower this as paths get
+	// documented; never raise it.
 	const baseline = 132
 
 	routes := registeredRoutes(t)
@@ -175,7 +176,7 @@ func TestUndocumentedRouteRatchet(t *testing.T) {
 	sort.Strings(missing)
 	if len(missing) > baseline {
 		t.Fatalf("%d registered routes are absent from the OpenAPI document, baseline is %d. "+
-			"Document the new ones in internal/handler/openapi.go (first 15: %v)", len(missing), baseline, missing[:min(len(missing), 15)])
+			"Document the new ones in the matching internal/handler/openapi_paths_*.go (first 15: %v)", len(missing), baseline, missing[:min(len(missing), 15)])
 	}
 	if len(missing) < baseline {
 		t.Logf("undocumented routes dropped to %d; tighten the baseline in TestUndocumentedRouteRatchet", len(missing))

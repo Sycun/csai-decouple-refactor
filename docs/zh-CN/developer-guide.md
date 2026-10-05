@@ -141,7 +141,7 @@ remote 里取（这是本项目实际的克隆形态：自己的 fork 叫 `mine`
    `h.db`/`m.db` 两个接收者分别设基线，只许降不许升。
 3. 在对应域的 `internal/app/routes_<domain>.go` 里注册路由（没有对应文件时才新建一个），
    并让 `go test ./internal/routes -run TestWriteGolden`（需 `CSAI_WRITE_ROUTE_GOLDEN=1`）更新路由基线。
-4. 如需对外文档，更新 `internal/handler/openapi.go`。
+4. 如需对外文档，把 path 加进 `internal/handler/openapi_paths_<分组>.go` 的对应分组。
 5. 如需前端调用，更新 `web/static/js/`。
 
 ## 数据库
@@ -206,7 +206,11 @@ i18n 规范见 [前端国际化方案](frontend-i18n.md)。
 
 ## OpenAPI
 
-`internal/handler/openapi.go` 维护内置 OpenAPI 输出。新增公开接口后建议同步补：
+`internal/handler/openapi.go` 组装内置 OpenAPI 输出；路径数据按域分在
+`openapi_paths_chat.go`、`openapi_paths_knowledge.go`、`openapi_paths_capabilities.go`、
+`openapi_paths_mcp.go`、`openapi_paths_ops.go`，公共 schema 在 `openapi_components.go`。
+分组之间不许出现同名 path（合并器会 panic），整张表由
+`TestOpenAPIOperationsGolden` 对着 golden 钉住。新增公开接口后建议同步补：
 
 - path
 - method

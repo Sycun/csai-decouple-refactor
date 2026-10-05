@@ -115,6 +115,6 @@ Plugins should not bypass platform controls:
   - Auth: `lib/auth-session.js`, `lib/api.js`, `lib/storage.js`
   - UI: `panel/panel.js`
   - Capture: `devtools.js`, `background/service-worker.js`
-- OpenAPI: `internal/handler/openapi.go`
+- OpenAPI: `internal/handler/openapi.go` assembles the document; path data lives in `openapi_paths_<group>.go`
 - External MCP: `internal/handler/external_mcp.go`
 - Web auth reference: `web/static/js/auth.js`

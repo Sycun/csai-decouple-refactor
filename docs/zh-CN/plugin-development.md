@@ -211,6 +211,6 @@ schema 越具体，HITL 越容易判断风险，Agent 也越不容易发散。
   - 认证：`lib/auth-session.js`、`lib/api.js`、`lib/storage.js`
   - 主 UI：`panel/panel.js`
   - 捕获：`devtools.js`、`background/service-worker.js`
-- OpenAPI：`internal/handler/openapi.go`
+- OpenAPI：`internal/handler/openapi.go` 组装，路径数据在 `openapi_paths_<分组>.go`
 - 外部 MCP：`internal/handler/external_mcp.go`
 - Web 端认证参考：`web/static/js/auth.js`

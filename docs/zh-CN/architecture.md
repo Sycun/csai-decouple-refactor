@@ -45,7 +45,7 @@ flowchart LR
 - `project.go`
 - `vulnerability.go`
 - `config.go`
-- `openapi.go`
+- `openapi.go`（OpenAPI 文档组装；路径数据在 `openapi_paths_<分组>.go`）
 
 Handler 负责参数解析、权限中间件后的业务协调和 HTTP 响应。
 

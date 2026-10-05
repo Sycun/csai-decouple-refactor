@@ -226,6 +226,6 @@ High-value tests:
 - One-click update: `internal/update/` (status, apply, rollback), HTTP surface in
   `internal/handler/update.go`, CLI switches in `cmd/server/update_cli.go`, thin shell in
   `upgrade.sh`
-- OpenAPI: `internal/handler/openapi.go`
+- OpenAPI: `internal/handler/openapi.go` plus its `openapi_paths_<group>.go` data files
 - Tool executor: `internal/security/executor.go`
 - Skill package: `internal/skillpackage/`

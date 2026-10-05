@@ -21,7 +21,7 @@ This guide defines baseline expectations when adding features, APIs, tools, fron
 - Endpoint is authenticated unless it is an explicit platform callback.
 - Mutations write audit events.
 - Long tasks write monitoring/task state.
-- `internal/handler/openapi.go` updated.
+- The matching `internal/handler/openapi_paths_<group>.go` updated.
 - API docs or recipes updated.
 - Handler tests added.
 

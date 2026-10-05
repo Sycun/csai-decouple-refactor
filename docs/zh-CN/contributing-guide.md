@@ -21,7 +21,7 @@
 - 接口受认证保护，除非明确是平台回调。
 - 修改类接口写审计。
 - 长任务写监控或任务状态。
-- 更新 `internal/handler/openapi.go`。
+- 更新 `internal/handler/openapi_paths_<分组>.go` 里对应分组的 path。
 - 更新 API 文档或 Recipe。
 - 增加 Handler 测试。
 

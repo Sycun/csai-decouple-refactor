@@ -396,7 +396,7 @@ curl -k https://127.0.0.1:8080/api/eino-agent \
 
 - 路由：`internal/app/app.go`
 - 认证：`internal/security/auth_middleware.go`
-- OpenAPI：`internal/handler/openapi.go`
+- OpenAPI：`internal/handler/openapi.go` 组装，路径数据按域拆在 `openapi_paths_<分组>.go`
 - 单代理：`internal/handler/eino_single_agent.go`
 - 多代理：`internal/handler/multi_agent.go`
 - 资产接口：`internal/handler/asset.go`

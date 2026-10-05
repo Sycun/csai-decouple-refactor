@@ -257,7 +257,7 @@ curl -k https://127.0.0.1:8080/api/eino-agent \
 
 - Routes: `internal/app/app.go`
 - Auth middleware: `internal/security/auth_middleware.go`
-- OpenAPI: `internal/handler/openapi.go`
+- OpenAPI: `internal/handler/openapi.go` assembles the document; path data lives in `openapi_paths_<group>.go`
 - Single-agent: `internal/handler/eino_single_agent.go`
 - Multi-agent: `internal/handler/multi_agent.go`
 - Asset endpoints: `internal/handler/asset.go`
