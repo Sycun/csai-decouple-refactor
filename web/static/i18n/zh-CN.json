@@ -125,7 +125,8 @@
     "runtimeNone": "未运行",
     "runtimeRunning": "进程运行中",
     "runtimeStopped": "进程已停止",
-    "runtimeRestarts": "重启 {count} 次"
+    "runtimeRestartsPrefix": "重启 ",
+    "runtimeRestartsSuffix": " 次"
   },
   "update": {
     "title": "一键更新",

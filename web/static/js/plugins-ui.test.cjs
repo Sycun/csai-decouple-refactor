@@ -88,20 +88,17 @@ function harness(state, catalog, options = {}) {
         },
         showNotification(msg, type) { toasts.push({ msg, type }); },
         window: {
-            // Interpolation is supported because the runtime-restart chip counts restarts in the
-            // label; a harness that dropped opts would test a string no browser ever shows.
-            t(key, opts) {
+            // Deliberately no interpolation: the real page's i18next returns the resource string
+            // verbatim when a {placeholder} is passed, and a harness that substituted one would
+            // have kept asserting "重启 2 次" while the browser showed "重启 {count} 次".
+            t(key) {
                 const parts = key.split('.');
                 let node = zh;
                 for (const p of parts) {
                     if (!node || typeof node !== 'object') return key;
                     node = node[p];
                 }
-                let out = typeof node === 'string' ? node : key;
-                if (opts && typeof out === 'string') {
-                    Object.keys(opts).forEach(k => { out = out.replace('{' + k + '}', String(opts[k])); });
-                }
-                return out;
+                return typeof node === 'string' ? node : key;
             },
             showNotification(msg, type) { toasts.push({ msg, type }); },
             confirm() { return options.confirm !== false; },

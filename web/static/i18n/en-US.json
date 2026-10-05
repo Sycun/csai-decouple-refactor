@@ -125,7 +125,8 @@
     "runtimeNone": "not running",
     "runtimeRunning": "process running",
     "runtimeStopped": "process stopped",
-    "runtimeRestarts": "{count} restart(s)"
+    "runtimeRestartsPrefix": "",
+    "runtimeRestartsSuffix": " restarts"
   },
   "update": {
     "title": "One-Click Update",

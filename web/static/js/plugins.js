@@ -129,8 +129,13 @@ function pluginRuntimeNote(unit) {
     const row = rows.filter(item => item && item.domain === unit.name)[0];
     if (!row) return '<span class="plugin-chip">' + escapeHtml(pluginsT('runtimeNone')) + '</span>';
     const label = pluginsT(row.running ? 'runtimeRunning' : 'runtimeStopped');
+    // Composed from a prefix and a suffix rather than interpolated: this console's t() does not
+    // substitute variables - a browser returned "重启 {count} 次" verbatim for a key written that
+    // way, and {n} too - so the number has to be put in by the caller, and the two halves are what
+    // keeps the word order right in both languages.
     const restarts = Number(row.restarts) > 0
-        ? ' · ' + pluginsT('runtimeRestarts', { count: Number(row.restarts) }) : '';
+        ? ' · ' + pluginsT('runtimeRestartsPrefix') + Number(row.restarts) + pluginsT('runtimeRestartsSuffix')
+        : '';
     return '<span class="plugin-chip">' + escapeHtml(label + restarts) + '</span>';
 }
 
