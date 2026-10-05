@@ -99,6 +99,20 @@ func main() {
 			if request.ID == nil {
 				continue
 			}
+			// Two ways to answer badly, for the host's two rejection rules: the ABI shape and the
+			// publisher namespace. The default answer stays as it was, so every existing test is
+			// unaffected.
+			switch os.Getenv("REF_BAD_CAPS") {
+			case "objects":
+				responder.reply(*request.ID, []map[string]any{{"id": "ref.echo"}})
+				continue
+			case "foreign":
+				responder.reply(*request.ID, []string{"ref.echo", "vendor2.tool"})
+				continue
+			case "blank":
+				responder.reply(*request.ID, []string{"ref.echo", "  "})
+				continue
+			}
 			responder.reply(*request.ID, []string{"ref.echo", "ref.env", "ref.grant", "ref.egress", "ref.crash", "ref.badcallback"})
 		case "capabilities/invoke":
 			if request.ID == nil {

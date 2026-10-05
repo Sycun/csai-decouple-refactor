@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -69,30 +68,10 @@ func (s *Service) Invoke(ctx context.Context, domain, capabilityID string, param
 	if s == nil {
 		return nil, ErrNotConfigured
 	}
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		return nil, errors.New("pluginhost: service is closed")
+	instance, err := s.instanceFor(domain)
+	if err != nil {
+		return nil, err
 	}
-	instance, ok := s.instances[domain]
-	if !ok {
-		cfg, exists := s.configs[domain]
-		if !exists {
-			s.mu.Unlock()
-			return nil, fmt.Errorf("%w: trust domain %q is not configured", ErrNotConfigured, domain)
-		}
-		created, err := NewInstance(cfg, s.logger)
-		if err != nil {
-			s.mu.Unlock()
-			return nil, err
-		}
-		instance = created
-		s.instances[domain] = instance
-		s.mu.Unlock()
-	} else {
-		s.mu.Unlock()
-	}
-
 	return instance.Invoke(ctx, capabilityID, params, timeout)
 }
 

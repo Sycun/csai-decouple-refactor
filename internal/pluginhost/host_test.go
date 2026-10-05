@@ -41,7 +41,7 @@ func newInstance(t *testing.T, binary string, cfg Config) *Instance {
 	if cfg.PluginID == "" {
 		cfg.PluginID = "acme"
 	}
-	cfg.AllowedEnvKeys = append(cfg.AllowedEnvKeys, "REF_BAD_PROTOCOL")
+	cfg.AllowedEnvKeys = append(cfg.AllowedEnvKeys, "REF_BAD_PROTOCOL", "REF_BAD_CAPS")
 	instance, err := NewInstance(cfg, zap.NewNop())
 	if err != nil {
 		t.Fatalf("new instance: %v", err)

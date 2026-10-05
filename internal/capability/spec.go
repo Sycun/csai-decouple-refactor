@@ -43,7 +43,15 @@ const (
 	RuntimeGoBuiltin  Runtime = "go-builtin"
 	RuntimeRecipeExec Runtime = "recipe:exec"
 	RuntimePluginHost Runtime = "plugin-host:python"
-	RuntimeMCPRemote  Runtime = "mcp:remote"
+	// RuntimePluginAbi is a capability the plugin binary itself provides and the host discovers
+	// over capabilities/list, as opposed to a recipe whose script the host runs. The ":python"
+	// in RuntimePluginHost is historical: the ABI is language-neutral, so a discovered capability
+	// must not be labelled with an interpreter nobody chose. Both share the "plugin-host:" prefix
+	// that pluginhost.IsPluginRuntime keys on, so out-of-process routing needs no new branch -
+	// and adding one would be the mistake, because the prefix check is what keeps untrusted code
+	// out of this process.
+	RuntimePluginAbi Runtime = "plugin-host:abi"
+	RuntimeMCPRemote Runtime = "mcp:remote"
 )
 
 // Approval controls whether a call needs a human decision before it runs.
