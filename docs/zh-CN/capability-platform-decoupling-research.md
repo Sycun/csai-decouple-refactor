@@ -1204,9 +1204,15 @@ CSAI_WRITE_OPENAPI_GOLDEN=1 go test ./internal/handler -run TestOpenAPIOperation
 现在"启用但没有域"是一个空的可用的宿主；只有 `enabled` 为假才没有宿主。
 宿主未配置时启用被明确拒绝，**不退化成"在本进程里试着跑一下"**。
 
-**仍然没有做的**：包内二进制的签名/来源校验接到 `internal/artifact` 的撤销判定上（现在靠
-声明与核对，不靠制品签名链）；netns/seccomp 级硬出网边界（插件仍走宿主侧 CONNECT 代理 +
-`StrictEgress`，这是代理白名单不是内核边界）；registry 服务端与气隙包导出。
+**同日补上的 provenance**：`plugin` 单元的指纹是「声明 + 它点名的二进制」合成的一份
+（`plugin.DigestPaths`；安装与 `Drifted()` 同一算法，所以**装完之后换掉可执行文件会被报成漂移**，
+而不是继续当没动过）。 登记的每个插件能力带 `Publisher` + `ArtifactDigest`（后者只含二进制：
+撤销针对一次构建，改一行说明文字不该让黑名单指向别的东西），执行路径的 `revocation` stage 每次调用都查
+——`TestRevokedPackPluginBuildIsNotCallable` 走真 authorizer：按摘要撤销该 build 下一次调用即拒、
+按发布者撤销整包即拒、内置代码不受影响。两条都有反向探针。
+**仍然没有做的**：包内二进制的**制品签名链**（现在靠声明+双向核对+摘要撤销，没有 Ed25519 覆盖可执行文件）；
+netns/seccomp 级硬出网边界（插件仍走宿主侧 CONNECT 代理 + `StrictEgress`，这是代理白名单不是内核边界）；
+registry 服务端与气隙包导出。
 
 ### 明确还没做（不假装完成）
 
@@ -1233,7 +1239,8 @@ CSAI_WRITE_OPENAPI_GOLDEN=1 go test ./internal/handler -run TestOpenAPIOperation
   判断还剩 **23 个文件**（`i18n-tag.test.cjs` 里是只准降的 ratchet）。
 - P4 剩余：netns/seccomp 级硬出网边界（现在只有代理白名单 + cgroup/rlimit；**包携带的插件二进制
   走同一套 `StrictEgress` + 代理，并且开关必须重新核对能力清单**，见 §11「能力包携带可执行代码」）、
-  内嵌 CPython 发行、包内二进制的制品签名与撤销联动。
+  内嵌 CPython 发行、包内二进制的**制品签名链**（撤销联动**已做**：能力带 `Publisher` +
+  二进制自身的 `ArtifactDigest`，执行路径每次调用查；单元的指纹也盖住二进制，换文件即报漂移）。
 - P5 剩余：registry 服务端（签名发布、灰度、release-age 冷却）、气隙离线包导出/导入、沙箱引爆自动化。
 - §6.1 待决策：角色/skill/markdown-agent 文本是否也按运行期不可信处理（当前视为"已安装的运维者配置"）。
 - `docs/zh-CN/agent-finalization-best-practices.md` 缺 en-US 且引用旧域名 `docs.anthropic.com/en/docs/claude-code/*`，本报告已更正但未代改。
