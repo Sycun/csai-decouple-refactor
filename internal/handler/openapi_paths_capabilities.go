@@ -897,7 +897,7 @@ func openAPIPathsCapabilities() map[string]interface{} {
 						"name":        "kind",
 						"in":          "path",
 						"required":    true,
-						"description": "能力类别：role | agent | skill | tool | mcp",
+						"description": "能力类别：role | agent | skill | tool | mcp | plugin",
 						"schema": map[string]interface{}{
 							"type": "string",
 						},
@@ -935,14 +935,14 @@ func openAPIPathsCapabilities() map[string]interface{} {
 			"post": map[string]interface{}{
 				"tags":        []string{"能力插件"},
 				"summary":     "启用或停用单个能力单元",
-				"description": "只改能力表里的启停状态，不改任何源文件；因此包内单元的停用不会污染包的源码摘要(digest)。停用后运行路径不再使用该能力，但列表仍能看到它",
+				"description": "只改能力表里的启停状态，不改任何源文件；因此包内单元的停用不会污染包的源码摘要(digest)。停用后运行路径不再使用该能力，但列表仍能看到它。plugin 单元是例外中的例外：启用它意味着声明信任域、启动包内二进制并调 capabilities/list 双向核对，核对不过整单元回滚为停用并在 409 里说明差在哪",
 				"operationId": "enablePluginUnit",
 				"parameters": []map[string]interface{}{
 					{
 						"name":        "kind",
 						"in":          "path",
 						"required":    true,
-						"description": "能力类别：role | agent | skill | tool | mcp",
+						"description": "能力类别：role | agent | skill | tool | mcp | plugin",
 						"schema": map[string]interface{}{
 							"type": "string",
 						},
@@ -985,6 +985,9 @@ func openAPIPathsCapabilities() map[string]interface{} {
 					},
 					"401": map[string]interface{}{
 						"description": "未授权",
+					},
+					"409": map[string]interface{}{
+						"description": "plugin 单元的启用被拒绝：宿主未配置、插件提供的能力与审阅过的声明不一致，或登记失败；此时开关已回滚为停用",
 					},
 				},
 			},

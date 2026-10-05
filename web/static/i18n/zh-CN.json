@@ -118,8 +118,14 @@
       "agent": "子代理",
       "skill": "技能",
       "tool": "工具配方",
-      "mcp": "MCP 服务器"
-    }
+      "mcp": "MCP 服务器",
+      "plugin": "插件（可执行代码）"
+    },
+    "switchCapabilities": "已核对并登记 {count} 个能力",
+    "runtimeNone": "未运行",
+    "runtimeRunning": "进程运行中",
+    "runtimeStopped": "进程已停止",
+    "runtimeRestarts": "重启 {count} 次"
   },
   "update": {
     "title": "一键更新",
@@ -3678,7 +3684,6 @@
     "hitlPolicy": "工具审批",
     "hitlHint": "队列内所有任务（含后续添加的任务）使用此设置；白名单、审计策略和等待时限沿用全局配置。",
     "hitlSubtaskHint": "新增任务沿用队列的工具审批设置，可在队列详情中修改。",
-
     "title": "新建任务",
     "queueTitle": "任务标题",
     "queueTitlePlaceholder": "请输入任务标题（可选，用于标识和筛选）",

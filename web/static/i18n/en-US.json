@@ -118,8 +118,14 @@
       "agent": "Sub-agent",
       "skill": "Skill",
       "tool": "Tool recipe",
-      "mcp": "MCP server"
-    }
+      "mcp": "MCP server",
+      "plugin": "plugin (executable)"
+    },
+    "switchCapabilities": "verified and registered {count} capabilities",
+    "runtimeNone": "not running",
+    "runtimeRunning": "process running",
+    "runtimeStopped": "process stopped",
+    "runtimeRestarts": "{count} restart(s)"
   },
   "update": {
     "title": "One-Click Update",
@@ -3690,7 +3696,6 @@
     "hitlPolicy": "Tool approval",
     "hitlHint": "Applies to all tasks in this queue, including tasks added later. Uses the global whitelist, audit strategy and timeout.",
     "hitlSubtaskHint": "New tasks use the queue’s tool approval setting. Change it in queue details.",
-
     "title": "New task",
     "queueTitle": "Queue title",
     "queueTitlePlaceholder": "Enter queue title (optional, for identification and filtering)",

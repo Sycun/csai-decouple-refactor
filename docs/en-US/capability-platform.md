@@ -210,8 +210,9 @@ table (noted in `config.go`).
 
 ## 12. Capability units and hot-plug
 
-Five kinds of extension - roles, skills, markdown agents, tool recipes, MCP declarations - each
-used to have its own lifecycle, and **none of them could change without a restart**. They now share
+Six kinds of extension - roles, skills, markdown agents, tool recipes, MCP declarations and plugin
+binaries - each used to have their own lifecycle, and **none of them could change without a
+restart**. They now share
 one identity scheme and one live table:
 
 - `internal/plugin`: a `Unit` (identity `<kind>/<name>` plus source path plus install-time digest)
@@ -221,6 +222,16 @@ one identity scheme and one live table:
   shadow a shipped capability, a directory scan cannot shadow an installed bundle, re-installing the
   same id is an upgrade that reclaims only its own previous units, and unplugging detaches without
   deleting any file.
+- `plugin` is the **only kind that ships executable code**: the declaration's `capabilities` list is
+  the reviewed set of entry points, and switching the unit on makes the host start the binary, call
+  `capabilities/list` and compare **both directions** before anything is registered in
+  `capability.LayerPlugin`. An entry point the binary does not provide, or one it provides that
+  nobody wrote down, refuses the whole unit, reverts the switch and removes the trust domain it had
+  just declared. `class`, `permission` and `grants` come from the declaration file, never from the
+  plugin's self-description - a component that could describe itself could describe its way into
+  `destructive`. Installing declares nothing and starts nothing, and a switch is never replayed as
+  "on" after a restart so that an updated pack cannot run code nobody re-approved. Directory shape
+  and the full rule set are in `bundles/README.md`.
 - `bundles/<id>/bundle.yaml` is the shape of **packaging by role** (role + sub-agent + skills +
   tools); paths are confined to the bundle directory by `skillpackage.SafeRelPath` and `version` is
   mandatory, because a pack without one cannot be upgraded or rolled back. Format and ownership
@@ -298,7 +309,8 @@ one identity scheme and one live table:
   detach name what they forget. MCP is the deliberate exception: start-up re-declares those servers
   disabled regardless of any row, so that one switch answers `switch_persisted:false` and points at
   `config.yaml`, where a server that must survive restarts belongs.
-- `served:false` only tells the truth. All five kinds now have a run path that reads the table, so
+- `served:false` only tells the truth. Every one of the six kinds either reads the table on its run
+  path or is deliberately "served by the switch", so
   `servedKinds` is the same size as `plugin.Kinds` and `TestEveryKindReportsItsActualServedState`
   pins both directions (drop a kind and it is red; add a kind to `plugin.Kinds` without wiring it and
   it is red). For MCP there is a second condition the table cannot see: the live manager must

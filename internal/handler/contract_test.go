@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 
+	"cyberstrike-ai/internal/plugin"
 	"cyberstrike-ai/internal/routes"
 	"strings"
 	"testing"
@@ -180,5 +181,52 @@ func TestUndocumentedRouteRatchet(t *testing.T) {
 	}
 	if len(missing) < baseline {
 		t.Logf("undocumented routes dropped to %d; tighten the baseline in TestUndocumentedRouteRatchet", len(missing))
+	}
+}
+
+// TestEveryCapabilityKindHasAConsoleLabel is the front-end half of the kind list.
+//
+// The bundle console renders a unit's kind through plugins.kind.<kind> in both dictionaries, and
+// `plugin.Kinds` is the authority on what kinds exist. A kind without a label shows up in the UI as
+// the raw key - which is how a new capability kind would ship looking broken to every operator,
+// while every Go test stayed green.
+func TestEveryCapabilityKindHasAConsoleLabel(t *testing.T) {
+	for _, locale := range []string{"zh-CN", "en-US"} {
+		path := filepath.Join("..", "..", "web", "static", "i18n", locale+".json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		pluginsSection, ok := doc["plugins"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s has no plugins section", locale)
+		}
+		kinds, ok := pluginsSection["kind"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s has no plugins.kind block", locale)
+		}
+		for _, kind := range plugin.Kinds {
+			label, ok := kinds[string(kind)].(string)
+			if !ok || strings.TrimSpace(label) == "" {
+				t.Errorf("%s is missing a console label for capability kind %q", locale, kind)
+			}
+		}
+		// The other direction too: a label for a kind that no longer exists is dead weight that
+		// looks like coverage.
+		for name := range kinds {
+			known := false
+			for _, kind := range plugin.Kinds {
+				if string(kind) == name {
+					known = true
+				}
+			}
+			if !known {
+				t.Errorf("%s labels a kind %q that plugin.Kinds does not have", locale, name)
+			}
+		}
 	}
 }

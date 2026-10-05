@@ -129,6 +129,30 @@ func (p *packPluginProvisioner) PackPluginServed(name string) (bool, []string) {
 	return true, ids
 }
 
+// PackPluginRuntimes reports every live plug-in instance, labelled with the pack that declared it
+// when the declaration came from a pack. Sorted so the console order is stable across calls.
+func (p *packPluginProvisioner) PackPluginRuntimes() []handler.PluginRuntimeState {
+	host := pluginhost.Global()
+	if host == nil {
+		return nil
+	}
+	out := make([]handler.PluginRuntimeState, 0, len(host.Stats()))
+	for _, stats := range host.Stats() {
+		bundle, fromPack := host.PackDomainOwner(stats.PluginID)
+		out = append(out, handler.PluginRuntimeState{
+			Domain:    stats.PluginID,
+			Bundle:    bundle,
+			Running:   stats.Running,
+			Restarts:  stats.Restarts,
+			Grants:    stats.Grants,
+			ProxyAddr: stats.ProxyAddr,
+			FromPack:  fromPack,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Domain < out[j].Domain })
+	return out
+}
+
 func (p *packPluginProvisioner) hostConfig(unit plugin.Unit, decl *handler.PluginUnitDeclaration) pluginhost.Config {
 	return pluginhost.Config{
 		PluginID:       unit.Name,

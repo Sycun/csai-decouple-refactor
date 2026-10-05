@@ -13,6 +13,8 @@ bundles/<id>/
   skills/<name>/SKILL.md         # kind: skill（目录，必须含 SKILL.md）
   tools/<name>.yaml              # kind: tool
   mcp/<name>.yaml                # kind: mcp
+  plugins/<name>.yaml            # kind: plugin（唯一携带可执行代码的一类）
+  bin/<name>                     # 插件二进制本体，必须留在包目录内
 ```
 
 ## 清单
@@ -23,7 +25,7 @@ name: 移动端安全测试角色包
 version: 1.0.0                   # 必需：没有版本就无法升级或回滚
 description: ...
 units:
-  - kind: role                   # role | agent | skill | tool | mcp，仅此五类
+  - kind: role                   # role | agent | skill | tool | mcp | plugin，仅此六类
     path: roles/移动端安全测试.yaml   # 相对本目录；不允许 `..`，不允许绝对路径
     name: 移动端安全测试            # 可省略：role/tool/agent 取去扩展名的文件名，skill 取目录名
 ```
@@ -92,6 +94,48 @@ agent 走 `agents.LoadMarkdownAgentPaths`、配方走 `RecipeSpecs`（缺能力�
 | agent | ✅ | ✅ 运行路径与管理台都走表（`agents.LoadMarkdownAgents`） | ✅ |
 | tool | ✅ | ✅ 配方清单由表驱动重建（`ToolLayer.Rebuild`，与 `POST /config/apply` 同一条序列） | ✅ 装完即重建 |
 | mcp | ✅ 包声明的服务器写进**活的** `ExternalMCPManager`（与 `/api/external-mcp/*` 同一个对象）；每个远端工具另有身份（`LayerRemote`，按服务器成组装卸） | ✅ 授权按工具身份判定，判定不到再回到命名空间策略 | ✅ 装完只写声明，**不启动进程** |
+| plugin | ✅ 声明 + 二进制进包；开关时把信任域写进**活的** `pluginhost.Service`，能力进 `LayerPlugin`（按单元成组装卸） | ✅ 能力身份 runtime 为 `plugin-host:abi`，执行经 `capabilities/invoke` 走进程外 | ✅ 装完**不声明、不启动**；开关才声明并核对，核对不过就回滚开关 |
+
+## 包声明的插件（可执行代码）
+
+`plugin` 是六类里唯一带二进制的一类，也是唯一"装完还需要核对"的一类。声明文件
+`plugins/<name>.yaml` 里的 `capabilities` 是**已经被人审过的入口清单**：
+
+```yaml
+pluginId: acme               # 可省略，默认取单元名；三处必须同名：单元名 == 发布者 == 信任域
+binary: bin/acme-scan        # 相对包目录；必须存在、可执行、解析软链后仍在包内
+args: ["--mcp"]
+envAllow: [TZ]               # 子进程只拿到这些环境变量；含 KEY/TOKEN/SECRET/PASSWORD 的键名被拒绝
+grants: ["net.connect(10.0.0.0/8)"]   # 中介副作用上限，写在包里而不是由插件自己申报
+callTimeoutSeconds: 30
+idleTimeoutSeconds: 300
+maxRestarts: 3
+version: 1.0.0
+capabilities:
+  - id: acme.scan            # 必须是 <pluginId>.<名字>，否则调用会路由到别的信任域
+    title: 端口扫描
+    description: ...
+    class: mutating          # readonly | mutating | destructive
+    permission: agent:acme.scan   # 非只读必须声明：规则要点名它，撤销要点名它
+    approval: always         # inherited | always（非只读可强制）| never（仅只读）
+    timeoutSeconds: 60
+    paramsSchema:            # 直接就是参数的 JSON Schema
+      type: object
+```
+
+开关拨到"启用"时，宿主启动这个二进制、调 `capabilities/list` 问它到底提供什么，然后**双向核对**：
+
+- 清单里有、插件没报 → 该入口会在调用时失败，整包能力不登记；
+- 插件报了、清单里没有 → 这是没人审阅过的入口，它的 class/permission/grants 无从谈起，同样拒绝；
+- 两种失败都会**收回刚声明的信任域并把开关退回停用**，回复里指名道姓差在哪。
+
+也就是说：`class`、`permission`、`grants` 只来自这份声明文件（人写的、跟着包一起签的），
+**永远不来自插件的自我描述**——能自我描述的组件就能把自己描述成 `destructive`。
+
+其余规则与 MCP 声明同源：安装只进表不启动；`plugin_host.enabled` 为假时装配不装宿主，
+启用会被明确拒绝（不会退化成"在本进程里跑一跑看"）；宿主里 config.yaml 已声明的同名信任域
+**优先级更高**，包不能覆盖它，卸载包也不能把它删掉；出网一律走 `StrictEgress`，
+包没有把这个开关关掉的字段。
 
 ## 包声明的 MCP 服务器
 

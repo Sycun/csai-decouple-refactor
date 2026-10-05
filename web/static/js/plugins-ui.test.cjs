@@ -88,14 +88,20 @@ function harness(state, catalog, options = {}) {
         },
         showNotification(msg, type) { toasts.push({ msg, type }); },
         window: {
-            t(key) {
+            // Interpolation is supported because the runtime-restart chip counts restarts in the
+            // label; a harness that dropped opts would test a string no browser ever shows.
+            t(key, opts) {
                 const parts = key.split('.');
                 let node = zh;
                 for (const p of parts) {
                     if (!node || typeof node !== 'object') return key;
                     node = node[p];
                 }
-                return typeof node === 'string' ? node : key;
+                let out = typeof node === 'string' ? node : key;
+                if (opts && typeof out === 'string') {
+                    Object.keys(opts).forEach(k => { out = out.replace('{' + k + '}', String(opts[k])); });
+                }
+                return out;
             },
             showNotification(msg, type) { toasts.push({ msg, type }); },
             confirm() { return options.confirm !== false; },
@@ -282,4 +288,44 @@ test('the toast repeats what the server said about a mutation that only half too
         const last = toasts[toasts.length - 1];
         assert.match(last.msg, tc.expect, tc.name + ': the caveat was dropped from the toast: ' + last.msg);
     }
+});
+
+test('a plugin row says what the live host holds, and no other kind does', async () => {
+    // The pack console is where an operator learns their third-party binary is crash-looping; a
+    // switch and a served flag are not enough, so the runtime row has to reach the table.
+    const { sandbox } = harness({
+        bundlesRoot: '/srv/csai/bundles', generation: 1, drift: [], servedKinds: ['plugin'],
+        bundles: [], standalone: [],
+        pluginHost: [{ domain: 'acme', bundle: 'code-pack', running: true, restarts: 2, grants: ['net.connect(10.0.0.0/8)'], fromPack: true }],
+    }, {});
+    // Loaded through the same entry the page uses, so the assertion covers GET /api/plugins ->
+    // pluginConsoleState -> the row, not just the renderer.
+    await sandbox.api.loadPluginConsole();
+
+    const pluginRow = sandbox.unitCells({ kind: 'plugin', name: 'acme', served: true });
+    assert.match(pluginRow, /进程运行中/, 'the running process must be visible on its unit row');
+    assert.match(pluginRow, /重启 2 次/, 'restarts must be counted where a crash loop shows up');
+
+    const stoppedRow = sandbox.unitCells({ kind: 'plugin', name: 'ghost', served: false });
+    assert.match(stoppedRow, /未运行/, 'a plugin with no live instance says so instead of looking fine');
+
+    // A non-plugin kind gets no runtime chip: it has no process of its own.
+    const toolRow = sandbox.unitCells({ kind: 'tool', name: 'semgrep', served: true });
+    assert.doesNotMatch(toolRow, /进程运行中|未运行/, 'only a plugin unit may claim a process state');
+});
+
+test('every pluginsT key the console asks for exists in both locales', () => {
+    // A missing key renders as its own name - which is exactly how a new kind or a new runtime chip
+    // would ship looking broken to every operator while all the Go tests stayed green.
+    const used = [...source.matchAll(/pluginsT\('([A-Za-z0-9_.]+)'/g)].map(m => m[1]);
+    assert.ok(used.length >= 30, `only ${used.length} pluginsT calls were found - the scan is broken`);
+    const zhKeys = flatKeys(zh.plugins, '', new Set());
+    const enKeys = flatKeys(en.plugins, '', new Set());
+    // 'kind.' is the dynamic prefix (unitKindLabel builds kind.<name>), covered by
+    // TestEveryCapabilityKindHasAConsoleLabel against plugin.Kinds.
+    const statics = used.filter(k => !k.endsWith('.'));
+    const missingZh = statics.filter(k => !zhKeys.has(k));
+    const missingEn = statics.filter(k => !enKeys.has(k));
+    assert.deepEqual(missingZh, [], 'keys missing from zh-CN');
+    assert.deepEqual(missingEn, [], 'keys missing from en-US');
 });

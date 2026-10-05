@@ -178,6 +178,8 @@ func (h *PluginHandler) GetState(c *gin.Context) {
 		"drift":       h.table.Drifted(),
 		"bundlesRoot": h.bundles,
 		"servedKinds": servedKindNames(),
+		// Which plug-in processes exist right now, with the pack that shipped each one.
+		"pluginHost": h.pluginRuntimes(),
 	})
 }
 

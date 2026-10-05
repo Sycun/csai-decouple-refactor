@@ -327,6 +327,30 @@ type PluginProvisioner interface {
 	ProvisionPackPlugin(unit plugin.Unit, decl *PluginUnitDeclaration) ([]string, error)
 	DropPackPlugin(unit plugin.Unit) (int, string)
 	PackPluginServed(name string) (bool, []string)
+	PackPluginRuntimes() []PluginRuntimeState
+}
+
+// PluginRuntimeState is one live plug-in host instance. A platform that can run a pack's binary has
+// to answer "what is running, whose is it, and under which grants" from the same screen that
+// installed it; without that row the operator's only evidence about third-party processes is the
+// switch they last touched.
+type PluginRuntimeState struct {
+	Domain    string   `json:"domain"`
+	Bundle    string   `json:"bundle,omitempty"`
+	Running   bool     `json:"running"`
+	Restarts  int      `json:"restarts"`
+	Grants    []string `json:"grants,omitempty"`
+	ProxyAddr string   `json:"proxyAddr,omitempty"`
+	FromPack  bool     `json:"fromPack"`
+}
+
+// pluginRuntimes is the state surface's view: nil when no host is wired, so the console says
+// "nothing is running" rather than showing an empty table that might mean "not configured".
+func (h *PluginHandler) pluginRuntimes() []PluginRuntimeState {
+	if h.plugins == nil {
+		return nil
+	}
+	return h.plugins.PackPluginRuntimes()
 }
 
 // checkPluginUnits validates every plugin declaration in a bundle before anything is written.

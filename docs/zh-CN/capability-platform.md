@@ -177,7 +177,7 @@ rerank 的 provider 名字是**另一个命名空间**，不要塞进模型方�
 
 ## 十二、能力单元表与热插拔
 
-角色 / skill / markdown agent / 工具配方 / MCP 声明这五类可扩展的东西，过去各有各的生命周期，
+角色 / skill / markdown agent / 工具配方 / MCP 声明 / 插件二进制这六类可扩展的东西，过去各有各的生命周期，
 而且**没有一类能在不重启的情况下改变**。现在它们共用一套身份与一张活表：
 
 - `internal/plugin`：`Unit`（身份 `<kind>/<name>` + 源路径 + 安装期摘要）与 `Bundle`
@@ -191,6 +191,9 @@ rerank 的 provider 名字是**另一个命名空间**，不要塞进模型方�
   `source-code-audit`（源码与供应链审计，含一份 semgrep 配方）、`wireless-hardware`（无线与硬件）。
   每个包的每一项交付都由 `TestExampleBundlesInstallAlongsideShippedCapabilities` 拿**既有加载器**验一遍
   （角色 yaml、markdown agent、配方的能力清单），而不是只跟能力表自比。
+- `plugin` 是**唯一携带可执行代码**的单元类型：声明文件里的 `capabilities` 是人审过的入口清单，
+  启用时宿主启动二进制并调 `capabilities/list` **双向核对**，一致才把能力登记进 `LayerPlugin`；
+  `class/permission/grants` 只来自声明文件，绝不来自插件的自我描述。目录形状与全部规则见 `bundles/README.md`。
 - **内置能力也走同一张表**：`roles/ agents/ skills/ tools/ 由 ScanDir 扫成单元，身份与既有加载器
   逐项一致（实测 142 个：roles 13 / agents 16 / skills 23 / tools 90），由
   `internal/app/plugin_parity_test.go` 钉住——真相源是既有加载器本身，不是手写清单。
@@ -232,7 +235,7 @@ rerank 的 provider 名字是**另一个命名空间**，不要塞进模型方�
   卸载与摘除也会指名清理，否则后来同名能力会继承别人关掉的开关），启动时在包重新装入**之后**重新
   套上，并按需要重发角色目录、重建工具层。MCP 这一类**不接受持久化**：每次启动都回到停用，所以那
   一次开关的响应写 `switch_persisted:false` 并指路 `config.yaml`。
-- `served:false` 只说真话：五类 kind 的运行路径现在都读表，所以 `servedKinds` 与 `plugin.Kinds`
+- `served:false` 只说真话：六类 kind 的运行路径都要么读表、要么被明确判为「按开关供给」，所以 `servedKinds` 与 `plugin.Kinds`
   同规模，`TestEveryKindReportsItsActualServedState` 双向钉（少一类就红，将来加一类没接线也红）。
   mcp 这一类另有第二个条件：表里声明过还不够，活管理器得**仍然持有**这条声明——`config.yaml`
   同名接管后控制台会把该单元标成未服务并写明"配置文件里有同名服务器"，而不是继续报"已服务"。

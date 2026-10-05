@@ -178,6 +178,19 @@ func (r *recordingPlugins) PackPluginServed(name string) (bool, []string) {
 	return ok, ids
 }
 
+// runtimeRows mirrors what a live host reports, so the state surface can be tested without a
+// child process. The pack-declared row is the one an operator needs to see.
+func (r *recordingPlugins) PackPluginRuntimes() []PluginRuntimeState {
+	var rows []PluginRuntimeState
+	for name := range r.provisioned {
+		rows = append(rows, PluginRuntimeState{
+			Domain: name, Bundle: "code-pack", Running: true,
+			Grants: []string{"net.connect(10.0.0.0/8)"}, FromPack: true,
+		})
+	}
+	return rows
+}
+
 func envWithPlugins(t *testing.T, recorder PluginProvisioner) *pluginTestEnv {
 	t.Helper()
 	env := newPluginTestEnv(t, false)
@@ -297,6 +310,16 @@ func TestPluginSwitchOnRegistersAndOffAndUnplugDropIt(t *testing.T) {
 	}
 	if got := strings.Join(recorder.provisioned["ref"], ","); got != "ref.echo" {
 		t.Fatalf("provisioned = %q", got)
+	}
+	// A running third-party binary has to be visible from the same screen that installed it.
+	state := decodeState(t, env.do(t, http.MethodGet, "/api/plugins", ""))
+	rows, _ := state["pluginHost"].([]interface{})
+	if len(rows) != 1 {
+		t.Fatalf("the state must list the live plugin instance, got %v", state["pluginHost"])
+	}
+	row := rows[0].(map[string]interface{})
+	if row["domain"] != "ref" || row["bundle"] != "code-pack" || row["running"] != true || row["fromPack"] != true {
+		t.Fatalf("plugin runtime row = %v", row)
 	}
 	unit := decodeState(t, env.do(t, http.MethodGet, "/api/plugins", ""))["bundles"].([]interface{})[0].(map[string]interface{})["units"].([]interface{})[0].(map[string]interface{})
 	if unit["served"] != true {

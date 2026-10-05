@@ -118,8 +118,25 @@ function servedMark(unit) {
         escapeHtml(pluginsT('notServed')) + '</span>';
 }
 
+// A plugin unit is the one kind that runs as its own process, so its row says what the live host
+// holds: running or not, and how many times the child has had to be restarted. Without this the
+// console would show a switch and a served flag, and the operator's third-party binary could be
+// crash-looping with nothing on screen to say so.
+function pluginRuntimeNote(unit) {
+    if (unit.kind !== 'plugin') return '';
+    const rows = pluginConsoleState && Array.isArray(pluginConsoleState.pluginHost)
+        ? pluginConsoleState.pluginHost : [];
+    const row = rows.filter(item => item && item.domain === unit.name)[0];
+    if (!row) return '<span class="plugin-chip">' + escapeHtml(pluginsT('runtimeNone')) + '</span>';
+    const label = pluginsT(row.running ? 'runtimeRunning' : 'runtimeStopped');
+    const restarts = Number(row.restarts) > 0
+        ? ' · ' + pluginsT('runtimeRestarts', { count: Number(row.restarts) }) : '';
+    return '<span class="plugin-chip">' + escapeHtml(label + restarts) + '</span>';
+}
+
 function unitCells(unit) {
-    return '<td><span class="plugin-kind">' + escapeHtml(unitKindLabel(unit.kind)) + '</span></td>' +
+    return '<td><span class="plugin-kind">' + escapeHtml(unitKindLabel(unit.kind)) + '</span>' +
+        pluginRuntimeNote(unit) + '</td>' +
         '<td><code>' + escapeHtml(unit.name) + '</code></td>' +
         '<td>' + servedMark(unit) + '</td>';
 }
@@ -253,7 +270,14 @@ async function setPluginUnitEnabled(kind, name, enabled) {
         const data = await runPluginRequest('POST',
             '/api/plugins/units/' + encodeURIComponent(kind) + '/' + encodeURIComponent(name) + '/enabled',
             { enabled: enabled });
-        notify(pluginsT('switchDone') + serverNote(data), 'success');
+        // A plugin switch answers with the capability set the running binary proved it provides.
+        // Saying how many landed is the difference between "the switch moved" and "this pack can
+        // now be called", and the second one is what the operator clicked for.
+        let caps = '';
+        if (Array.isArray(data.plugin_capabilities) && data.plugin_capabilities.length) {
+            caps = ' · ' + pluginsT('switchCapabilities', { count: data.plugin_capabilities.length });
+        }
+        notify(pluginsT('switchDone') + serverNote(data) + caps, 'success');
         await fetchPluginConsole();
     }, 'switch');
 }
@@ -264,7 +288,7 @@ async function setPluginUnitEnabled(kind, name, enabled) {
 // served flag exists to prevent.
 function serverNote(data) {
     if (!data) return '';
-    const parts = [data.tool_layer_error, data.mcp_message, data.switch_message]
+    const parts = [data.tool_layer_error, data.mcp_message, data.plugin_message, data.switch_message]
         .filter(text => typeof text === 'string' && text.trim());
     return parts.length ? ' · ' + parts.join(' · ') : '';
 }
