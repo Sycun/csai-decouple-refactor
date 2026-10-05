@@ -3,6 +3,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const monitor = fs.readFileSync('web/static/js/monitor.js', 'utf8');
+// monitor.js delegates its translation lookup to the shared helper, exactly as the page does:
+// i18n-tag.js is loaded before it in every template, so the harness loads it too rather than
+// stubbing a look-alike that could drift from the real behavior.
+const i18nTag = fs.readFileSync('web/static/js/i18n-tag.js', 'utf8');
 const chat = fs.readFileSync('web/static/js/chat.js', 'utf8');
 const reason = '工具调用已被安全规则拦截：识别到 example.gov，禁止访问。\n规则: 政府网站保护';
 
@@ -54,6 +58,10 @@ function runtime() {
         'setToolCallDetailState', 'mergeToolResultIntoCallItem', 'coalesceProcessDetailsToolPairs',
         'buildToolResultSectionHtml', 'addTimelineItem'];
     vm.createContext(ctx);
+    vm.runInContext(i18nTag, ctx);
+    // In a browser `window` is the global object, so window.CSAI is reachable as bare `CSAI`.
+    // Here ctx.window is a plain property of the global, so the alias has to be made explicit.
+    ctx.CSAI = ctx.window.CSAI;
     vm.runInContext(funcs.map((name) => sourceFunction(monitor, name)).join('\n'), ctx);
     ctx.window.getToolExecutionDisplayStatus = ctx.getToolExecutionDisplayStatus;
     vm.runInContext(['normalizeToolExecutionSummary', 'getToolExecutionStatusLabel', 'formatMCPResultJsonForDisplay'].map((name) => sourceFunction(chat, name)).join('\n'), ctx);

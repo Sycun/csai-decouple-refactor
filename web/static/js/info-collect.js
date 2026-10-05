@@ -1,7 +1,5 @@
 // 信息收集页面（FOFA）
-function _t(key, opts) {
-    return typeof window.t === 'function' ? window.t(key, opts) : key;
-}
+function _t(key, opts) { return CSAI.tOrKey(key, opts); }
 
 const FOFA_FORM_STORAGE_KEY = 'info-collect-fofa-form';
 const FOFA_HIDDEN_FIELDS_STORAGE_KEY = 'info-collect-fofa-hidden-fields';

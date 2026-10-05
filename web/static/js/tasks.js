@@ -1,7 +1,5 @@
 // 任务管理页面功能
-function _t(key, opts) {
-    return typeof window.t === 'function' ? window.t(key, opts) : key;
-}
+function _t(key, opts) { return CSAI.tOrKey(key, opts); }
 
 /** 插值不转 HTML 实体（避免日期里的 / 变成 &#x2F; 再被 escapeHtml 成乱码） */
 function _tPlain(key, opts) {

@@ -1,21 +1,12 @@
 // 角色管理相关功能
-function _t(key, opts) {
-    if (typeof window.t === 'function') {
-        try {
-            var translated = window.t(key, opts);
-            if (typeof translated === 'string' && translated && translated !== key) {
-                return translated;
-            }
-        } catch (e) { /* ignore */ }
-    }
-    // i18n 未就绪或词条缺失时避免把 key 暴露给用户（与 zh-CN 默认一致）
-    if (key === 'roles.noDescription') return '暂无描述';
-    if (key === 'roles.noDescriptionShort') return '无描述';
-    if (key === 'roles.defaultRoleDescription') {
-        return '默认角色，不额外携带用户提示词，使用默认MCP';
-    }
-    return key;
-}
+// 词条缺失或 i18n 尚未就绪时的本页兜底文案（与 zh-CN 默认一致），避免把 key 暴露给用户。
+const ROLE_COPY_FALLBACK = {
+    'roles.noDescription': '暂无描述',
+    'roles.noDescriptionShort': '无描述',
+    'roles.defaultRoleDescription': '默认角色，不额外携带用户提示词，使用默认MCP',
+};
+
+function _t(key, opts) { return CSAI.tFallback(key, opts, ROLE_COPY_FALLBACK); }
 
 const ROLE_MODAL_SELECT_IDS = ['role-workflow-id', 'role-workflow-policy'];
 const roleModalSelectMap = {};

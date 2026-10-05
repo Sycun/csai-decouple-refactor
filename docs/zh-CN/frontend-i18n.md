@@ -169,6 +169,20 @@
 - `window.changeLanguage(lang: string): Promise<void>`  
   - 切换语言并刷新页面文案（不会刷新整页）。
 
+页面里需要「i18next 还没就绪时给个 fallback」的取值器时，用共享实现，**不要再自己写一份 `_t`**：
+
+- `CSAI.tOrKey(key, opts)`  
+  - i18next 在就照原样返回它的结果（**包括空串**），不在才返回 key。
+- `CSAI.tFallback(key, opts, copy)`  
+  - 只有「非空字符串且不等于 key」才算译出来；未命中时回落到**调用方传入**的文案表 `copy`，
+    最后才返回 key。i18next 抛异常也按未命中处理。
+  - 某个页面的兜底文案写在那一页（例：`roles.js` 的 `ROLE_COPY_FALLBACK`），不许塞进通用文件。
+
+这两个是**不等价**的两种行为，所以是两个人名而不是一个；`_t` 曾在 7 个脚本里以 3 种实现各写一遍，
+同名不同义、在同一页的全局作用域里按加载顺序互相覆盖。门禁见 `web/static/js/i18n-tag.test.cjs`
+（`make js-check` 会跑），它同时禁止再出现手写的 `_t`，并把还写着
+`typeof window.t === 'function'` 的文件数钉成**只准下降**的基线。
+
 示例（以 `web/static/js/settings.js` 为例）：
 
 ```js

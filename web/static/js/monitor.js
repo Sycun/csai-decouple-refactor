@@ -5972,9 +5972,7 @@ function toolDisplayStatusFromState(displayState) {
 
 function buildToolResultSectionHtml(data, opts) {
     opts = opts || {};
-    const _t = function (k, o) {
-        return typeof window.t === 'function' ? window.t(k, o) : k;
-    };
+    const _t = CSAI.tOrKey;
     const execResultLabel = _t('timeline.executionResult');
     const execIdLabel = _t('timeline.executionId');
     const waitingLabel = opts.pendingText || _t('timeline.running');
@@ -7025,7 +7023,7 @@ function syncVisibleConversationTaskReplay(tasks) {
 }
 
 function getActiveTaskDisplayName(task) {
-    const _t = function (k) { return typeof window.t === 'function' ? window.t(k) : k; };
+    const _t = CSAI.tOrKey;
     const unnamedTaskText = _t('tasks.unnamedTask');
     if (!task) return unnamedTaskText;
     const title = (task.title || '').trim();
@@ -7144,7 +7142,7 @@ function renderActiveTasks(tasks) {
             ? startedTime.toLocaleTimeString(taskTimeLocale, timeOpts)
             : '';
 
-        const _t = function (k) { return typeof window.t === 'function' ? window.t(k) : k; };
+        const _t = CSAI.tOrKey;
         const statusMap = {
             'running': _t('tasks.statusRunning'),
             'cancelling': _t('tasks.statusCancelling'),
@@ -9515,9 +9513,7 @@ function formatExecutionDuration(start, end) {
  * 语言切换后刷新对话页已渲染的进度条、时间线标题与时间格式（避免仍显示英文或 AM/PM）
  */
 function refreshProgressAndTimelineI18n() {
-    const _t = function (k, o) {
-        return typeof window.t === 'function' ? window.t(k, o) : k;
-    };
+    const _t = CSAI.tOrKey;
     const timeLocale = getCurrentTimeLocale();
     const timeOpts = getTimeFormatOptions();
 

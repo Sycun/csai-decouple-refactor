@@ -1137,6 +1137,40 @@ go test -count=1 -run 'TestHITLManagerPrivateStateStaysPrivate|TestDismissWakes'
 CSAI_WRITE_OPENAPI_GOLDEN=1 go test ./internal/handler -run TestOpenAPIOperationsGolden   # 故意改文档时才重生成
 ```
 
+### P3 前端 —— `_t` 一族收口（同名不同义，比"重复"更危险）
+
+`_t` 此前写在 **7 个**脚本里，而且是**三种不同实现**：5 个"i18next 有就用、没有就给 key"；
+`workflows.js` 把"答案等于 key"也算没译、并吞异常；`roles.js` 在此基础上还内置三条中文兜底文案。
+名字相同、语义不同、且都在同一页的全局作用域里互相覆盖 —— 一个页面在缺词条时显示 key 还是显示中文，
+**取决于脚本加载顺序**。这与 §11 转义器那一条是同一类缺陷，只是危害小一级。
+
+收口成 `web/static/js/i18n-tag.js` 的**两个具名行为**（不做合并，因为两者不等价：
+`tOrKey` 把"故意译成空串"照原样传出去，`tFallback` 把它判为未译）：
+
+| 落点 | 改法 |
+|---|---|
+| 5 个纯实现 + `monitor.js` 内 4 处函数级 `_t` | 一行委托 `CSAI.tOrKey`（**保持函数声明**以免改动提升语义） |
+| `workflows.js` | `CSAI.tFallback(key, opts)` |
+| `roles.js` | `CSAI.tFallback(key, opts, ROLE_COPY_FALLBACK)` —— 本页文案回到本页，通用取值器不再携带某页词汇 |
+
+门禁 `web/static/js/i18n-tag.test.cjs`（6 条，`make js-check` 自动带上，前端测试 212 → **218**）：
+两种语义各自的行为表（空串 / 非字符串 / 抛异常 / `constructor` 不许经 `Object.prototype` 应答）、
+"不许有脚本自己实现查找"（按名字 `_t` + 按 body）、**与名字无关**的 ratchet（数还写着
+`typeof window.t === 'function'` 的文件数，基线 **23**，只准降）、本页文案必须留在本页、
+每个模板都必须先加载 `i18n-tag.js`（控制台与 `/api-docs` 两个模板分别判）。
+四条探针：改回一份 `_t` 手写实现即红；**换一个不在名单里的新名字** `tr()` 时按名字的测试不红、
+按残留的 ratchet 红（23→24）；模板里删掉一行 `<script>` 即红；往通用文件里粘一张文案表即红。
+
+**这条 ratchet 就是"重构不彻底"的诚实记账**：`_t` 这一族收口了，但 23 个脚本仍在调用点旁边
+手写同一个判断（`roles.js`、`tasks.js` 都在两处），所以不能写成硬零；逐文件 ES 模块改造完成后
+它才有机会归零。
+
+真机点验（headless Chrome + CDP，两个页面各自的真实 `window`）：`CSAI` / `tOrKey` / `tFallback`
+在全局可解析、`typeof _t === 'function'`、`_t('roles.noDescription')` 返回「暂无描述」而不是 key、
+未知 key 仍返回 key、`i18next.language = zh-CN`、**零未捕获异常**。Node 侧那处要额外
+`ctx.CSAI = ctx.window.CSAI` 才跑得动，因为浏览器里 `window` 就是全局对象、vm 里它只是一个属性
+—— 这条差异本身也是"必须有真浏览器点验"的理由。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
@@ -1157,7 +1191,9 @@ CSAI_WRITE_OPENAPI_GOLDEN=1 go test ./internal/handler -run TestOpenAPIOperation
   引入包 11→6、适配边界之外债面 8 包/100 文件 → 3 包/96 文件，见 §11「P6 Eino 收敛」）、session 事件溯源。
   （provider catalog 代码生成**已完成**，见 §11「P6 Provider 方言目录代码生成」。）
 - P3 剩余（SSE 线格式已归一，手拼帧 0；三套事件名契约——流式 / 持久化 / C2——均已双侧比对，
-  生成枚举已由 `index.html` 加载并在分发入口调用）：逐文件 ES 模块改造（去重 2,800–3,200 行）。
+  生成枚举已由 `index.html` 加载并在分发入口调用；`_t` 一族 7 份 / 3 种实现已收口成两个具名行为）：
+  逐文件 ES 模块改造（去重 2,800–3,200 行）；调用点旁仍手写的 `typeof window.t === 'function'`
+  判断还剩 **23 个文件**（`i18n-tag.test.cjs` 里是只准降的 ratchet）。
 - P4 剩余：netns/seccomp 级硬出网边界（现在只有代理白名单 + cgroup/rlimit）、内嵌 CPython 发行。
 - P5 剩余：registry 服务端（签名发布、灰度、release-age 冷却）、气隙离线包导出/导入、沙箱引爆自动化。
 - §6.1 待决策：角色/skill/markdown-agent 文本是否也按运行期不可信处理（当前视为"已安装的运维者配置"）。

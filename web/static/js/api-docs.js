@@ -3,9 +3,7 @@
 let apiSpec = null;
 let currentToken = null;
 
-function _t(key, opts) {
-    return typeof window.t === 'function' ? window.t(key, opts) : key;
-}
+function _t(key, opts) { return CSAI.tOrKey(key, opts); }
 
 function waitForI18n() {
     return new Promise(function (resolve) {

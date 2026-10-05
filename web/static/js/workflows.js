@@ -1,17 +1,7 @@
 (function () {
     'use strict';
 
-    function _t(key, opts) {
-        if (typeof window.t === 'function') {
-            try {
-                var translated = window.t(key, opts);
-                if (typeof translated === 'string' && translated && translated !== key) {
-                    return translated;
-                }
-            } catch (e) { /* ignore */ }
-        }
-        return key;
-    }
+    function _t(key, opts) { return CSAI.tFallback(key, opts); }
 
     let workflows = [];
     let currentWorkflowId = '';

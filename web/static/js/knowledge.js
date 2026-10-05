@@ -1,7 +1,5 @@
 // 知识库管理相关功能
-function _t(key, opts) {
-    return typeof window.t === 'function' ? window.t(key, opts) : key;
-}
+function _t(key, opts) { return CSAI.tOrKey(key, opts); }
 
 // 返回「知识库未启用」提示区块的 HTML（使用 data-i18n 以便语言切换时自动更新）
 function getKnowledgeNotEnabledHTML() {

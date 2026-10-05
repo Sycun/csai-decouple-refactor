@@ -1,7 +1,5 @@
 // Skills管理相关功能
-function _t(key, opts) {
-    return typeof window.t === 'function' ? window.t(key, opts) : key;
-}
+function _t(key, opts) { return CSAI.tOrKey(key, opts); }
 let skillsList = [];
 let currentEditingSkillName = null;
 let skillModalAddMode = true;
