@@ -42,10 +42,29 @@ manifest() {
 	(
 		cd "$1"
 		{
-			git ls-files
-			git ls-files --others --exclude-standard
+			# -c core.quotePath=false is not cosmetic. This repo ships Chinese file names
+			# (roles/AI应用红队测试.yaml, bundles/*/roles/*.yaml, docs/...), and git's default is to
+			# print them octal-escaped and quoted: `"roles/API\345\256\211...yaml"`. That string is
+			# not a path, so `[ -f ]` failed, tar skipped the file, and verify reported a clean
+			# comparison while never having looked at any of those ~40 files - including the ones
+			# the gates count. Raw names make the manifest what it claims to be.
+			git -c core.quotePath=false ls-files
+			git -c core.quotePath=false ls-files --others --exclude-standard
 		} | sort -u
 	)
+}
+
+# 清单里的路径必须是**能用的路径**。git 一旦恢复 quotePath（改名、升级、别人的 alias），非 ASCII
+# 文件名就变成 `"roles/\345\256...yaml"` 这种转义串：行号对得上、名字对不上，于是 tar 不复制、
+# shasum 读不到，而 verify 照样报"源码一致"——它比对的文件比它以为的少了几十个。所以清单只要出现
+# 引号包裹的条目就当场停，而不是等到门禁在缺文件的情况下假装通过。
+assert_quoted_free() {
+	quoted=$(grep '"' "$1" || true)
+	if [ -n "$quoted" ]; then
+		echo "testtree: 清单里有被 git 转义引用的路径，比对会漏文件（修法：core.quotePath=false）：" >&2
+		printf '%s\n' "$quoted" | sed 's/^/  /' >&2
+		exit 1
+	fi
 }
 
 # 清单 + 每个文件的摘要。文件在本树里不存在时 shasum 只告警，那行因此缺失，
@@ -95,6 +114,8 @@ sync() {
 	test_list=$(mktemp)
 	manifest "$DEV" >"$dev_list"
 	manifest "$TEST" >"$test_list"
+	assert_quoted_free "$dev_list"
+	assert_quoted_free "$test_list"
 
 	# 先灌：开发树清单里的每个、且确实还在开发树上的文件（tracked 但已被删掉的文件仍在
 	# git ls-files 里，它们由下面的"后删"处理）。ignored 的运行时文件天然不在清单里，

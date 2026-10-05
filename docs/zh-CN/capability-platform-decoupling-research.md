@@ -1171,6 +1171,43 @@ CSAI_WRITE_OPENAPI_GOLDEN=1 go test ./internal/handler -run TestOpenAPIOperation
 `ctx.CSAI = ctx.window.CSAI` 才跑得动，因为浏览器里 `window` 就是全局对象、vm 里它只是一个属性
 —— 这条差异本身也是"必须有真浏览器点验"的理由。
 
+### 能力包携带可执行代码（2026-10-05 夜，插件化最后一公里）
+
+**此前插件化的边界在哪**：包能带角色 / 子代理 / 技能 / 配方 / MCP 声明五类**内容**，
+`internal/pluginhost` 也能在进程外跑代码——但两者从未接上：ABI 里 `capabilities/list`
+从写下那天起就**没有任何调用方**（只有测试固件自己答一遍），要跑一个包里的二进制，
+必须有人在 `config.yaml` 手写一条配方 + 一个信任域。所以"装个包就多个能力"这句话，
+对可执行代码一直不成立。
+
+| 落地 | 内容 |
+|---|---|
+| 第六类 kind `plugin` | `plugins/<name>.yaml` + 包内 `bin/<name>`；`pluginId` == 单元名 == 信任域三处必须同名（能力 id 首段就是路由目标，不同名会把调用送到别的进程） |
+| 宿主侧发现 | `Instance.Capabilities` / `Service.ListCapabilities` 真的去调 `capabilities/list`；只接受字符串数组（形状不对即拒绝，不能悄悄解成空表——空表的意思是"什么都不提供"） |
+| **双向交叉核对** | 清单里有、插件没报 → 该入口调用必失败；插件报了、清单里没有 → 它的 `class/permission/grants` 没人审阅过。**两种都拒绝整单元**，并回收刚声明的信任域、把开关退回停用，409 里指名差在哪 |
+| 权限来源 | `class` / `permission` / `grants` **只来自声明文件**（人写的、跟包一起签的），永不来自插件自我描述——能自我描述的组件就能把自己描述成 `destructive` |
+| 归属与优先级 | 与包声明的 MCP 服务器同源：`config.yaml` 已有的信任域优先，包不能覆盖；卸载包也不能删它；一个域只有一个主人；**换声明必关旧进程**（旧 grant 不能继续跑） |
+| 同意边界 | 安装只进表：不声明、不启动；开关才声明 + 启动 + 核对；开关的"开"**不落库**，每次启动都要重新核对（否则升级后的包就在跑没人重新批准过的代码） |
+| 运行时可见 | `GET /api/plugins` 带 `pluginHost`（域 / 属于哪个包 / 是否在跑 / 重启次数 / grants / 出网代理地址），控制台在单元行上直接显示；否则崩溃重启循环看起来是"健康"的 |
+| 能力身份 | 登记进 `capability.LayerPlugin`，按单元成组装卸；runtime = `plugin-host:abi`（前缀命中既有的进程外路由，**不加新分支**——那个前缀判断就是防不可信代码进本进程的唯一屏障） |
+
+**门禁与探针**（都跑过"注入即红 / 撤销即绿"）：
+`internal/pluginhost/discovery_test.go`（真子进程：发现集合、越界发布者、对象形状、空白 id、
+发现与调用共用一个实例）；`pack_domains_test.go`（不启进程、文件优先双向、单主人、
+换声明关掉旧实例、端到端发现+调用）；`internal/handler/plugin_unit_test.go`（声明装载、
+包外二进制含**软链逃逸**、十种不可审阅的清单写法、装完即停用、核对失败回滚、开关与卸载都清空）；
+`internal/app/plugin_capabilities_test.go`（真固件端到端 + 双向不一致各拒绝 + 无宿主时明确拒绝）；
+`TestEveryCapabilityKindHasAConsoleLabel`（六类 kind 在两份字典都要有标签，且不许有僵尸标签）；
+`plugins-ui.test.cjs`（单元行上的运行态、以及 `pluginsT` 用到的键两份字典都要有）。
+
+**顺手修掉的一个反向错误**：`plugin_host.enabled: true` 但域列表为空时，装配**不装宿主**，
+于是包永远无法声明第一个信任域——那等于要求运维者先手写一个域，别人的插件才能跑。
+现在"启用但没有域"是一个空的可用的宿主；只有 `enabled` 为假才没有宿主。
+宿主未配置时启用被明确拒绝，**不退化成"在本进程里试着跑一下"**。
+
+**仍然没有做的**：包内二进制的签名/来源校验接到 `internal/artifact` 的撤销判定上（现在靠
+声明与核对，不靠制品签名链）；netns/seccomp 级硬出网边界（插件仍走宿主侧 CONNECT 代理 +
+`StrictEgress`，这是代理白名单不是内核边界）；registry 服务端与气隙包导出。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
@@ -1194,7 +1231,9 @@ CSAI_WRITE_OPENAPI_GOLDEN=1 go test ./internal/handler -run TestOpenAPIOperation
   生成枚举已由 `index.html` 加载并在分发入口调用；`_t` 一族 7 份 / 3 种实现已收口成两个具名行为）：
   逐文件 ES 模块改造（去重 2,800–3,200 行）；调用点旁仍手写的 `typeof window.t === 'function'`
   判断还剩 **23 个文件**（`i18n-tag.test.cjs` 里是只准降的 ratchet）。
-- P4 剩余：netns/seccomp 级硬出网边界（现在只有代理白名单 + cgroup/rlimit）、内嵌 CPython 发行。
+- P4 剩余：netns/seccomp 级硬出网边界（现在只有代理白名单 + cgroup/rlimit；**包携带的插件二进制
+  走同一套 `StrictEgress` + 代理，并且开关必须重新核对能力清单**，见 §11「能力包携带可执行代码」）、
+  内嵌 CPython 发行、包内二进制的制品签名与撤销联动。
 - P5 剩余：registry 服务端（签名发布、灰度、release-age 冷却）、气隙离线包导出/导入、沙箱引爆自动化。
 - §6.1 待决策：角色/skill/markdown-agent 文本是否也按运行期不可信处理（当前视为"已安装的运维者配置"）。
 - `docs/zh-CN/agent-finalization-best-practices.md` 缺 en-US 且引用旧域名 `docs.anthropic.com/en/docs/claude-code/*`，本报告已更正但未代改。
