@@ -39,7 +39,10 @@ import (
 // migrateRobotUserSessionsTable that backfilled its one late column.
 // 316 -> 310: robot_user_bindings + robot_binding_codes moved whole - the code issue, the spend, the
 // resolve, the list, both deletes, and the private normalizer they shared.
-const dbMethodCeiling = 310
+// 310 -> 308: the connection wrapper stopped being a callback registry. SetVulnerabilityCreatedHook and
+// NotifyVulnerabilityCreated are gone; the route lives in internal/app, where the ordering reason for
+// an indirection (tools registered before the listener exists) is actually a wiring concern.
+const dbMethodCeiling = 308
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

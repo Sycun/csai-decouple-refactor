@@ -31,7 +31,7 @@ var narrowedHandlers = []struct {
 	}},
 	{"AuditHandler", func(db *database.DB) interface{} { return NewAuditHandler(db, nil, zap.NewNop()) }},
 	{"RBACHandler", func(db *database.DB) interface{} { return NewRBACHandler(db, zap.NewNop()) }},
-	{"VulnerabilityHandler", func(db *database.DB) interface{} { return NewVulnerabilityHandler(db, zap.NewNop()) }},
+	{"VulnerabilityHandler", func(db *database.DB) interface{} { return NewVulnerabilityHandler(db, zap.NewNop(), nil) }},
 	{"ConversationHandler", func(db *database.DB) interface{} { return NewConversationHandler(db, zap.NewNop()) }},
 	{"MonitorHandler", func(db *database.DB) interface{} { return NewMonitorHandler(nil, nil, db, zap.NewNop()) }},
 	{"BatchTaskManager", func(db *database.DB) interface{} {

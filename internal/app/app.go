@@ -131,6 +131,10 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	if err := ensureKnowledgeRetrievalSchema(db); err != nil {
 		log.Logger.Warn("初始化 knowledge_retrieval_logs 表失败", zap.Error(err))
 	}
+	// The alert route exists before anything that will use it: the vulnerability MCP tools are
+	// registered further down, while the listener - the robot handler's alert method - is built even
+	// later, so the route is what lets both ends be wired in their natural order.
+	vulnAlerts := &vulnerabilityAlertRoute{logger: log.Logger}
 	// robot_user_bindings / robot_binding_codes have foreign keys onto rbac_users, created just above.
 	if err := ensureRobotIdentitySchema(db); err != nil {
 		log.Logger.Warn("初始化机器人绑定表失败", zap.Error(err))
@@ -224,7 +228,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	executor.RegisterTools(mcpServer)
 
 	// 注册漏洞记录工具
-	registerVulnerabilityTools(mcpServer, db, log.Logger)
+	registerVulnerabilityTools(mcpServer, db, log.Logger, vulnAlerts)
 	registerAssetTools(mcpServer, db, log.Logger)
 	registerProjectFactTools(mcpServer, db, cfg, log.Logger)
 	registerVisionTools(mcpServer, cfg, log.Logger)
@@ -524,7 +528,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	authHandler := handler.NewAuthHandler(authManager, cfg, configPath, log.Logger)
 	bindAudit(authHandler, auditSvc)
 	attackChainHandler := handler.NewAttackChainHandler(db, &cfg.OpenAI, log.Logger)
-	vulnerabilityHandler := handler.NewVulnerabilityHandler(db, log.Logger)
+	vulnerabilityHandler := handler.NewVulnerabilityHandler(db, log.Logger, vulnAlerts)
 	assetHandler := handler.NewAssetHandler(db, log.Logger)
 	projectHandler := handler.NewProjectHandler(db, log.Logger)
 	rbacHandler := handler.NewRBACHandler(db, log.Logger)
@@ -648,7 +652,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	auditHandler := handler.NewAuditHandler(db, auditSvc, log.Logger)
 	robotHandler := handler.NewRobotHandler(cfg, db, agentHandler, log.Logger)
 	bindAudit(robotHandler, auditSvc)
-	db.SetVulnerabilityCreatedHook(robotHandler.NotifyNewVulnerability)
+	vulnAlerts.attach(robotHandler.NotifyNewVulnerability)
 	openAPIHandler := handler.NewOpenAPIHandler(db, log.Logger, conversationHandler, agentHandler)
 
 	// 创建 App 实例（部分字段稍后填充）
@@ -684,7 +688,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 
 	// 设置漏洞工具注册器（内置工具，必须设置）
 	vulnerabilityRegistrar := func() error {
-		registerVulnerabilityTools(mcpServer, db, log.Logger)
+		registerVulnerabilityTools(mcpServer, db, log.Logger, vulnAlerts)
 		registerAssetTools(mcpServer, db, log.Logger)
 		registerProjectFactTools(mcpServer, db, cfg, log.Logger)
 		registerVisionTools(mcpServer, cfg, log.Logger)

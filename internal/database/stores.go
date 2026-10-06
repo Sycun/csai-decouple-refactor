@@ -337,7 +337,6 @@ type VulnerabilityStore interface {
 	GetVulnerabilityFilterOptionsForAccess(access RBACListAccess) (map[string][]string, error)
 	GetVulnerabilityStatsForAccess(filter VulnerabilityListFilter, access RBACListAccess) (map[string]interface{}, error)
 	ListVulnerabilitiesForAccess(limit, offset int, filter VulnerabilityListFilter, access RBACListAccess) ([]*Vulnerability, error)
-	NotifyVulnerabilityCreated(vulnerability *Vulnerability)
 	SetResourceOwner(resourceType, resourceID, userID string) error
 	UpdateVulnerability(id string, vuln *Vulnerability) error
 	UpsertVulnerabilityAlertSubscription(userID string, enabled bool, minSeverity string) (*VulnerabilityAlertSubscription, error)

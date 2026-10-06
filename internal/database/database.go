@@ -60,7 +60,6 @@ type DB struct {
 	checkpointDone           chan struct{}
 	closeOnce                sync.Once
 	closeErr                 error
-	vulnerabilityCreatedHook func(*Vulnerability)
 }
 
 // startPassiveCheckpointLoop 启动后台 PASSIVE checkpoint 循环。

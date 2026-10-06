@@ -52,6 +52,8 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	pluginWithoutToolLayer := 0
 	pluginWithoutMCPProvisioner := 0
 	switchesApplied := 0
+	vulnHandlerCalls := 0
+	vulnHandlerWithoutNotifier := 0
 	pluginWithoutSwitchStore := 0
 	for _, entry := range entries {
 		name := entry.Name()
@@ -190,6 +192,19 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 						}
 					}
 				}
+			case "NewVulnerabilityHandler":
+				// Argument 3 is the alert route. A nil there compiles and behaves: the record is
+				// stored, the endpoint answers 200, and nobody is ever told - the old design kept
+				// this signal on a field of the database connection, where forgetting to set it was
+				// invisible in exactly the same way.
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "handler" {
+					vulnHandlerCalls++
+					if len(call.Args) < 3 {
+						t.Errorf("handler.NewVulnerabilityHandler takes %d arguments, want the alert notifier among them", len(call.Args))
+					} else if id, isNil := call.Args[2].(*ast.Ident); isNil && id.Name == "nil" {
+						vulnHandlerWithoutNotifier++
+					}
+				}
 			case "Reload":
 				published++
 			}
@@ -256,6 +271,14 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 		t.Fatalf("ensureModelTokenUsageSchema is never called at boot: the table left the data layer's " +
 			"start-up sweep, so a fresh installation would write process details all day and lose every " +
 			"usage row to \"no such table: model_token_usage\"")
+	}
+	if vulnHandlerCalls < 1 {
+		t.Fatalf("handler.NewVulnerabilityHandler is never called in internal/app: the wiring that lets a " +
+			"recorded vulnerability reach the alert robot has to be built here, not hung off the connection")
+	}
+	if vulnHandlerWithoutNotifier > 0 {
+		t.Fatalf("%d call(s) wire the vulnerability handler with a nil notifier: vulnerabilities would be "+
+			"recorded and never announced, with nothing on the wire to show why", vulnHandlerWithoutNotifier)
 	}
 	if knowledgeRetrievalSchema < 1 {
 		t.Fatalf("ensureKnowledgeRetrievalSchema is never called at boot: the table left the data " +

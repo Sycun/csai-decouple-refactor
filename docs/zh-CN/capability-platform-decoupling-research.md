@@ -773,8 +773,9 @@ grep -rn go:embed --include='*.go' . | grep -v _test | wc -l       # 3（原 0�
 当前基线（2026-10-06 第十四片后复测，全部为当场命令输出）：`make fmt-check` **硬零（gofmt: clean）**、
 `go build ./...` 干净、`go vet ./...` 干净、`make test-gates`（= 同步测试树 + verify + gofmt + vet +
 `go test -race -count=1 ./...` + js 检查 + layering + wiring + build）**exit 0，69 个 ok 行、
-其中含测试的包 47 个、0 竞争**；测试函数 **1473** 个（重构前 HEAD 为 989，**+484**），
-`internal/store` 生产文件 **17 个**、包内测试 **128** 条。三条数字均为本片当场命令的第一手读数
+其中含测试的包 47 个、0 竞争**；测试函数 **1478** 个（重构前 HEAD 为 989，**+489**），
+`internal/store` 生产文件 **17 个**、包内测试 **128** 条，`*database.DB` 方法 **308** 个。
+四条数字均为本片当场命令的第一手读数
 （`grep -rh "^func Test" --include='*_test.go' internal cmd | wc -l`、`ls internal/store/*.go | grep -v _test | wc -l`、
 同形命令数 `internal/store/*_test.go` 里的 `^func Test`）；上一版此处写的是凭记忆的数字，被同一条命令当场否掉——
 这类错误只能靠"先跑命令再落笔"防，不能靠提醒自己。
@@ -1660,6 +1661,38 @@ Go 的 `Parse` 里布局的空格也匹配 `T`、`.999999999` 也匹配短小数
 探针三条：删启动那次 ensure → 接线门禁红；把 `u.enabled = 1` 摘掉 → 禁用账号那条测试红；
 （第三条：删单次使用的 UPDATE 守卫 → 如上所述**没有变红**，已作为负结果写进上文而不是隐藏。）
 
+### P6 第十六刀 —— 数据库连接包装不再当应用回调的注册表
+
+`*database.DB` 上原来挂着一个字段 `vulnerabilityCreatedHook`，由装配 `db.SetVulnerabilityCreatedHook(robotHandler.NotifyNewVulnerability)`
+设置，两个写入点（HTTP 创建漏洞、MCP 记录漏洞工具）通过 `db.NotifyVulnerabilityCreated(created)` 触发。
+**连接包装因此成了应用关注点的回调注册表**：任何拿到 `*DB` 的包都能读写字段，忘了设置时
+"漏洞记下了但永远不提醒"在协议上毫无痕迹。现在改成装配层一个具名类型
+`app.vulnerabilityAlertRoute`（`internal/app/vulnerability_alert_route.go`），
+`VulnerabilityHandler` 通过构造函数**必须**收到 `VulnerabilityNotifier`，工具注册也显式收一条路由；
+`*database.DB` **310 → 308**（两个方法 + 那个字段）。
+
+保留这个间接层是有理由的，而且理由写在类型注释里而不是留在记忆里：
+漏洞 MCP 工具在 `app.New()` 里比 robotHandler **先注册**，所以注册那一刻拿不到具体的监听者。
+变化只是这层间接从"连接对象的字段"挪到"装配层一个有名字、被测过的东西"。
+`attach(nil)` 会打一条 warn（提醒未接线），旧写法在同样情形下是彻底沉默。
+
+行为逐条对齐旧实现：**通知前 `created := *vulnerability` 拷贝再起 goroutine**（写路径随后继续改自己那条记录，
+不能改变在途提醒读到的东西）；`nil` 记录直接返回；无监听者时静默跳过而不是 panic；
+处理端仍只在自己的调用点等一次握手。
+
+测试：**装配层 3 条**（拷贝语义——通知后立即改原记录，断言监听者拿到的仍是记录当时的值；
+无监听者 / nil 记录 / attach(nil) 都不炸且不改写入路径；16 写 16 改挂接并发下每条通知都到达一个监听者，
+`-race` 过），**handler 层 2 条**（注入的 notifier 收到**刚存库那一条**的 id/标题/严重级，
+并回查 `vulnerabilities` 表确认不是另一条；notifier 为 nil 时端点仍 2xx 且库里真有 1 行——
+"有没有提醒"是装配决定，不是这条路径的前提）。
+
+门禁：接线测试新增一条 **AST 断言**——`internal/app` 里每个 `handler.NewVulnerabilityHandler(...)` 必须 3 参，
+且第 3 参不能是字面量 `nil`；探针注入 `nil` 立刻红（消息直说"记录得下、永不播报、协议上看不出原因"）。
+另两条探针：删掉 handler 那次 notify 调用 → 注入测试红；把拷贝换成共享指针 → 拷贝语义那条红。
+死面扫描的地板这次从 270 降到 **260**（实测 269）并改写它的注释：
+地板的职责是"扫描器还在读整个目录"，不是把每个切片都会下降的数字冻在原地——
+上一片把它教得太贴实测值，这一片两方法一删就撞线了。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
@@ -1668,7 +1701,7 @@ Go 的 `Parse` 里布局的空格也匹配 `T`、`.999999999` 也匹配短小数
   另 1 个是没人读的死字段，直接删。见 §11「P6 数据层第五片」与 §12.1 表）；
   `internal/database` 那 361 个方法本身也按域继续切（**已交回 11 个面：skill_stats 是第六片，
   `knowledge_base_items` + `knowledge_embeddings` 是第十一（合并算一片），`model_token_usage` 是第十二，
-  现测 320 个方法，由 `TestDatabaseSurfaceOnlyShrinks` 钉成只降水位**；**分层裸 SQL 已归零**——`internal/handler`
+  现测 308 个方法（第十六刀之后），由 `TestDatabaseSurfaceOnlyShrinks` 钉成只降水位**；**分层裸 SQL 已归零**——`internal/handler`
   之后第二个持有 SQL 的 `internal/knowledge` 也交完了，见 §11「P6 数据层第十一片」）、
   `AgentHandler` 分解（**水位实测 + 门禁 + 六刀已落**：起点 130 方法/23 文件，
   现已搬到 **88 方法/21 文件**——中断队列读面 9 个方法进 `HITLQueue`、收尾链路 10 个方法进

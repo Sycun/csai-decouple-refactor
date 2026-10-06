@@ -90,7 +90,7 @@ func TestVulnerabilityCannotBeReparentedToForeignProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = db.SetResourceOwner("vulnerability", vulnerability.ID, "u1")
-	h := NewVulnerabilityHandler(db, zap.NewNop())
+	h := NewVulnerabilityHandler(db, zap.NewNop(), nil)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
 		c.Set(security.ContextSessionKey, security.Session{UserID: "u1", Scope: database.RBACScopeOwn})
