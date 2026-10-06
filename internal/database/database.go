@@ -417,7 +417,6 @@ func (db *DB) initTables() error {
 		return err
 	}
 
-
 	if _, err := db.Exec(createToolExecutionsTable); err != nil {
 		return fmt.Errorf("创建tool_executions表失败: %w", err)
 	}
@@ -577,7 +576,6 @@ func (db *DB) migrateToolExecutionsPartialOutputColumns() error {
 	}
 	return nil
 }
-
 
 // migrateConversationsTable 迁移conversations表，添加新字段
 func (db *DB) migrateConversationsTable() error {

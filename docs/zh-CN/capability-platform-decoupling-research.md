@@ -2942,8 +2942,10 @@ NewVulnerabilities owns`；② 把启动那行 `EnsureSchema()` 换成一句无�
 "重复列"是正常答案不算失败，回填 UPDATE 失败不拦启动），外键/列探针抽成包内共享的
 `schemaColumnCount(db, table, column)` 与导出的 `SchemaHasColumn`（漏洞那边那份 5 行 helper 现在也调它，
 一个包里只剩一种"探 schema"的写法）。**水位 189 → 188**，`database.go` 里 `CREATE INDEX`
-39 → 22 行、`CREATE TABLE` 剩 10 张（conversations / tool_executions / tool_stats / projects
-与 c2 那一组——它们的主人都还没到）。
+从 39 行降到 22 行，仍由它建表的表名只剩 **10 张**（按 `[a-z0-9_]+` 数出来）：
+`conversations`、`projects`、`tool_executions`、`tool_stats` 与 `c2_listeners` / `c2_sessions` /
+`c2_tasks` / `c2_files` / `c2_events` / `c2_profiles` 六张——**这十张表的主人都还留在数据层**
+（会话域 48 个方法、C2 域 47 个、monitor 域 22 个），所以这一层还差三刀。
 
 **门禁三条各自验红**：boot 清单新增 `NewSession`（锚点 `createConversationsTable`，两张表都级联指向它；
 `mustNotChangeSQL: "process_details"`）。
