@@ -220,6 +220,39 @@ func provisionDeclaredServers(mgr *mcp.ExternalMCPManager, table *plugin.Table) 
 	return declared, note
 }
 
+// declarePackPluginUnits puts every plugin unit the table holds back into the declared state at
+// start-up, the same way a pack's MCP server is re-declared rather than started.
+//
+// A pack's `plugins/ref.yaml` is read by whoever flips the switch, and the trust domain plus the
+// discovered capability set only exist after that read. Nothing here performs that read: the host is
+// not given a domain, no capabilities are registered, and therefore no process is spawned from a
+// pack author's file. The persisted switch follows the same rule as the MCP one - a saved row is
+// replayed only in the "off" direction, because re-trusting a binary is a decision the operator makes
+// about the thing in front of them, not one inherited silently from a previous run.
+//
+// What this fixes is the disagreement between the two: without it a pack whose manifest says
+// `enabled: true` comes back enabled at boot while the host holds nothing, so the console shows an
+// enabled unit whose capabilities nobody can call and reports the reason as a failed enablement that
+// never happened.
+func declarePackPluginUnits(table *plugin.Table) (int, string) {
+	if table == nil {
+		return 0, "能力表未装配，包声明的插件单元无处可查"
+	}
+	var flipped int
+	var note string
+	for _, u := range table.Units(plugin.KindPlugin) {
+		if !u.Enabled {
+			continue
+		}
+		if _, err := table.SetEnabled(u.ID, false); err != nil {
+			note = fmt.Sprintf("%s: %v", u.ID, err)
+			continue
+		}
+		flipped++
+	}
+	return flipped, note
+}
+
 // applyPersistedSwitches re-applies the operator's own on/off decisions after the packs have been
 // rebuilt from disk, and prunes the rows that no longer describe anything.
 //

@@ -34,6 +34,7 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	bundlesInstalled := 0
 	bootToolRebuilds := 0
 	mcpProvisioned := 0
+	pluginUnitsDeclared := 0
 	pluginCalls := 0
 	pluginWithoutToolLayer := 0
 	pluginWithoutMCPProvisioner := 0
@@ -74,6 +75,11 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 						// builds from config.yaml. Without this call the server is in the table and
 						// in the console after a restart while nothing connects to it.
 						mcpProvisioned++
+					case "declarePackPluginUnits":
+						// A pack's plugin unit must come back *declared* rather than enabled: the
+						// host holds no domain at start-up, so a manifest that says enabled would
+						// otherwise show an enabled unit whose capabilities nobody can call.
+						pluginUnitsDeclared++
 					}
 				}
 				return true
@@ -163,6 +169,11 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 		t.Fatalf("provisionDeclaredServers is never called at boot: a pack's MCP server would be in " +
 			"the table and in the console but absent from the live manager until the pack is reinstalled")
 	}
+	if pluginUnitsDeclared < 1 {
+		t.Fatalf("declarePackPluginUnits is never called at boot: a pack whose manifest says enabled " +
+			"would come back an enabled unit while the host holds no domain, so its capabilities are " +
+			"uncallable and the console blames a failed enablement that never happened")
+	}
 	if switchesApplied < 1 {
 		t.Fatalf("applyPersistedSwitches is never called at boot: the table is rebuilt from disk, so " +
 			"every switch the operator made in the console would be undone by the next restart")
@@ -190,9 +201,10 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	}
 	t.Logf("assembly wiring: %d files scanned, 1 live-store install, 1 table install, "+
 		"1 remote inventory observer, %d capability scan call(s), %d bundle re-install call(s), "+
-		"%d MCP declaration call(s), %d switch overlay call(s), %d catalog publish call(s), "+
-		"1 plug-in handler with its tool layer, MCP provisioner and switch store",
-		scanned, scannedCalled, bundlesInstalled, mcpProvisioned, switchesApplied, published)
+		"%d MCP declaration call(s), %d plugin declaration call(s), %d switch overlay call(s), "+
+		"%d catalog publish call(s), 1 plug-in handler with its tool layer, MCP provisioner "+
+		"and switch store",
+		scanned, scannedCalled, bundlesInstalled, mcpProvisioned, pluginUnitsDeclared, switchesApplied, published)
 }
 
 func moduleRootForWiringTest(t *testing.T) string {

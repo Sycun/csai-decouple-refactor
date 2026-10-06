@@ -572,6 +572,13 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		log.Logger.Info("能力包声明的 MCP 服务器已写入管理器（默认停用）",
 			zap.Int("declared", n), zap.String("note", msg))
 	}
+	// The same honesty applies to a pack's plugin binary: the host holds no domain until somebody
+	// switches the unit on, so a manifest that says enabled must not leave the table claiming an
+	// enabled unit whose capabilities nothing can call.
+	if n, msg := declarePackPluginUnits(pluginTable); n > 0 || msg != "" {
+		log.Logger.Info("能力包声明的插件单元按停用装入（不启动进程）",
+			zap.Int("declared", n), zap.String("note", msg))
+	}
 	// The one-click extend surface. It is confined to <configDir>/bundles, and it drives the same
 	// table the run paths read, so an install here is live on the next request. A pack that
 	// contributes tool recipes goes through configHandler's tool-layer rebuild - the same sequence
