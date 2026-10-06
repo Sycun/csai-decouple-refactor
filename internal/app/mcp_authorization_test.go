@@ -179,7 +179,7 @@ func TestMCPExecutionControlAuthorizationUsesExecutionScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SaveToolExecution(&mcp.ToolExecution{
+	if err := database.NewMonitor(db).SaveToolExecution(&mcp.ToolExecution{
 		ID:          "exec-owned",
 		ToolName:    "lab::slow",
 		Status:      "running",
@@ -188,7 +188,7 @@ func TestMCPExecutionControlAuthorizationUsesExecutionScope(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SaveToolExecution(&mcp.ToolExecution{
+	if err := database.NewMonitor(db).SaveToolExecution(&mcp.ToolExecution{
 		ID:        "exec-hidden",
 		ToolName:  "lab::slow",
 		Status:    "running",

@@ -166,15 +166,11 @@ func (db *DB) migrateRBACOwnershipColumns() error {
 		{"webshell_connections", "owner_user_id", "ALTER TABLE webshell_connections ADD COLUMN owner_user_id TEXT"},
 		{"batch_task_queues", "owner_user_id", "ALTER TABLE batch_task_queues ADD COLUMN owner_user_id TEXT"},
 		{"c2_listeners", "owner_user_id", "ALTER TABLE c2_listeners ADD COLUMN owner_user_id TEXT"},
-		{"tool_executions", "owner_user_id", "ALTER TABLE tool_executions ADD COLUMN owner_user_id TEXT"},
-		{"tool_executions", "conversation_id", "ALTER TABLE tool_executions ADD COLUMN conversation_id TEXT"},
 	} {
 		if err := db.addColumnIfMissing(col.table, col.name, col.stmt); err != nil {
 			return err
 		}
 	}
-	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_executions_owner ON tool_executions(owner_user_id)`)
-	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_tool_executions_conversation ON tool_executions(conversation_id)`)
 	return nil
 }
 

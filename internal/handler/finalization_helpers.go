@@ -7,6 +7,7 @@ import (
 	"cyberstrike-ai/internal/agentfinalizer"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/multiagent"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -21,10 +22,11 @@ import (
 // content is the AgentHandler that owns the messages store, taken through the one method this
 // needs rather than as the whole handler.
 type runFinalizer struct {
-	db      database.AgentStore
-	logger  *zap.Logger
-	agent   cancellableToolExecution
-	content messageContentWriter
+	db         database.AgentStore
+	executions *store.Monitor
+	logger     *zap.Logger
+	agent      cancellableToolExecution
+	content    messageContentWriter
 }
 
 type cancellableToolExecution interface {
@@ -40,11 +42,21 @@ type messageContentWriter interface {
 // the field into a non-nil interface wrapping nil.
 func newRunFinalizer(db *database.DB, logger *zap.Logger, agent cancellableToolExecution, content messageContentWriter) *runFinalizer {
 	return &runFinalizer{
-		db:      database.Narrow[database.AgentStore](db),
-		logger:  logger,
-		agent:   agent,
-		content: content,
+		db:         database.Narrow[database.AgentStore](db),
+		executions: database.NewMonitor(db),
+		logger:     logger,
+		agent:      agent,
+		content:    content,
 	}
+}
+
+// decisionStore keeps the boundary rule newRunFinalizer documents: a nil *store.Monitor must stay a
+// nil interface, or agentfinalizer's `db == nil` branch takes the wrong path.
+func (f *runFinalizer) decisionStore() agentfinalizer.Store {
+	if f.executions == nil {
+		return nil
+	}
+	return f.executions
 }
 
 func (f *runFinalizer) finalizeAgentRunForDelivery(
@@ -67,7 +79,7 @@ func (f *runFinalizer) finalizeAgentRunForDeliveryWithPolicy(
 	reasoningContent string,
 	requireExecutionEvidence bool,
 ) agentfinalizer.Decision {
-	decision := agentfinalizer.FromRunResult(f.db, result, agentfinalizer.Input{
+	decision := agentfinalizer.FromRunResult(f.decisionStore(), result, agentfinalizer.Input{
 		ConversationID:           conversationID,
 		AssistantMessageID:       assistantMessageID,
 		AgentMode:                agentMode,
@@ -86,7 +98,7 @@ func (f *runFinalizer) decideAgentRunForDeliveryWithPolicy(
 	mcpExecutionIDs []string,
 	requireExecutionEvidence bool,
 ) agentfinalizer.Decision {
-	return agentfinalizer.FromRunResult(f.db, result, agentfinalizer.Input{
+	return agentfinalizer.FromRunResult(f.decisionStore(), result, agentfinalizer.Input{
 		ConversationID:           conversationID,
 		AssistantMessageID:       assistantMessageID,
 		AgentMode:                agentMode,
@@ -102,7 +114,7 @@ func (f *runFinalizer) decideAgentRunForDelivery(
 	result *multiagent.RunResult,
 	mcpExecutionIDs []string,
 ) agentfinalizer.Decision {
-	return agentfinalizer.FromRunResult(f.db, result, agentfinalizer.Input{
+	return agentfinalizer.FromRunResult(f.decisionStore(), result, agentfinalizer.Input{
 		ConversationID:           conversationID,
 		AssistantMessageID:       assistantMessageID,
 		AgentMode:                agentMode,
@@ -154,7 +166,7 @@ func (f *runFinalizer) finalizeCandidateForDeliveryWithPolicy(
 	reasoningContent string,
 	requireExecutionEvidence bool,
 ) agentfinalizer.Decision {
-	decision := agentfinalizer.Decide(f.db, agentfinalizer.Input{
+	decision := agentfinalizer.Decide(f.decisionStore(), agentfinalizer.Input{
 		Response:                 response,
 		ConversationID:           conversationID,
 		AssistantMessageID:       assistantMessageID,

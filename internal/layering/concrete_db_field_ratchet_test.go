@@ -104,8 +104,9 @@ const narrowedStoreFloor = 19
 const narrowedAssignmentFloor = 17
 
 // narrowedInterfaceFloor keeps a broken interface scan from turning the floors above into a green
-// no-op: internal/database declares 22 interfaces across stores.go and surfaces.go today.
-const narrowedInterfaceFloor = 20
+// no-op: internal/database declares 21 interfaces across stores.go and surfaces.go today
+// (ToolExecutionLedger left with the monitor domain).
+const narrowedInterfaceFloor = 19
 
 // scannedFieldFloor keeps a broken scan from producing a green zero: the handler package declares
 // ~990 struct fields, so a walk that sees a tenth of that is not reporting the truth.

@@ -1,7 +1,6 @@
 package database
 
 import (
-	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/store"
 )
 
@@ -41,14 +40,8 @@ var (
 	_ BlackboardLedger = (*store.Facts)(nil)
 )
 
-// ToolExecutionLedger is what the run finalizer needs: read a tool execution's recorded state, and
-// write one back when a cancelled run leaves an execution dangling.
-type ToolExecutionLedger interface {
-	GetToolExecution(id string) (*mcp.ToolExecution, error)
-	SaveToolExecution(exec *mcp.ToolExecution) error
-}
-
-var _ ToolExecutionLedger = (*DB)(nil)
+// ToolExecutionLedger 已随 tool_executions 的语句一起离开连接包装：finalizer 的读面现在声明在
+// internal/agentfinalizer（消费者侧），由 store.Monitor 满足。
 
 // WorkflowRunLedger used to live here. The five workflow tables moved to store.Workflows, and the
 // ledger the engine declares is now in internal/workflow - so this file no longer carries a workflow

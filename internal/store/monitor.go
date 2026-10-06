@@ -1,23 +1,105 @@
-package database
+package store
 
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
 	"time"
 
-	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/sqltime"
-	"cyberstrike-ai/internal/store"
-
-	"go.uber.org/zap"
 )
 
+// Monitor owns the tool-execution ledger: the tool_executions and tool_stats tables, their schema
+// and the aggregations the console reads. The row shapes (ToolExecution, ToolResult, Content,
+// ToolStats) live here too - they are what the tables store, and internal/mcp keeps the names as
+// aliases so the protocol code reads unchanged.
+//
+// The statements were copied out of internal/database verbatim: same SELECT lists (COALESCE and
+// all), same ORDER BYs, same error strings. Two things changed on purpose, both recorded in §11
+// 第四十一刀: the eight "scan failed, drop the row" loops now return the error (a store owns its DDL,
+// so a scan failure is a fault, not a row to lose), and the logger calls are gone - this package
+// holds no logger (the documented trade of every store, see batch_task.go).
+type Monitor struct {
+	db *sql.DB
+	// access answers "may this caller reach that resource". The rule belongs to the RBAC domain; the
+	// store only composes it with the execution's own owner column. A store built without one (tests,
+	// disabled paths) keeps the owner match and answers false on the conversation branch.
+	access func(userID, scope, resourceType, resourceID string) bool
+}
+
+// NewMonitor binds the store to a connection. access may be nil.
+func NewMonitor(db *sql.DB, access func(userID, scope, resourceType, resourceID string) bool) *Monitor {
+	return &Monitor{db: db, access: access}
+}
+
+// 工具执行的状态词汇。internal/mcp 保留同名常量作为别名，协议代码读法不变。
+const (
+	ToolExecutionStatusQueued      = "queued"
+	ToolExecutionStatusRunning     = "running"
+	ToolExecutionStatusCompleted   = "completed"
+	ToolExecutionStatusBlocked     = "blocked"
+	ToolExecutionStatusFailed      = "failed"
+	ToolExecutionStatusCancelled   = "cancelled"
+	ToolExecutionStatusHardTimeout = "hard_timeout"
+	ToolExecutionStatusOrphaned    = "orphaned"
+)
+
+// ToolResult 表示工具执行结果
+type ToolResult struct {
+	Content []Content `json:"content"`
+	IsError bool      `json:"isError,omitempty"`
+	// Blocked means policy stopped the call before execution. IsError remains
+	// true for MCP/model handling, while monitoring uses a distinct status.
+	Blocked bool `json:"blocked,omitempty"`
+}
+
+// Content 表示内容
+type Content struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// ToolExecution 工具执行记录
+type ToolExecution struct {
+	ID        string                 `json:"id"`
+	ToolName  string                 `json:"toolName"`
+	Arguments map[string]interface{} `json:"arguments"`
+	Status    string                 `json:"status"` // queued, running, completed, blocked, failed, cancelled, hard_timeout, orphaned
+	Result    *ToolResult            `json:"result,omitempty"`
+	Error     string                 `json:"error,omitempty"`
+	StartTime time.Time              `json:"startTime"`
+	EndTime   *time.Time             `json:"endTime,omitempty"`
+	Duration  time.Duration          `json:"duration,omitempty"`
+	// PartialOutput is a bounded tail preview of output produced by a running tool.
+	// It is intentionally separate from Result, which remains the final canonical tool result.
+	PartialOutput          string     `json:"partialOutput,omitempty"`
+	PartialOutputBytes     int64      `json:"partialOutputBytes,omitempty"`
+	PartialOutputTruncated bool       `json:"partialOutputTruncated,omitempty"`
+	PartialOutputUpdatedAt *time.Time `json:"partialOutputUpdatedAt,omitempty"`
+	// ConversationID 仅 API 展示用（进行中的 Agent 任务），不写入 tool_executions 表。
+	ConversationID string `json:"conversationId,omitempty"`
+	OwnerUserID    string `json:"-"`
+}
+
+// ToolStats 工具统计信息
+type ToolStats struct {
+	ToolName     string     `json:"toolName"`
+	TotalCalls   int        `json:"totalCalls"`
+	SuccessCalls int        `json:"successCalls"`
+	FailedCalls  int        `json:"failedCalls"`
+	BlockedCalls int        `json:"blockedCalls"`
+	LastCallTime *time.Time `json:"lastCallTime,omitempty"`
+}
+
 // SaveToolExecution 保存工具执行记录
-func (db *DB) SaveToolExecution(exec *mcp.ToolExecution) error {
+func (m *Monitor) SaveToolExecution(exec *ToolExecution) error {
+	if m == nil || m.db == nil {
+		return errors.New("store: monitor requires a database")
+	}
 	argsJSON, err := json.Marshal(exec.Arguments)
 	if err != nil {
-		db.logger.Warn("序列化执行参数失败", zap.Error(err))
 		argsJSON = []byte("{}")
 	}
 
@@ -25,7 +107,6 @@ func (db *DB) SaveToolExecution(exec *mcp.ToolExecution) error {
 	if exec.Result != nil {
 		resultBytes, err := json.Marshal(exec.Result)
 		if err != nil {
-			db.logger.Warn("序列化执行结果失败", zap.Error(err))
 		} else {
 			resultJSON = sql.NullString{String: string(resultBytes), Valid: true}
 		}
@@ -60,7 +141,7 @@ func (db *DB) SaveToolExecution(exec *mcp.ToolExecution) error {
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
-	_, err = db.Exec(query,
+	_, err = m.db.Exec(query,
 		exec.ID,
 		exec.ToolName,
 		string(argsJSON),
@@ -80,7 +161,6 @@ func (db *DB) SaveToolExecution(exec *mcp.ToolExecution) error {
 	)
 
 	if err != nil {
-		db.logger.Error("保存工具执行记录失败", zap.Error(err), zap.String("executionId", exec.ID))
 		return err
 	}
 
@@ -88,16 +168,19 @@ func (db *DB) SaveToolExecution(exec *mcp.ToolExecution) error {
 }
 
 // UpdateToolExecutionResult 仅更新结果字段（用于 reduction 后将监控展示与模型上下文对齐）。
-func (db *DB) UpdateToolExecutionResult(id string, result *mcp.ToolResult) error {
+func (m *Monitor) UpdateToolExecutionResult(id string, result *ToolResult) error {
+	if m == nil || m.db == nil {
+		return errors.New("store: monitor requires a database")
+	}
 	id = strings.TrimSpace(id)
 	if id == "" || result == nil {
 		return nil
 	}
 	var status string
-	if err := db.QueryRow(`SELECT status FROM tool_executions WHERE id = ?`, id).Scan(&status); err != nil && err != sql.ErrNoRows {
+	if err := m.db.QueryRow(`SELECT status FROM tool_executions WHERE id = ?`, id).Scan(&status); err != nil && err != sql.ErrNoRows {
 		return err
 	}
-	if status == mcp.ToolExecutionStatusBlocked {
+	if status == ToolExecutionStatusBlocked {
 		copy := *result
 		copy.Blocked, copy.IsError = true, true
 		result = &copy
@@ -106,9 +189,8 @@ func (db *DB) UpdateToolExecutionResult(id string, result *mcp.ToolResult) error
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(`UPDATE tool_executions SET result = ? WHERE id = ?`, string(resultBytes), id)
+	_, err = m.db.Exec(`UPDATE tool_executions SET result = ? WHERE id = ?`, string(resultBytes), id)
 	if err != nil {
-		db.logger.Warn("更新工具执行结果失败", zap.Error(err), zap.String("executionId", id))
 	}
 	return err
 }
@@ -121,11 +203,17 @@ func sqlNullString(s string) sql.NullString {
 }
 
 // CountToolExecutions 统计工具执行记录总数
-func (db *DB) CountToolExecutions(status, toolName string) (int, error) {
-	return db.CountToolExecutionsForAccess(status, toolName, store.Access{Scope: RBACScopeAll})
+func (m *Monitor) CountToolExecutions(status, toolName string) (int, error) {
+	if m == nil || m.db == nil {
+		return 0, errors.New("store: monitor requires a database")
+	}
+	return m.CountToolExecutionsForAccess(status, toolName, Access{Scope: ScopeAll})
 }
 
-func (db *DB) CountToolExecutionsForAccess(status, toolName string, access store.Access) (int, error) {
+func (m *Monitor) CountToolExecutionsForAccess(status, toolName string, access Access) (int, error) {
+	if m == nil || m.db == nil {
+		return 0, errors.New("store: monitor requires a database")
+	}
 	query := `SELECT COUNT(*) FROM tool_executions`
 	args := []interface{}{}
 	conditions := []string{}
@@ -146,7 +234,7 @@ func (db *DB) CountToolExecutionsForAccess(status, toolName string, access store
 	}
 	query, args = appendToolExecutionAccessSQL(query, args, access, len(conditions) > 0)
 	var count int
-	err := db.QueryRow(query, args...).Scan(&count)
+	err := m.db.QueryRow(query, args...).Scan(&count)
 	if err != nil {
 		return 0, err
 	}
@@ -154,8 +242,11 @@ func (db *DB) CountToolExecutionsForAccess(status, toolName string, access store
 }
 
 // LoadToolExecutions 加载所有工具执行记录（支持分页）
-func (db *DB) LoadToolExecutions() ([]*mcp.ToolExecution, error) {
-	return db.LoadToolExecutionsWithPagination(0, 1000, "", "")
+func (m *Monitor) LoadToolExecutions() ([]*ToolExecution, error) {
+	if m == nil || m.db == nil {
+		return nil, errors.New("store: monitor requires a database")
+	}
+	return m.LoadToolExecutionsWithPagination(0, 1000, "", "")
 }
 
 // LoadToolExecutionsWithPagination 分页加载工具执行记录
@@ -163,7 +254,10 @@ func (db *DB) LoadToolExecutions() ([]*mcp.ToolExecution, error) {
 // offset: 跳过的记录数，用于分页
 // status: 状态筛选，空字符串表示不过滤
 // toolName: 工具名称筛选，空字符串表示不过滤
-func (db *DB) LoadToolExecutionsWithPagination(offset, limit int, status, toolName string) ([]*mcp.ToolExecution, error) {
+func (m *Monitor) LoadToolExecutionsWithPagination(offset, limit int, status, toolName string) ([]*ToolExecution, error) {
+	if m == nil || m.db == nil {
+		return nil, errors.New("store: monitor requires a database")
+	}
 	if limit <= 0 {
 		limit = 1000 // 默认限制
 	}
@@ -195,22 +289,22 @@ func (db *DB) LoadToolExecutionsWithPagination(offset, limit int, status, toolNa
 	query += ` ORDER BY start_time DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 
-	rows, err := db.Query(query, args...)
+	rows, err := m.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var executions []*mcp.ToolExecution
+	var executions []*ToolExecution
 	for rows.Next() {
-		var exec mcp.ToolExecution
+		var exec ToolExecution
 		var argsJSON string
 		var resultJSON sql.NullString
 		var errorText sql.NullString
 		var endTime sql.NullTime
 		var durationMs sql.NullInt64
 
-		err := rows.Scan(
+		if err := rows.Scan(
 			&exec.ID,
 			&exec.ToolName,
 			&argsJSON,
@@ -222,23 +316,19 @@ func (db *DB) LoadToolExecutionsWithPagination(offset, limit int, status, toolNa
 			&durationMs,
 			&exec.OwnerUserID,
 			&exec.ConversationID,
-		)
-		if err != nil {
-			db.logger.Warn("加载执行记录失败", zap.Error(err))
-			continue
+		); err != nil {
+			return nil, fmt.Errorf("加载执行记录失败: %w", err)
 		}
 
 		// 解析参数
 		if err := json.Unmarshal([]byte(argsJSON), &exec.Arguments); err != nil {
-			db.logger.Warn("解析执行参数失败", zap.Error(err))
 			exec.Arguments = make(map[string]interface{})
 		}
 
 		// 解析结果
 		if resultJSON.Valid && resultJSON.String != "" {
-			var result mcp.ToolResult
+			var result ToolResult
 			if err := json.Unmarshal([]byte(resultJSON.String), &result); err != nil {
-				db.logger.Warn("解析执行结果失败", zap.Error(err))
 			} else {
 				exec.Result = &result
 			}
@@ -295,12 +385,15 @@ type ToolStatsSummary struct {
 // ToolStatsSummaryResult 汇总 + Top N 工具排行
 type ToolStatsSummaryResult struct {
 	Summary  ToolStatsSummary
-	TopTools []*mcp.ToolStats
+	TopTools []*ToolStats
 }
 
 // LoadToolStatsSummary 聚合统计信息，仅返回汇总与 Top N 工具（避免全量 map 传输）。
 // 监控页的失败口径只包含真实失败/异常终止；用户主动取消的 cancelled 保留在总调用中，不计入失败。
-func (db *DB) LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error) {
+func (m *Monitor) LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error) {
+	if m == nil || m.db == nil {
+		return nil, errors.New("store: monitor requires a database")
+	}
 	if topN <= 0 {
 		topN = 6
 	}
@@ -309,7 +402,7 @@ func (db *DB) LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error) {
 	}
 
 	result := &ToolStatsSummaryResult{
-		TopTools: make([]*mcp.ToolStats, 0, topN),
+		TopTools: make([]*ToolStats, 0, topN),
 	}
 
 	summaryQuery := `
@@ -322,7 +415,7 @@ func (db *DB) LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error) {
 		FROM tool_executions
 	`
 	var lastCallRaw sql.NullString
-	err := db.QueryRow(summaryQuery).Scan(
+	err := m.db.QueryRow(summaryQuery).Scan(
 		&result.Summary.TotalCalls,
 		&result.Summary.SuccessCalls,
 		&result.Summary.FailedCalls,
@@ -351,14 +444,14 @@ func (db *DB) LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error) {
 		ORDER BY total_calls DESC, tool_name ASC
 		LIMIT ?
 	`
-	rows, err := db.Query(topQuery, topN)
+	rows, err := m.db.Query(topQuery, topN)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var stat mcp.ToolStats
+		var stat ToolStats
 		var lastCallTime sql.NullString
 		if err := rows.Scan(
 			&stat.ToolName,
@@ -368,11 +461,10 @@ func (db *DB) LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error) {
 			&stat.BlockedCalls,
 			&lastCallTime,
 		); err != nil {
-			db.logger.Warn("加载 Top 工具统计失败", zap.Error(err))
-			continue
+			return nil, fmt.Errorf("加载 Top 工具统计失败: %w", err)
 		}
 		if lastCallTime.Valid {
-			parsed := parseDBTime(lastCallTime.String)
+			parsed := sqltime.Parse(lastCallTime.String)
 			stat.LastCallTime = &parsed
 		}
 		result.TopTools = append(result.TopTools, &stat)
@@ -381,9 +473,12 @@ func (db *DB) LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error) {
 	return result, nil
 }
 
-func (db *DB) LoadToolStatsSummaryForAccess(topN int, access store.Access) (*ToolStatsSummaryResult, error) {
-	if access.Scope == RBACScopeAll {
-		return db.LoadToolStatsSummary(topN)
+func (m *Monitor) LoadToolStatsSummaryForAccess(topN int, access Access) (*ToolStatsSummaryResult, error) {
+	if m == nil || m.db == nil {
+		return nil, errors.New("store: monitor requires a database")
+	}
+	if access.Scope == ScopeAll {
+		return m.LoadToolStatsSummary(topN)
 	}
 	if topN <= 0 {
 		topN = 6
@@ -391,10 +486,10 @@ func (db *DB) LoadToolStatsSummaryForAccess(topN int, access store.Access) (*Too
 	if topN > 100 {
 		topN = 100
 	}
-	result := &ToolStatsSummaryResult{TopTools: make([]*mcp.ToolStats, 0, topN)}
+	result := &ToolStatsSummaryResult{TopTools: make([]*ToolStats, 0, topN)}
 	fromSQL, args := appendToolExecutionAccessSQL(` FROM tool_executions`, nil, access, false)
 	var lastCall sql.NullString
-	err := db.QueryRow(`SELECT COUNT(*),
+	err := m.db.QueryRow(`SELECT COUNT(*),
 		COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN status IN ('failed', 'hard_timeout', 'orphaned') THEN 1 ELSE 0 END), 0),
 		COALESCE(SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END), 0),
@@ -406,10 +501,10 @@ func (db *DB) LoadToolStatsSummaryForAccess(topN int, access store.Access) (*Too
 		return nil, err
 	}
 	if lastCall.Valid {
-		parsed := parseDBTime(lastCall.String)
+		parsed := sqltime.Parse(lastCall.String)
 		result.Summary.LastCallTime = &parsed
 	}
-	rows, err := db.Query(`SELECT tool_name, COUNT(*),
+	rows, err := m.db.Query(`SELECT tool_name, COUNT(*),
 		SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END),
 		SUM(CASE WHEN status IN ('failed', 'hard_timeout', 'orphaned') THEN 1 ELSE 0 END),
 		SUM(CASE WHEN status = 'blocked' THEN 1 ELSE 0 END), MAX(start_time)`+
@@ -419,13 +514,13 @@ func (db *DB) LoadToolStatsSummaryForAccess(topN int, access store.Access) (*Too
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var stat mcp.ToolStats
+		var stat ToolStats
 		var last sql.NullString
 		if err := rows.Scan(&stat.ToolName, &stat.TotalCalls, &stat.SuccessCalls, &stat.FailedCalls, &stat.BlockedCalls, &last); err != nil {
 			return nil, err
 		}
 		if last.Valid {
-			parsed := parseDBTime(last.String)
+			parsed := sqltime.Parse(last.String)
 			stat.LastCallTime = &parsed
 		}
 		result.TopTools = append(result.TopTools, &stat)
@@ -433,7 +528,10 @@ func (db *DB) LoadToolStatsSummaryForAccess(topN int, access store.Access) (*Too
 	return result, rows.Err()
 }
 
-func (db *DB) LoadToolExecutionListPageForAccess(offset, limit int, status, toolName string, access store.Access) ([]*mcp.ToolExecution, error) {
+func (m *Monitor) LoadToolExecutionListPageForAccess(offset, limit int, status, toolName string, access Access) ([]*ToolExecution, error) {
+	if m == nil || m.db == nil {
+		return nil, errors.New("store: monitor requires a database")
+	}
 	if limit <= 0 {
 		limit = 20
 	}
@@ -451,15 +549,15 @@ func (db *DB) LoadToolExecutionListPageForAccess(offset, limit int, status, tool
 	query += ` ORDER BY start_time DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 
-	rows, err := db.Query(query, args...)
+	rows, err := m.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	executions := make([]*mcp.ToolExecution, 0, limit)
+	executions := make([]*ToolExecution, 0, limit)
 	for rows.Next() {
-		var exec mcp.ToolExecution
+		var exec ToolExecution
 		var endTime sql.NullTime
 		var durationMs sql.NullInt64
 
@@ -473,8 +571,7 @@ func (db *DB) LoadToolExecutionListPageForAccess(offset, limit int, status, tool
 			&exec.OwnerUserID,
 			&exec.ConversationID,
 		); err != nil {
-			db.logger.Warn("加载执行记录列表失败", zap.Error(err))
-			continue
+			return nil, fmt.Errorf("加载执行记录列表失败: %w", err)
 		}
 		if endTime.Valid {
 			exec.EndTime = &endTime.Time
@@ -488,8 +585,8 @@ func (db *DB) LoadToolExecutionListPageForAccess(offset, limit int, status, tool
 	return executions, nil
 }
 
-func appendToolExecutionAccessSQL(query string, args []interface{}, access store.Access, hasWhere bool) (string, []interface{}) {
-	if access.Scope == RBACScopeAll {
+func appendToolExecutionAccessSQL(query string, args []interface{}, access Access, hasWhere bool) (string, []interface{}) {
+	if access.SeeAll() {
 		return query, args
 	}
 	userID := strings.TrimSpace(access.UserID)
@@ -500,21 +597,20 @@ func appendToolExecutionAccessSQL(query string, args []interface{}, access store
 	if userID == "" {
 		return query + joiner + "1=0", args
 	}
-	query += joiner + `(
-		owner_user_id = ?
-		OR (conversation_id IS NOT NULL AND conversation_id <> '' AND (
-			EXISTS (SELECT 1 FROM conversations c WHERE c.id = tool_executions.conversation_id AND c.owner_user_id = ?)
-			OR EXISTS (SELECT 1 FROM rbac_resource_assignments ra WHERE ra.user_id = ? AND ra.resource_type = 'conversation' AND ra.resource_id = tool_executions.conversation_id)
-			OR EXISTS (SELECT 1 FROM conversations c JOIN projects p ON p.id = c.project_id WHERE c.id = tool_executions.conversation_id AND p.owner_user_id = ?)
-			OR EXISTS (SELECT 1 FROM conversations c JOIN rbac_resource_assignments pra ON pra.resource_id = c.project_id WHERE c.id = tool_executions.conversation_id AND pra.user_id = ? AND pra.resource_type = 'project')
-		))
-	)`
-	args = append(args, userID, userID, userID, userID, userID)
+	// 四个会话分支只有一份拼写（store/access.go 的 ConversationVisibilityClause）：
+	// 这里只是把它放进 "本次执行的 owner 或它所在会话可见" 这个 OR 里。
+	clause, clauseArgs := ConversationVisibilityClause("tool_executions.conversation_id", access)
+	query += joiner + `(owner_user_id = ? OR (` + clause + `))`
+	args = append(args, userID)
+	args = append(args, clauseArgs...)
 	return query, args
 }
 
 // GetToolExecution 根据ID获取单条工具执行记录
-func (db *DB) GetToolExecution(id string) (*mcp.ToolExecution, error) {
+func (m *Monitor) GetToolExecution(id string) (*ToolExecution, error) {
+	if m == nil || m.db == nil {
+		return nil, errors.New("store: monitor requires a database")
+	}
 	query := `
 		SELECT id, tool_name, arguments, status, result, error, start_time, end_time, duration_ms,
 		       COALESCE(partial_output, ''), COALESCE(partial_output_bytes, 0), COALESCE(partial_output_truncated, 0), partial_output_updated_at,
@@ -523,9 +619,9 @@ func (db *DB) GetToolExecution(id string) (*mcp.ToolExecution, error) {
 		WHERE id = ?
 	`
 
-	row := db.QueryRow(query, id)
+	row := m.db.QueryRow(query, id)
 
-	var exec mcp.ToolExecution
+	var exec ToolExecution
 	var argsJSON string
 	var resultJSON sql.NullString
 	var errorText sql.NullString
@@ -556,14 +652,12 @@ func (db *DB) GetToolExecution(id string) (*mcp.ToolExecution, error) {
 	}
 
 	if err := json.Unmarshal([]byte(argsJSON), &exec.Arguments); err != nil {
-		db.logger.Warn("解析执行参数失败", zap.Error(err))
 		exec.Arguments = make(map[string]interface{})
 	}
 
 	if resultJSON.Valid && resultJSON.String != "" {
-		var result mcp.ToolResult
+		var result ToolResult
 		if err := json.Unmarshal([]byte(resultJSON.String), &result); err != nil {
-			db.logger.Warn("解析执行结果失败", zap.Error(err))
 		} else {
 			exec.Result = &result
 		}
@@ -591,28 +685,40 @@ func (db *DB) GetToolExecution(id string) (*mcp.ToolExecution, error) {
 // UserCanAccessToolExecution enforces ownership for monitor detail and mutation
 // endpoints. Legacy records without an owner or conversation fail closed for
 // non-global users.
-func (db *DB) UserCanAccessToolExecution(userID, scope, executionID string) bool {
+func (m *Monitor) UserCanAccessToolExecution(userID, scope, executionID string) bool {
+	if m == nil || m.db == nil {
+		return false
+	}
+	if m == nil || m.db == nil {
+		return false
+	}
 	userID = strings.TrimSpace(userID)
 	executionID = strings.TrimSpace(executionID)
 	if userID == "" || executionID == "" {
 		return false
 	}
-	if scope == RBACScopeAll {
+	if scope == ScopeAll {
 		return true
 	}
 	var ownerUserID, conversationID sql.NullString
-	if err := db.QueryRow(`SELECT owner_user_id, conversation_id FROM tool_executions WHERE id = ?`, executionID).Scan(&ownerUserID, &conversationID); err != nil {
+	if err := m.db.QueryRow(`SELECT owner_user_id, conversation_id FROM tool_executions WHERE id = ?`, executionID).Scan(&ownerUserID, &conversationID); err != nil {
 		return false
 	}
 	if strings.TrimSpace(ownerUserID.String) == userID {
 		return true
 	}
 	conversation := strings.TrimSpace(conversationID.String)
-	return conversation != "" && db.UserCanAccessResource(userID, scope, "conversation", conversation)
+	if conversation == "" || m.access == nil {
+		return false
+	}
+	return m.access(userID, scope, "conversation", conversation)
 }
 
 // CancelOrphanedRunningToolExecutions 将仍为 running 的记录批量标记为 orphaned（如进程重启后无对应执行协程）。
-func (db *DB) CancelOrphanedRunningToolExecutions(endTime time.Time, errMsg string) (int64, error) {
+func (m *Monitor) CancelOrphanedRunningToolExecutions(endTime time.Time, errMsg string) (int64, error) {
+	if m == nil || m.db == nil {
+		return 0, errors.New("store: monitor requires a database")
+	}
 	errMsg = strings.TrimSpace(errMsg)
 	if errMsg == "" {
 		errMsg = "执行已中断（服务重启或会话结束）"
@@ -625,7 +731,7 @@ func (db *DB) CancelOrphanedRunningToolExecutions(endTime time.Time, errMsg stri
 		    duration_ms = MAX(0, CAST((julianday(?) - julianday(start_time)) * 86400000 AS INTEGER))
 		WHERE status = 'running'
 	`
-	res, err := db.Exec(query, errMsg, endTime, endTime)
+	res, err := m.db.Exec(query, errMsg, endTime, endTime)
 	if err != nil {
 		return 0, err
 	}
@@ -634,7 +740,10 @@ func (db *DB) CancelOrphanedRunningToolExecutions(endTime time.Time, errMsg stri
 
 // FinalizeStaleRunningToolExecutions 将「非活跃且超过 minAge」的 running 记录标记为 orphaned。
 // activeIDs 为当前进程内仍登记 cancel 的 executionId；不在集合内且已超时的视为孤儿记录。
-func (db *DB) FinalizeStaleRunningToolExecutions(endTime time.Time, minAge time.Duration, activeIDs map[string]struct{}, errMsg string) (int64, error) {
+func (m *Monitor) FinalizeStaleRunningToolExecutions(endTime time.Time, minAge time.Duration, activeIDs map[string]struct{}, errMsg string) (int64, error) {
+	if m == nil || m.db == nil {
+		return 0, errors.New("store: monitor requires a database")
+	}
 	errMsg = strings.TrimSpace(errMsg)
 	if errMsg == "" {
 		errMsg = "执行已中断（会话已结束）"
@@ -643,7 +752,7 @@ func (db *DB) FinalizeStaleRunningToolExecutions(endTime time.Time, minAge time.
 		minAge = 0
 	}
 	cutoff := endTime.Add(-minAge)
-	rows, err := db.Query(`
+	rows, err := m.db.Query(`
 		SELECT id, start_time FROM tool_executions
 		WHERE status = 'running' AND start_time <= ?
 	`, cutoff)
@@ -660,8 +769,7 @@ func (db *DB) FinalizeStaleRunningToolExecutions(endTime time.Time, minAge time.
 	for rows.Next() {
 		var row staleRow
 		if err := rows.Scan(&row.id, &row.startTime); err != nil {
-			db.logger.Warn("读取 stale running 执行记录失败", zap.Error(err))
-			continue
+			return 0, fmt.Errorf("读取 stale running 执行记录失败: %w", err)
 		}
 		if activeIDs != nil {
 			if _, active := activeIDs[row.id]; active {
@@ -683,13 +791,12 @@ func (db *DB) FinalizeStaleRunningToolExecutions(endTime time.Time, minAge time.
 		if durationMs < 0 {
 			durationMs = 0
 		}
-		res, err := db.Exec(`
+		res, err := m.db.Exec(`
 			UPDATE tool_executions
 			SET status = 'orphaned', error = ?, end_time = ?, duration_ms = ?
 			WHERE id = ? AND status = 'running'
 		`, errMsg, endTime, durationMs, row.id)
 		if err != nil {
-			db.logger.Warn("更新 stale running 执行记录失败", zap.Error(err), zap.String("executionId", row.id))
 			continue
 		}
 		n, _ := res.RowsAffected()
@@ -699,18 +806,23 @@ func (db *DB) FinalizeStaleRunningToolExecutions(endTime time.Time, minAge time.
 }
 
 // DeleteToolExecution 删除工具执行记录
-func (db *DB) DeleteToolExecution(id string) error {
+func (m *Monitor) DeleteToolExecution(id string) error {
+	if m == nil || m.db == nil {
+		return errors.New("store: monitor requires a database")
+	}
 	query := `DELETE FROM tool_executions WHERE id = ?`
-	_, err := db.Exec(query, id)
+	_, err := m.db.Exec(query, id)
 	if err != nil {
-		db.logger.Error("删除工具执行记录失败", zap.Error(err), zap.String("executionId", id))
 		return err
 	}
 	return nil
 }
 
 // DeleteToolExecutions 批量删除工具执行记录
-func (db *DB) DeleteToolExecutions(ids []string) error {
+func (m *Monitor) DeleteToolExecutions(ids []string) error {
+	if m == nil || m.db == nil {
+		return errors.New("store: monitor requires a database")
+	}
 	if len(ids) == 0 {
 		return nil
 	}
@@ -724,18 +836,20 @@ func (db *DB) DeleteToolExecutions(ids []string) error {
 	}
 
 	query := `DELETE FROM tool_executions WHERE id IN (` + strings.Join(placeholders, ",") + `)`
-	_, err := db.Exec(query, args...)
+	_, err := m.db.Exec(query, args...)
 	if err != nil {
-		db.logger.Error("批量删除工具执行记录失败", zap.Error(err), zap.Int("count", len(ids)))
 		return err
 	}
 	return nil
 }
 
 // GetToolExecutionsByIds 根据ID列表获取工具执行记录（用于批量删除前获取统计信息）
-func (db *DB) GetToolExecutionsByIds(ids []string) ([]*mcp.ToolExecution, error) {
+func (m *Monitor) GetToolExecutionsByIds(ids []string) ([]*ToolExecution, error) {
+	if m == nil || m.db == nil {
+		return nil, errors.New("store: monitor requires a database")
+	}
 	if len(ids) == 0 {
-		return []*mcp.ToolExecution{}, nil
+		return []*ToolExecution{}, nil
 	}
 
 	// 构建 IN 查询的占位符
@@ -752,22 +866,22 @@ func (db *DB) GetToolExecutionsByIds(ids []string) ([]*mcp.ToolExecution, error)
 		WHERE id IN (` + strings.Join(placeholders, ",") + `)
 	`
 
-	rows, err := db.Query(query, args...)
+	rows, err := m.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	var executions []*mcp.ToolExecution
+	var executions []*ToolExecution
 	for rows.Next() {
-		var exec mcp.ToolExecution
+		var exec ToolExecution
 		var argsJSON string
 		var resultJSON sql.NullString
 		var errorText sql.NullString
 		var endTime sql.NullTime
 		var durationMs sql.NullInt64
 
-		err := rows.Scan(
+		if err := rows.Scan(
 			&exec.ID,
 			&exec.ToolName,
 			&argsJSON,
@@ -779,23 +893,19 @@ func (db *DB) GetToolExecutionsByIds(ids []string) ([]*mcp.ToolExecution, error)
 			&durationMs,
 			&exec.OwnerUserID,
 			&exec.ConversationID,
-		)
-		if err != nil {
-			db.logger.Warn("加载执行记录失败", zap.Error(err))
-			continue
+		); err != nil {
+			return nil, fmt.Errorf("加载执行记录失败: %w", err)
 		}
 
 		// 解析参数
 		if err := json.Unmarshal([]byte(argsJSON), &exec.Arguments); err != nil {
-			db.logger.Warn("解析执行参数失败", zap.Error(err))
 			exec.Arguments = make(map[string]interface{})
 		}
 
 		// 解析结果
 		if resultJSON.Valid && resultJSON.String != "" {
-			var result mcp.ToolResult
+			var result ToolResult
 			if err := json.Unmarshal([]byte(resultJSON.String), &result); err != nil {
-				db.logger.Warn("解析执行结果失败", zap.Error(err))
 			} else {
 				exec.Result = &result
 			}
@@ -829,14 +939,17 @@ type toolExecutionStatDelta struct {
 }
 
 // PurgeToolExecutionsBefore deletes executions older than cutoff and adjusts tool_stats.
-func (db *DB) PurgeToolExecutionsBefore(cutoff time.Time) (int64, error) {
+func (m *Monitor) PurgeToolExecutionsBefore(cutoff time.Time) (int64, error) {
+	if m == nil || m.db == nil {
+		return 0, errors.New("store: monitor requires a database")
+	}
 	query := `
 		SELECT tool_name, status, COUNT(*) AS cnt
 		FROM tool_executions
-		WHERE ` + sqliteEpochGE("start_time", "<") + `
+		WHERE ` + sqltime.Compare("start_time", "<") + `
 		GROUP BY tool_name, status
 	`
-	rows, err := db.Query(query, formatSQLiteUTC(cutoff))
+	rows, err := m.db.Query(query, sqltime.UTC(cutoff))
 	if err != nil {
 		return 0, err
 	}
@@ -847,8 +960,7 @@ func (db *DB) PurgeToolExecutionsBefore(cutoff time.Time) (int64, error) {
 		var toolName, status string
 		var count int
 		if err := rows.Scan(&toolName, &status, &count); err != nil {
-			db.logger.Warn("读取待清理执行记录统计失败", zap.Error(err))
-			continue
+			return 0, fmt.Errorf("读取待清理执行记录统计失败: %w", err)
 		}
 		toolName = strings.TrimSpace(toolName)
 		if toolName == "" || count <= 0 {
@@ -871,7 +983,7 @@ func (db *DB) PurgeToolExecutionsBefore(cutoff time.Time) (int64, error) {
 		return 0, err
 	}
 
-	res, err := db.Exec(`DELETE FROM tool_executions WHERE `+sqliteEpochGE("start_time", "<"), formatSQLiteUTC(cutoff))
+	res, err := m.db.Exec(`DELETE FROM tool_executions WHERE `+sqltime.Compare("start_time", "<"), sqltime.UTC(cutoff))
 	if err != nil {
 		return 0, err
 	}
@@ -881,11 +993,7 @@ func (db *DB) PurgeToolExecutionsBefore(cutoff time.Time) (int64, error) {
 	}
 
 	for toolName, delta := range deltas {
-		if err := db.DecreaseToolStats(toolName, delta.totalCalls, delta.successCalls, delta.failedCalls); err != nil {
-			db.logger.Warn("清理过期执行记录后更新统计失败",
-				zap.Error(err),
-				zap.String("toolName", toolName),
-			)
+		if err := m.DecreaseToolStats(toolName, delta.totalCalls, delta.successCalls, delta.failedCalls); err != nil {
 		}
 	}
 
@@ -893,7 +1001,10 @@ func (db *DB) PurgeToolExecutionsBefore(cutoff time.Time) (int64, error) {
 }
 
 // LoadToolStats 加载所有工具统计信息
-func (db *DB) LoadToolStats() (map[string]*mcp.ToolStats, error) {
+func (m *Monitor) LoadToolStats() (map[string]*ToolStats, error) {
+	if m == nil || m.db == nil {
+		return nil, errors.New("store: monitor requires a database")
+	}
 	query := `
 		SELECT stats.tool_name, total_calls, success_calls, failed_calls, last_call_time,
 			COALESCE(blocked.calls, 0)
@@ -902,28 +1013,26 @@ func (db *DB) LoadToolStats() (map[string]*mcp.ToolStats, error) {
 		ON blocked.tool_name = stats.tool_name
 	`
 
-	rows, err := db.Query(query)
+	rows, err := m.db.Query(query)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	stats := make(map[string]*mcp.ToolStats)
+	stats := make(map[string]*ToolStats)
 	for rows.Next() {
-		var stat mcp.ToolStats
+		var stat ToolStats
 		var lastCallTime sql.NullTime
 
-		err := rows.Scan(
+		if err := rows.Scan(
 			&stat.ToolName,
 			&stat.TotalCalls,
 			&stat.SuccessCalls,
 			&stat.FailedCalls,
 			&lastCallTime,
 			&stat.BlockedCalls,
-		)
-		if err != nil {
-			db.logger.Warn("加载统计信息失败", zap.Error(err))
-			continue
+		); err != nil {
+			return nil, fmt.Errorf("加载统计信息失败: %w", err)
 		}
 
 		if lastCallTime.Valid {
@@ -937,7 +1046,10 @@ func (db *DB) LoadToolStats() (map[string]*mcp.ToolStats, error) {
 }
 
 // UpdateToolStats 更新工具统计信息（累加模式）
-func (db *DB) UpdateToolStats(toolName string, totalCalls, successCalls, failedCalls int, lastCallTime *time.Time) error {
+func (m *Monitor) UpdateToolStats(toolName string, totalCalls, successCalls, failedCalls int, lastCallTime *time.Time) error {
+	if m == nil || m.db == nil {
+		return errors.New("store: monitor requires a database")
+	}
 	var lastCallTimeSQL sql.NullTime
 	if lastCallTime != nil {
 		lastCallTimeSQL = sql.NullTime{Time: *lastCallTime, Valid: true}
@@ -954,13 +1066,12 @@ func (db *DB) UpdateToolStats(toolName string, totalCalls, successCalls, failedC
 			updated_at = ?
 	`
 
-	_, err := db.Exec(query,
+	_, err := m.db.Exec(query,
 		toolName, totalCalls, successCalls, failedCalls, lastCallTimeSQL, time.Now(),
 		totalCalls, successCalls, failedCalls, lastCallTimeSQL, time.Now(),
 	)
 
 	if err != nil {
-		db.logger.Error("更新工具统计信息失败", zap.Error(err), zap.String("toolName", toolName))
 		return err
 	}
 
@@ -986,7 +1097,10 @@ func truncateCallsTimelineBucket(t time.Time, dailyBuckets bool) time.Time {
 }
 
 // LoadCallsTimeline 按时间范围加载调用趋势（since 起至今，含边界）
-func (db *DB) LoadCallsTimeline(since time.Time, dailyBuckets bool) ([]CallsTimelineBucket, error) {
+func (m *Monitor) LoadCallsTimeline(since time.Time, dailyBuckets bool) ([]CallsTimelineBucket, error) {
+	if m == nil || m.db == nil {
+		return nil, errors.New("store: monitor requires a database")
+	}
 	var query string
 	if dailyBuckets {
 		query = `
@@ -1012,7 +1126,7 @@ func (db *DB) LoadCallsTimeline(since time.Time, dailyBuckets bool) ([]CallsTime
 		`
 	}
 
-	rows, err := db.Query(query, since)
+	rows, err := m.db.Query(query, since)
 	if err != nil {
 		return nil, err
 	}
@@ -1023,12 +1137,10 @@ func (db *DB) LoadCallsTimeline(since time.Time, dailyBuckets bool) ([]CallsTime
 		var bucketStr string
 		var total, failed, blocked int
 		if err := rows.Scan(&bucketStr, &total, &failed, &blocked); err != nil {
-			db.logger.Warn("加载调用趋势失败", zap.Error(err))
-			continue
+			return nil, fmt.Errorf("加载调用趋势失败: %w", err)
 		}
 		bucketTime, err := parseCallsTimelineBucket(bucketStr, dailyBuckets)
 		if err != nil {
-			db.logger.Warn("解析调用趋势时间桶失败", zap.Error(err), zap.String("bucket", bucketStr))
 			continue
 		}
 		buckets = append(buckets, CallsTimelineBucket{
@@ -1050,7 +1162,10 @@ func parseCallsTimelineBucket(bucketStr string, dailyBuckets bool) (time.Time, e
 
 // DecreaseToolStats 减少工具统计信息（用于删除执行记录时）
 // 如果统计信息变为0，则删除该统计记录
-func (db *DB) DecreaseToolStats(toolName string, totalCalls, successCalls, failedCalls int) error {
+func (m *Monitor) DecreaseToolStats(toolName string, totalCalls, successCalls, failedCalls int) error {
+	if m == nil || m.db == nil {
+		return errors.New("store: monitor requires a database")
+	}
 	// 先更新统计信息
 	query := `
 		UPDATE tool_stats SET
@@ -1061,16 +1176,15 @@ func (db *DB) DecreaseToolStats(toolName string, totalCalls, successCalls, faile
 		WHERE tool_name = ?
 	`
 
-	_, err := db.Exec(query, totalCalls, totalCalls, successCalls, successCalls, failedCalls, failedCalls, time.Now(), toolName)
+	_, err := m.db.Exec(query, totalCalls, totalCalls, successCalls, successCalls, failedCalls, failedCalls, time.Now(), toolName)
 	if err != nil {
-		db.logger.Error("减少工具统计信息失败", zap.Error(err), zap.String("toolName", toolName))
 		return err
 	}
 
 	// 检查更新后的 total_calls 是否为 0，如果是则删除该统计记录
 	checkQuery := `SELECT total_calls FROM tool_stats WHERE tool_name = ?`
 	var newTotalCalls int
-	err = db.QueryRow(checkQuery, toolName).Scan(&newTotalCalls)
+	err = m.db.QueryRow(checkQuery, toolName).Scan(&newTotalCalls)
 	if err != nil {
 		// 如果查询失败（记录不存在），直接返回
 		return nil
@@ -1079,19 +1193,12 @@ func (db *DB) DecreaseToolStats(toolName string, totalCalls, successCalls, faile
 	// 如果 total_calls 为 0，删除该统计记录
 	if newTotalCalls == 0 {
 		deleteQuery := `DELETE FROM tool_stats WHERE tool_name = ?`
-		_, err = db.Exec(deleteQuery, toolName)
+		_, err = m.db.Exec(deleteQuery, toolName)
 		if err != nil {
-			db.logger.Warn("删除零统计记录失败", zap.Error(err), zap.String("toolName", toolName))
 			// 不返回错误，因为主要操作（更新统计）已成功
 		} else {
-			db.logger.Info("已删除零统计记录", zap.String("toolName", toolName))
 		}
 	}
 
 	return nil
-}
-
-// LoadToolExecutionListPage 分页加载执行记录列表（不含 arguments/result，供监控列表使用）
-func (db *DB) LoadToolExecutionListPage(offset, limit int, status, toolName string) ([]*mcp.ToolExecution, error) {
-	return db.LoadToolExecutionListPageForAccess(offset, limit, status, toolName, store.Access{Scope: RBACScopeAll})
 }

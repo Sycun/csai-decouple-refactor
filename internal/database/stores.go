@@ -1,8 +1,6 @@
 package database
 
 import (
-	"cyberstrike-ai/internal/mcp"
-	"cyberstrike-ai/internal/store"
 	"database/sql"
 	"time"
 )
@@ -23,7 +21,6 @@ import (
 // AgentStore is the persistence surface required by AgentHandler.
 type AgentStore interface {
 	ProjectRowStore
-	ToolExecutionLedger
 	AddMessage(conversationID, role, content string, mcpExecutionIDs []string) (*Message, error)
 	AddProcessDetail(messageID, conversationID, eventType, message string, data interface{}) error
 	AddProcessDetailWithID(messageID, conversationID, eventType, message string, data interface{}) (string, error)
@@ -38,7 +35,6 @@ type AgentStore interface {
 	GetConversationTitle(id string) (string, error)
 	GetMessages(conversationID string) ([]Message, error)
 	GetResourceOwner(resourceType, resourceID string) string
-	GetToolExecution(id string) (*mcp.ToolExecution, error)
 	GetTurnUserMessage(conversationID, anchorMessageID string) (string, error)
 	ResolveRBACAccess(userID string) (*RBACAccess, error)
 	SaveAgentTrace(conversationID, traceInputJSON, assistantOutput string) error
@@ -91,7 +87,6 @@ var _ AttackChainStore = (*DB)(nil)
 // one thing. The findings lookup is absent for the same reason - it is store.Vulnerabilities.Get.
 type ResourceExistence interface {
 	ConversationExists(id string) (bool, error)
-	GetToolExecution(id string) (*mcp.ToolExecution, error)
 }
 
 var _ ResourceExistence = (*DB)(nil)
@@ -144,29 +139,17 @@ type ConversationStore interface {
 
 var _ ConversationStore = (*DB)(nil)
 
-// MonitorStore is the persistence surface required by MonitorHandler.
-type MonitorStore interface {
-	CountToolExecutions(status, toolName string) (int, error)
-	CountToolExecutionsForAccess(status, toolName string, access store.Access) (int, error)
-	DecreaseToolStats(toolName string, totalCalls, successCalls, failedCalls int) error
-	DeleteToolExecution(id string) error
-	DeleteToolExecutions(ids []string) error
-	GetToolExecution(id string) (*mcp.ToolExecution, error)
-	GetToolExecutionsByIds(ids []string) ([]*mcp.ToolExecution, error)
-	LoadCallsTimeline(since time.Time, dailyBuckets bool) ([]CallsTimelineBucket, error)
-	LoadToolExecutionListPageForAccess(offset, limit int, status, toolName string, access store.Access) ([]*mcp.ToolExecution, error)
-	LoadToolExecutionsWithPagination(offset, limit int, status, toolName string) ([]*mcp.ToolExecution, error)
-	LoadToolStats() (map[string]*mcp.ToolStats, error)
-	LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error)
-	LoadToolStatsSummaryForAccess(topN int, access store.Access) (*ToolStatsSummaryResult, error)
-	UserCanAccessToolExecution(userID, scope, executionID string) bool
+// MonitorContextStore is what MonitorHandler still needs from the connection wrapper: the RBAC
+// conversation visibility that toolExecutionVisible reaches for. The fourteen tool-execution members
+// it used to carry are store.Monitor's now (see §11 第四十一刀).
+type MonitorContextStore interface {
 	// Reached through handler.toolExecutionVisible, which takes the handler's storage as a
 	// one-method interface: an execution with no owner match is visible iff its conversation is.
 	// Same generation blind spot as AuditStore's existence lookups - direct h.db.X calls only.
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 
-var _ MonitorStore = (*DB)(nil)
+var _ MonitorContextStore = (*DB)(nil)
 
 // NotificationStore is the persistence surface required by NotificationHandler.
 type NotificationStore interface {

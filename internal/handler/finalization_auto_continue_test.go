@@ -75,7 +75,7 @@ func TestCleanupPendingToolExecutionsAfterIterationAllowsFinalization(t *testing
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	server := mcp.NewServerWithStorage(logger, db)
+	server := mcp.NewServerWithStorage(logger, database.NewMonitor(db))
 	server.ConfigureToolWaitTimeoutSeconds(1)
 	server.RegisterTool(mcp.Tool{Name: "block", InputSchema: map[string]interface{}{"type": "object"}}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
 		<-ctx.Done()
@@ -96,7 +96,7 @@ func TestCleanupPendingToolExecutionsAfterIterationAllowsFinalization(t *testing
 		t.Fatalf("expected background wait result, result=%#v execID=%q", result, execID)
 	}
 
-	decision := agentfinalizer.Decide(db, agentfinalizer.Input{
+	decision := agentfinalizer.Decide(database.NewMonitor(db), agentfinalizer.Input{
 		Response:        "基于已完成信息的阶段性总结。",
 		MCPExecutionIDs: []string{execID},
 	})
@@ -117,9 +117,9 @@ func TestCleanupPendingToolExecutionsAfterIterationAllowsFinalization(t *testing
 
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		exec, err := db.GetToolExecution(execID)
+		exec, err := database.NewMonitor(db).GetToolExecution(execID)
 		if err == nil && exec != nil && exec.Status == mcp.ToolExecutionStatusCancelled {
-			after := agentfinalizer.Decide(db, agentfinalizer.Input{
+			after := agentfinalizer.Decide(database.NewMonitor(db), agentfinalizer.Input{
 				Response:        "基于已完成信息的阶段性总结。",
 				MCPExecutionIDs: []string{execID},
 			})

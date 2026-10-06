@@ -97,7 +97,12 @@ import (
 // to sit on a connection. One of the forty-seven, ListC2Events, was the dead one the surface
 // allow-list had been holding; it was deleted rather than relocated, and its data-layer test moved
 // onto the live sibling ListC2EventsForAccess.
-const dbMethodCeiling = 133
+// 133 -> 109: the monitor domain moved whole - the twenty-two methods over tool_executions and
+// tool_stats, plus the partial-output column backfill and the legacy-guard data migration that
+// only ever touched those two tables. One of the twenty-two, LoadToolExecutionListPage, was the
+// dead one on the allow-list; deleted, with its two data-layer cases moved onto the live sibling
+// LoadToolExecutionListPageForAccess.
+const dbMethodCeiling = 109
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

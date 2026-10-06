@@ -30,7 +30,10 @@ var consumerSurfaceFiles = []string{
 // delegations it described, so the surfaces are one domain smaller than they were.
 // 158 measured after the C2 domain left: ResourceExistence lost its three C2 lookups and
 // NotificationStore lost ListC2EventsForAccess (the handler holds store.C2 now).
-const consumerSurfaceMemberFloor = 158
+// 140 measured after the monitor domain left: MonitorStore shrank to the one RBAC member
+// (MonitorContextStore), AgentStore lost its ToolExecutionLedger embed, ResourceExistence lost
+// GetToolExecution and the run finalizer's ledger moved to internal/agentfinalizer.
+const consumerSurfaceMemberFloor = 140
 
 func TestConsumerSurfacesDeclareOnlyCalledMethods(t *testing.T) {
 	root := moduleRoot(t)

@@ -1,6 +1,7 @@
 package database
 
 import (
+	"cyberstrike-ai/internal/store"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -33,7 +34,7 @@ func TestLoadToolStatsSummaryAndListPage(t *testing.T) {
 	}
 
 	for _, tool := range tools {
-		if err := db.UpdateToolStats(tool.name, tool.calls, tool.ok, tool.fail, &now); err != nil {
+		if err := NewMonitor(db).UpdateToolStats(tool.name, tool.calls, tool.ok, tool.fail, &now); err != nil {
 			t.Fatalf("UpdateToolStats(%s): %v", tool.name, err)
 		}
 		for j := 0; j < tool.calls; j++ {
@@ -48,13 +49,13 @@ func TestLoadToolStatsSummaryAndListPage(t *testing.T) {
 			end := exec.StartTime.Add(time.Second)
 			exec.EndTime = &end
 			exec.Duration = time.Second
-			if err := db.SaveToolExecution(exec); err != nil {
+			if err := NewMonitor(db).SaveToolExecution(exec); err != nil {
 				t.Fatalf("SaveToolExecution: %v", err)
 			}
 		}
 	}
 
-	summary, err := db.LoadToolStatsSummary(2)
+	summary, err := NewMonitor(db).LoadToolStatsSummary(2)
 	if err != nil {
 		t.Fatalf("LoadToolStatsSummary: %v", err)
 	}
@@ -71,7 +72,7 @@ func TestLoadToolStatsSummaryAndListPage(t *testing.T) {
 		t.Fatalf("top tool = %q, want alpha::run", summary.TopTools[0].ToolName)
 	}
 
-	list, err := db.LoadToolExecutionListPage(0, 5, "", "")
+	list, err := NewMonitor(db).LoadToolExecutionListPageForAccess(0, 5, "", "", store.Access{Scope: store.ScopeAll})
 	if err != nil {
 		t.Fatalf("LoadToolExecutionListPage: %v", err)
 	}
@@ -105,12 +106,12 @@ func TestLoadToolStatsSummaryDoesNotCountCancelledAsFailed(t *testing.T) {
 		end := exec.StartTime.Add(time.Second)
 		exec.EndTime = &end
 		exec.Duration = time.Second
-		if err := db.SaveToolExecution(exec); err != nil {
+		if err := NewMonitor(db).SaveToolExecution(exec); err != nil {
 			t.Fatalf("SaveToolExecution(%s): %v", status, err)
 		}
 	}
 
-	summary, err := db.LoadToolStatsSummary(1)
+	summary, err := NewMonitor(db).LoadToolStatsSummary(1)
 	if err != nil {
 		t.Fatalf("LoadToolStatsSummary: %v", err)
 	}

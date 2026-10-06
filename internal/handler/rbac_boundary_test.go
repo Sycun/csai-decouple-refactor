@@ -310,11 +310,11 @@ func TestMonitorExecutionDetailRejectsForeignOwner(t *testing.T) {
 		{ID: "exec-allowed", ToolName: "allowed", Status: "completed", StartTime: time.Now(), OwnerUserID: user.ID},
 		{ID: "exec-hidden", ToolName: "hidden", Status: "completed", StartTime: time.Now(), OwnerUserID: "another-user"},
 	} {
-		if err := db.SaveToolExecution(exec); err != nil {
+		if err := database.NewMonitor(db).SaveToolExecution(exec); err != nil {
 			t.Fatal(err)
 		}
 	}
-	h := NewMonitorHandler(mcp.NewServerWithStorage(zap.NewNop(), db), nil, db, zap.NewNop())
+	h := NewMonitorHandler(mcp.NewServerWithStorage(zap.NewNop(), database.NewMonitor(db)), nil, db, zap.NewNop())
 
 	request := func(id string) *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()

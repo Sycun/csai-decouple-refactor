@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
+
+	"cyberstrike-ai/internal/store"
 )
 
 // ExternalMCPClient 外部 MCP 客户端接口（由 client_sdk.go 基于官方 SDK 实现）
@@ -112,20 +113,13 @@ type ToolCall struct {
 	Arguments map[string]interface{} `json:"arguments"`
 }
 
-// ToolResult 表示工具执行结果
-type ToolResult struct {
-	Content []Content `json:"content"`
-	IsError bool      `json:"isError,omitempty"`
-	// Blocked means policy stopped the call before execution. IsError remains
-	// true for MCP/model handling, while monitoring uses a distinct status.
-	Blocked bool `json:"blocked,omitempty"`
-}
+// ToolResult / Content are the shapes tool_executions stores; the definitions live in
+// internal/store (it owns that table's schema), and the names stay here as aliases so the protocol
+// code reads unchanged.
+type ToolResult = store.ToolResult
 
 // Content 表示内容
-type Content struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}
+type Content = store.Content
 
 // InitializeRequest 初始化请求
 type InitializeRequest struct {
@@ -193,37 +187,13 @@ type CallToolResponse struct {
 	Meta    map[string]interface{} `json:"_meta,omitempty"`
 }
 
-// ToolExecution 工具执行记录
-type ToolExecution struct {
-	ID        string                 `json:"id"`
-	ToolName  string                 `json:"toolName"`
-	Arguments map[string]interface{} `json:"arguments"`
-	Status    string                 `json:"status"` // queued, running, completed, blocked, failed, cancelled, hard_timeout, orphaned
-	Result    *ToolResult            `json:"result,omitempty"`
-	Error     string                 `json:"error,omitempty"`
-	StartTime time.Time              `json:"startTime"`
-	EndTime   *time.Time             `json:"endTime,omitempty"`
-	Duration  time.Duration          `json:"duration,omitempty"`
-	// PartialOutput is a bounded tail preview of output produced by a running tool.
-	// It is intentionally separate from Result, which remains the final canonical tool result.
-	PartialOutput          string     `json:"partialOutput,omitempty"`
-	PartialOutputBytes     int64      `json:"partialOutputBytes,omitempty"`
-	PartialOutputTruncated bool       `json:"partialOutputTruncated,omitempty"`
-	PartialOutputUpdatedAt *time.Time `json:"partialOutputUpdatedAt,omitempty"`
-	// ConversationID 仅 API 展示用（进行中的 Agent 任务），不写入 tool_executions 表。
-	ConversationID string `json:"conversationId,omitempty"`
-	OwnerUserID    string `json:"-"`
-}
+// ToolExecution / ToolStats are the tool_executions and tool_stats row shapes; the definitions live
+// in internal/store with those tables' schema. The aliases keep every existing use in this package
+// and its consumers compiling unchanged.
+type ToolExecution = store.ToolExecution
 
 // ToolStats 工具统计信息
-type ToolStats struct {
-	ToolName     string     `json:"toolName"`
-	TotalCalls   int        `json:"totalCalls"`
-	SuccessCalls int        `json:"successCalls"`
-	FailedCalls  int        `json:"failedCalls"`
-	BlockedCalls int        `json:"blockedCalls"`
-	LastCallTime *time.Time `json:"lastCallTime,omitempty"`
-}
+type ToolStats = store.ToolStats
 
 // Prompt 提示词模板
 type Prompt struct {

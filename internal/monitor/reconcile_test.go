@@ -19,7 +19,7 @@ func TestExecutionReconciler_ReconcileOnStartup(t *testing.T) {
 	}
 	defer db.Close()
 
-	if err := db.SaveToolExecution(&mcp.ToolExecution{
+	if err := database.NewMonitor(db).SaveToolExecution(&mcp.ToolExecution{
 		ID: "run-1", ToolName: "hydra", Status: "running", StartTime: time.Now().Add(-time.Hour),
 	}); err != nil {
 		t.Fatalf("SaveToolExecution: %v", err)
@@ -28,7 +28,7 @@ func TestExecutionReconciler_ReconcileOnStartup(t *testing.T) {
 	r := NewExecutionReconciler(db, mcp.NewServer(zap.NewNop()), nil, zap.NewNop())
 	r.ReconcileOnStartup()
 
-	got, err := db.GetToolExecution("run-1")
+	got, err := database.NewMonitor(db).GetToolExecution("run-1")
 	if err != nil {
 		t.Fatalf("GetToolExecution: %v", err)
 	}

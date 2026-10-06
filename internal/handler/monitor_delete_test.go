@@ -36,7 +36,7 @@ func deleteExecutionRequest(h *MonitorHandler, user *database.RBACUser, id strin
 
 func TestDeleteExecutionOfMissingRecordIsIdempotentSuccess(t *testing.T) {
 	db, user := setupConversationRBACTest(t)
-	h := NewMonitorHandler(mcp.NewServerWithStorage(zap.NewNop(), db), nil, db, zap.NewNop())
+	h := NewMonitorHandler(mcp.NewServerWithStorage(zap.NewNop(), database.NewMonitor(db)), nil, db, zap.NewNop())
 
 	w := deleteExecutionRequest(h, user, "never-existed")
 	if w.Code != http.StatusOK {
@@ -53,7 +53,7 @@ func TestDeleteExecutionOfMissingRecordIsIdempotentSuccess(t *testing.T) {
 
 func TestDeleteExecutionReportsStorageFailureAsFailure(t *testing.T) {
 	db, user := setupConversationRBACTest(t)
-	h := NewMonitorHandler(mcp.NewServerWithStorage(zap.NewNop(), db), nil, db, zap.NewNop())
+	h := NewMonitorHandler(mcp.NewServerWithStorage(zap.NewNop(), database.NewMonitor(db)), nil, db, zap.NewNop())
 
 	// A closed store is the real fault shape: the query errors with something that is not
 	// sql.ErrNoRows.

@@ -5,6 +5,7 @@ import (
 
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -13,14 +14,14 @@ const retentionPurgeInterval = time.Hour
 
 // Service manages MCP tool execution monitor retention.
 type Service struct {
-	db     *database.DB
+	db     *store.Monitor
 	cfg    *config.Config
 	logger *zap.Logger
 }
 
 // NewService creates a monitor retention service.
 func NewService(db *database.DB, cfg *config.Config, logger *zap.Logger) *Service {
-	return &Service{db: db, cfg: cfg, logger: logger}
+	return &Service{db: database.NewMonitor(db), cfg: cfg, logger: logger}
 }
 
 // RetentionDays returns configured retention; 0 means keep forever.

@@ -10,20 +10,22 @@ import (
 
 	"cyberstrike-ai/internal/authctx"
 	"cyberstrike-ai/internal/runlease"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
+// 状态词汇的定义在 store（那是 tool_executions 的户籍）；这里留别名，读法不变。
 const (
-	ToolExecutionStatusQueued      = "queued"
-	ToolExecutionStatusRunning     = "running"
-	ToolExecutionStatusCompleted   = "completed"
-	ToolExecutionStatusBlocked     = "blocked"
-	ToolExecutionStatusFailed      = "failed"
-	ToolExecutionStatusCancelled   = "cancelled"
-	ToolExecutionStatusHardTimeout = "hard_timeout"
-	ToolExecutionStatusOrphaned    = "orphaned"
+	ToolExecutionStatusQueued      = store.ToolExecutionStatusQueued
+	ToolExecutionStatusRunning     = store.ToolExecutionStatusRunning
+	ToolExecutionStatusCompleted   = store.ToolExecutionStatusCompleted
+	ToolExecutionStatusBlocked     = store.ToolExecutionStatusBlocked
+	ToolExecutionStatusFailed      = store.ToolExecutionStatusFailed
+	ToolExecutionStatusCancelled   = store.ToolExecutionStatusCancelled
+	ToolExecutionStatusHardTimeout = store.ToolExecutionStatusHardTimeout
+	ToolExecutionStatusOrphaned    = store.ToolExecutionStatusOrphaned
 )
 
 var ErrExecutionWaitTimeout = errors.New("tool execution wait timeout")

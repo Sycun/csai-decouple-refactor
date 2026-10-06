@@ -22,7 +22,6 @@ var dbSurfaceDeadAllowList = map[string]string{
 	"CountConversations":          "superseded by the access-scoped conversation count the handler uses",
 	"ListAssignableRBACResources": "superseded by ListAssignableRBACResourcesPage",
 	"ListConversationPlanTasks":   "superseded by ListConversationPlanTasksSince",
-	"LoadToolExecutionListPage":   "superseded by LoadToolExecutionListPageForAccess",
 }
 
 // deadDBSurface reports exported *DB methods with no production call site and no consumer-interface
@@ -69,11 +68,12 @@ func deadDBSurface(t *testing.T, root string) (dead []string, scanned int) {
 	// the alerts, 225 after the twenty workflow methods, 205 after the twenty blackboard methods went to
 	// store.Facts, 180 after the seventeen assets delegations went with them, 158 after the twenty-two batch delegations, 157 after the two directory setters this cut replaced with one, 113 after the
 	// C2 domain's forty-three exported methods (forty-four minus the dead ListC2Events, which was
-	// deleted) left for store.C2. The floor keeps a wide gap
+	// deleted) left for store.C2, 91 after the monitor domain's twenty-two exported methods left
+	// for store.Monitor (twenty-three minus the dead LoadToolExecutionListPage). The floor keeps a wide gap
 	// on purpose: it catches a scan that stopped reading the directory, and it has tripped six times
 	// now for the right reason - a domain cut landing - which is the reminder to re-measure rather than
 	// to widen it.
-	if len(names) < 113 {
+	if len(names) < 91 {
 		t.Fatalf("only %d exported *DB methods parsed (floor 157): the scan is not reading the package", len(names))
 	}
 

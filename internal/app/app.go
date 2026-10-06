@@ -217,7 +217,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	startPluginHostReaper(context.Background(), buildPluginHost(cfg, configPath, log.Logger), log.Logger)
 
 	// 创建MCP服务器（带数据库持久化）
-	mcpServer := mcp.NewServerWithStorage(log.Logger, db)
+	mcpServer := mcp.NewServerWithStorage(log.Logger, database.NewMonitor(db))
 	mcpServer.SetToolAuthorizer(mcpToolAuthorizer(db))
 	mcpServer.SetToolGuard(toolGuard)
 	mcpServer.ConfigureHTTPToolCallTimeoutFromAgentMinutes(cfg.Agent.ToolTimeoutMinutes)
@@ -241,7 +241,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	registerVisionTools(mcpServer, cfg, log.Logger)
 
 	// 创建外部MCP管理器（使用与内部MCP服务器相同的存储）
-	externalMCPMgr := mcp.NewExternalMCPManagerWithStorage(log.Logger, db)
+	externalMCPMgr := mcp.NewExternalMCPManagerWithStorage(log.Logger, database.NewMonitor(db))
 	externalMCPMgr.SetToolAuthorizer(externalMCPToolAuthorizer())
 	// Each server's real tool list becomes a capability identity in LayerRemote, so a rule, an
 	// approval prompt or an audit row can name one remote tool instead of "external MCP".

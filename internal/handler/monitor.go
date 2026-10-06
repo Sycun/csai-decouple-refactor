@@ -29,7 +29,8 @@ type MonitorHandler struct {
 	taskManager      *AgentTaskManager
 	agentHandler     *AgentHandler
 	executor         *security.Executor
-	db               database.MonitorStore
+	db               database.MonitorContextStore // 只剩 RBAC 的会话可见性（还没轮到搬迁的域）
+	executions       *store.Monitor               // tool_executions / tool_stats 的读面
 	logger           *zap.Logger
 	audit            *audit.Service
 	monitorRetention *monitor.Service
@@ -51,7 +52,8 @@ func NewMonitorHandler(mcpServer *mcp.Server, executor *security.Executor, db *d
 		mcpServer:      mcpServer,
 		externalMCPMgr: nil, // 将在创建后设置
 		executor:       executor,
-		db:             database.Narrow[database.MonitorStore](db),
+		db:             database.Narrow[database.MonitorContextStore](db),
+		executions:     database.NewMonitor(db),
 		logger:         logger,
 	}
 }
@@ -130,8 +132,8 @@ func (h *MonitorHandler) Monitor(c *gin.Context) {
 	var topTools []*mcp.ToolStats
 	if access.Scope == database.RBACScopeAll {
 		summary, topTools = h.loadStatsSummary(monitorPageTopTools)
-	} else if h.db != nil {
-		if scoped, err := h.db.LoadToolStatsSummaryForAccess(monitorPageTopTools, access); err == nil {
+	} else if h.executions != nil {
+		if scoped, err := h.executions.LoadToolStatsSummaryForAccess(monitorPageTopTools, access); err == nil {
 			summary, topTools = dbStatsSummaryToMonitor(scoped), scoped.TopTools
 		} else {
 			summary, topTools = summarizeAccessibleExecutionPage(executions, monitorPageTopTools)
@@ -207,7 +209,7 @@ func (h *MonitorHandler) loadExecutions() []*mcp.ToolExecution {
 }
 
 func (h *MonitorHandler) loadExecutionListWithPagination(page, pageSize int, status, toolName string, access store.Access) ([]*mcp.ToolExecution, int) {
-	if h.db == nil {
+	if h.executions == nil {
 		allExecutions := filterToolExecutionsForAccess(h.mcpServer.GetAllExecutions(), access, h.db)
 		if status != "" || toolName != "" {
 			filtered := make([]*mcp.ToolExecution, 0)
@@ -241,13 +243,13 @@ func (h *MonitorHandler) loadExecutionListWithPagination(page, pageSize int, sta
 	}
 
 	offset := (page - 1) * pageSize
-	executions, err := h.db.LoadToolExecutionListPageForAccess(offset, pageSize, status, toolName, access)
+	executions, err := h.executions.LoadToolExecutionListPageForAccess(offset, pageSize, status, toolName, access)
 	if err != nil {
 		h.logger.Warn("从数据库加载执行记录列表失败，回退到内存数据", zap.Error(err))
 		return h.loadExecutionListWithPaginationFromMemory(page, pageSize, status, toolName, access)
 	}
 
-	total, err := h.db.CountToolExecutionsForAccess(status, toolName, access)
+	total, err := h.executions.CountToolExecutionsForAccess(status, toolName, access)
 	if err != nil {
 		h.logger.Warn("获取执行记录总数失败", zap.Error(err))
 		total = offset + len(executions)
@@ -360,11 +362,11 @@ func (h *MonitorHandler) monitorExecutionAllowed(c *gin.Context, id string) bool
 			return toolExecutionVisible(exec, access, h.db)
 		}
 	}
-	return h.db != nil && h.db.UserCanAccessToolExecution(access.UserID, access.Scope, id)
+	return h.executions != nil && h.executions.UserCanAccessToolExecution(access.UserID, access.Scope, id)
 }
 
 func (h *MonitorHandler) loadExecutionsWithPagination(page, pageSize int, status, toolName string) ([]*mcp.ToolExecution, int) {
-	if h.db == nil {
+	if h.executions == nil {
 		allExecutions := h.mcpServer.GetAllExecutions()
 		// 如果指定了状态筛选或工具筛选，先进行筛选
 		if status != "" || toolName != "" {
@@ -392,7 +394,7 @@ func (h *MonitorHandler) loadExecutionsWithPagination(page, pageSize int, status
 	}
 
 	offset := (page - 1) * pageSize
-	executions, err := h.db.LoadToolExecutionsWithPagination(offset, pageSize, status, toolName)
+	executions, err := h.executions.LoadToolExecutionsWithPagination(offset, pageSize, status, toolName)
 	if err != nil {
 		h.logger.Warn("从数据库加载执行记录失败，回退到内存数据", zap.Error(err))
 		allExecutions := h.mcpServer.GetAllExecutions()
@@ -422,7 +424,7 @@ func (h *MonitorHandler) loadExecutionsWithPagination(page, pageSize int, status
 	}
 
 	// 获取总数（考虑状态筛选和工具筛选）
-	total, err := h.db.CountToolExecutions(status, toolName)
+	total, err := h.executions.CountToolExecutions(status, toolName)
 	if err != nil {
 		h.logger.Warn("获取执行记录总数失败", zap.Error(err))
 		// 回退：使用已加载的记录数估算
@@ -440,8 +442,8 @@ func (h *MonitorHandler) loadStatsSummary(topN int) (*MonitorStatsSummary, []*mc
 		topN = monitorPageTopTools
 	}
 
-	if h.db != nil {
-		result, err := h.db.LoadToolStatsSummary(topN)
+	if h.executions != nil {
+		result, err := h.executions.LoadToolStatsSummary(topN)
 		if err == nil {
 			return dbStatsSummaryToMonitor(result), result.TopTools
 		}
@@ -452,7 +454,7 @@ func (h *MonitorHandler) loadStatsSummary(topN int) (*MonitorStatsSummary, []*mc
 	return summarizeToolStats(stats, topN)
 }
 
-func dbStatsSummaryToMonitor(result *database.ToolStatsSummaryResult) *MonitorStatsSummary {
+func dbStatsSummaryToMonitor(result *store.ToolStatsSummaryResult) *MonitorStatsSummary {
 	if result == nil {
 		return &MonitorStatsSummary{}
 	}
@@ -513,13 +515,13 @@ func (h *MonitorHandler) loadStatsMap() map[string]*mcp.ToolStats {
 	stats := make(map[string]*mcp.ToolStats)
 
 	// 加载内部MCP服务器的统计信息
-	if h.db == nil {
+	if h.executions == nil {
 		internalStats := h.mcpServer.GetStats()
 		for k, v := range internalStats {
 			stats[k] = v
 		}
 	} else {
-		dbStats, err := h.db.LoadToolStats()
+		dbStats, err := h.executions.LoadToolStats()
 		if err != nil {
 			h.logger.Warn("从数据库加载统计信息失败，回退到内存数据", zap.Error(err))
 			internalStats := h.mcpServer.GetStats()
@@ -583,8 +585,8 @@ func (h *MonitorHandler) GetExecution(c *gin.Context) {
 	}
 
 	// 如果都找不到，尝试从数据库查找（如果使用数据库存储）
-	if h.db != nil {
-		exec, err := h.db.GetToolExecution(id)
+	if h.executions != nil {
+		exec, err := h.executions.GetToolExecution(id)
 		if err == nil && exec != nil {
 			h.enrichExecutionsConversationID([]*mcp.ToolExecution{exec})
 			c.JSON(http.StatusOK, exec)
@@ -681,8 +683,8 @@ func (h *MonitorHandler) lookupExecution(id string) *mcp.ToolExecution {
 			return exec
 		}
 	}
-	if h.db != nil {
-		if exec, err := h.db.GetToolExecution(id); err == nil && exec != nil {
+	if h.executions != nil {
+		if exec, err := h.executions.GetToolExecution(id); err == nil && exec != nil {
 			return exec
 		}
 	}
@@ -722,8 +724,8 @@ func (h *MonitorHandler) BatchGetToolNames(c *gin.Context) {
 			}
 		}
 		// 最后从数据库查找
-		if h.db != nil {
-			if exec, err := h.db.GetToolExecution(id); err == nil && exec != nil {
+		if h.executions != nil {
+			if exec, err := h.executions.GetToolExecution(id); err == nil && exec != nil {
 				result[id] = executionSummary{ToolName: exec.ToolName, Status: exec.Status}
 			}
 		}
@@ -816,8 +818,8 @@ func (h *MonitorHandler) loadCallsTimeline(cfg callsTimelineConfig) []CallsTimel
 	since := time.Now().Add(-cfg.duration)
 	bucketMap := make(map[time.Time]struct{ total, failed, blocked int })
 
-	if h.db != nil {
-		dbBuckets, err := h.db.LoadCallsTimeline(since, cfg.dailyBuckets)
+	if h.executions != nil {
+		dbBuckets, err := h.executions.LoadCallsTimeline(since, cfg.dailyBuckets)
 		if err != nil {
 			h.logger.Warn("从数据库加载调用趋势失败，回退到内存数据", zap.Error(err))
 		} else {
@@ -883,9 +885,9 @@ func (h *MonitorHandler) DeleteExecution(c *gin.Context) {
 	}
 
 	// 如果使用数据库，先获取执行记录信息，然后删除并更新统计
-	if h.db != nil {
+	if h.executions != nil {
 		// 先获取执行记录信息（用于更新统计）
-		exec, err := h.db.GetToolExecution(id)
+		exec, err := h.executions.GetToolExecution(id)
 		if err != nil {
 			if !errors.Is(err, sql.ErrNoRows) {
 				// 只有「这行不存在」才等于「已经删过了」。把读库失败也报成 200 success，运维者会
@@ -901,7 +903,7 @@ func (h *MonitorHandler) DeleteExecution(c *gin.Context) {
 		}
 
 		// 删除执行记录
-		err = h.db.DeleteToolExecution(id)
+		err = h.executions.DeleteToolExecution(id)
 		if err != nil {
 			h.logger.Error("删除执行记录失败", zap.Error(err), zap.String("executionId", id))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "删除执行记录失败: " + err.Error()})
@@ -919,7 +921,7 @@ func (h *MonitorHandler) DeleteExecution(c *gin.Context) {
 		}
 
 		if exec.ToolName != "" {
-			if err := h.db.DecreaseToolStats(exec.ToolName, totalCalls, successCalls, failedCalls); err != nil {
+			if err := h.executions.DecreaseToolStats(exec.ToolName, totalCalls, successCalls, failedCalls); err != nil {
 				h.logger.Warn("更新统计信息失败", zap.Error(err), zap.String("toolName", exec.ToolName))
 				// 不返回错误，因为记录已经删除成功
 			}
@@ -964,9 +966,9 @@ func (h *MonitorHandler) DeleteExecutions(c *gin.Context) {
 	}
 
 	// 如果使用数据库，先获取执行记录信息，然后删除并更新统计
-	if h.db != nil {
+	if h.executions != nil {
 		// 先获取执行记录信息（用于更新统计）
-		executions, err := h.db.GetToolExecutionsByIds(request.IDs)
+		executions, err := h.executions.GetToolExecutionsByIds(request.IDs)
 		if err != nil {
 			h.logger.Error("获取执行记录失败", zap.Error(err))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "获取执行记录失败: " + err.Error()})
@@ -996,7 +998,7 @@ func (h *MonitorHandler) DeleteExecutions(c *gin.Context) {
 		}
 
 		// 批量删除执行记录
-		err = h.db.DeleteToolExecutions(request.IDs)
+		err = h.executions.DeleteToolExecutions(request.IDs)
 		if err != nil {
 			h.logger.Error("批量删除执行记录失败", zap.Error(err), zap.Int("count", len(request.IDs)))
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "批量删除执行记录失败: " + err.Error()})
@@ -1005,7 +1007,7 @@ func (h *MonitorHandler) DeleteExecutions(c *gin.Context) {
 
 		// 更新统计信息（减少相应的计数）
 		for toolName, stats := range toolStats {
-			if err := h.db.DecreaseToolStats(toolName, stats.totalCalls, stats.successCalls, stats.failedCalls); err != nil {
+			if err := h.executions.DecreaseToolStats(toolName, stats.totalCalls, stats.successCalls, stats.failedCalls); err != nil {
 				h.logger.Warn("更新统计信息失败", zap.Error(err), zap.String("toolName", toolName))
 				// 不返回错误，因为记录已经删除成功
 			}

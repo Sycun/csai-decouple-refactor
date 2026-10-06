@@ -44,16 +44,16 @@ func TestPurgeToolExecutionsBefore(t *testing.T) {
 		StartTime: newStart,
 	}
 	for _, exec := range []*mcp.ToolExecution{oldExec, oldFailed, newExec} {
-		if err := db.SaveToolExecution(exec); err != nil {
+		if err := NewMonitor(db).SaveToolExecution(exec); err != nil {
 			t.Fatalf("SaveToolExecution(%s): %v", exec.ID, err)
 		}
 	}
-	if err := db.UpdateToolStats("nmap::scan", 3, 2, 1, &newStart); err != nil {
+	if err := NewMonitor(db).UpdateToolStats("nmap::scan", 3, 2, 1, &newStart); err != nil {
 		t.Fatalf("UpdateToolStats: %v", err)
 	}
 
 	cutoff := time.Now().AddDate(0, 0, -90)
-	deleted, err := db.PurgeToolExecutionsBefore(cutoff)
+	deleted, err := NewMonitor(db).PurgeToolExecutionsBefore(cutoff)
 	if err != nil {
 		t.Fatalf("PurgeToolExecutionsBefore: %v", err)
 	}
@@ -61,17 +61,17 @@ func TestPurgeToolExecutionsBefore(t *testing.T) {
 		t.Fatalf("deleted = %d, want 2", deleted)
 	}
 
-	if _, err := db.GetToolExecution("old-completed"); err == nil {
+	if _, err := NewMonitor(db).GetToolExecution("old-completed"); err == nil {
 		t.Fatal("old-completed should be deleted")
 	}
-	if _, err := db.GetToolExecution("old-failed"); err == nil {
+	if _, err := NewMonitor(db).GetToolExecution("old-failed"); err == nil {
 		t.Fatal("old-failed should be deleted")
 	}
-	if _, err := db.GetToolExecution("new-completed"); err != nil {
+	if _, err := NewMonitor(db).GetToolExecution("new-completed"); err != nil {
 		t.Fatalf("new-completed should remain: %v", err)
 	}
 
-	stats, err := db.LoadToolStats()
+	stats, err := NewMonitor(db).LoadToolStats()
 	if err != nil {
 		t.Fatalf("LoadToolStats: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestPurgeToolExecutionsBefore(t *testing.T) {
 		t.Fatalf("stats after purge = %+v, want total=1 success=1 failed=0", stat)
 	}
 
-	total, err := db.CountToolExecutions("", "")
+	total, err := NewMonitor(db).CountToolExecutions("", "")
 	if err != nil {
 		t.Fatalf("CountToolExecutions: %v", err)
 	}
@@ -108,11 +108,11 @@ func TestPurgeToolExecutionsBefore_zeroRetentionSkipsViaService(t *testing.T) {
 		Status:    "completed",
 		StartTime: time.Now().AddDate(-1, 0, 0),
 	}
-	if err := db.SaveToolExecution(exec); err != nil {
+	if err := NewMonitor(db).SaveToolExecution(exec); err != nil {
 		t.Fatalf("SaveToolExecution: %v", err)
 	}
 
-	deleted, err := db.PurgeToolExecutionsBefore(time.Now())
+	deleted, err := NewMonitor(db).PurgeToolExecutionsBefore(time.Now())
 	if err != nil {
 		t.Fatalf("PurgeToolExecutionsBefore: %v", err)
 	}

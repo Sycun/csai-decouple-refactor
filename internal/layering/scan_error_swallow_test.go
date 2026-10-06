@@ -33,11 +33,11 @@ import (
 // written: 27 sites across five files, and zero in internal/store. When a domain moves to a store it
 // takes its share with it, and its entry is deleted rather than left behind - the C2 domain's twelve
 // sites left on 2026-10-07, eleven of which the store converted into returned errors (the twelfth was
-// the now-deleted ListC2Events). The seven sites in the store layer that the first sweep cleared are
+// the now-deleted ListC2Events), and the monitor domain's eight followed the same day - all eight
+// converted, none skipped. The seven sites in the store layer that the first sweep cleared are
 // listed with their reasons in docs/zh-CN/capability-platform-decoupling-research.md §11 第二十五刀.
 var scanSwallowDataLayerCeilings = map[string]int{
 	"internal/database/conversation.go": 3,
-	"internal/database/monitor.go":      8,
 	"internal/database/database.go":     3,
 	"internal/database/webshell.go":     1,
 }

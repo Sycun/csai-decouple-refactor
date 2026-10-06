@@ -1,11 +1,10 @@
-package database
+package store
 
 import (
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
-
-	"cyberstrike-ai/internal/mcp"
 )
 
 const legacyToolGuardPrefix = "工具调用已被安全规则拦截"
@@ -32,11 +31,14 @@ func isLegacyToolGuardRefusal(text string) bool {
 	return idIndex > 0 && strings.HasSuffix(rule, ")") && len(rule[idIndex+2:len(rule)-1]) > 0 && !strings.Contains(rule, "\n")
 }
 
-// migrateLegacyToolGuardBlocks is idempotent because only failed records qualify.
+// MigrateLegacyGuardBlocks is idempotent because only failed records qualify.
 // Keeping status and accumulated failure counts in one transaction makes monitor
 // filters, badges and statistics agree immediately after upgrading.
-func (db *DB) migrateLegacyToolGuardBlocks() error {
-	tx, err := db.Begin()
+func (m *Monitor) MigrateLegacyGuardBlocks() error {
+	if m == nil || m.db == nil {
+		return errors.New("store: monitor requires a database")
+	}
+	tx, err := m.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -63,10 +65,10 @@ func (db *DB) migrateLegacyToolGuardBlocks() error {
 		return err
 	}
 	for _, r := range records {
-		var result mcp.ToolResult
+		var result ToolResult
 		_ = json.Unmarshal([]byte(r.result), &result)
 		if len(result.Content) == 0 {
-			result.Content = []mcp.Content{{Type: "text", Text: r.reason}}
+			result.Content = []Content{{Type: "text", Text: r.reason}}
 		}
 		result.Blocked, result.IsError = true, true
 		encoded, err := json.Marshal(result)

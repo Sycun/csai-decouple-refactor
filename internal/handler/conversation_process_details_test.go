@@ -103,7 +103,7 @@ func TestProcessDetailsPageUsesPersistedExecutionStatusAfterBackgroundCancel(t *
 		t.Fatalf("AddProcessDetail(tool_result): %v", err)
 	}
 	now := time.Now()
-	if err := db.SaveToolExecution(&mcp.ToolExecution{
+	if err := database.NewMonitor(db).SaveToolExecution(&mcp.ToolExecution{
 		ID:        execID,
 		ToolName:  "exec",
 		Status:    mcp.ToolExecutionStatusCancelled,
@@ -155,7 +155,7 @@ func TestProcessDetailsFullBackfillsEmptyToolCallArgumentsFromExecution(t *testi
 	}); err != nil {
 		t.Fatalf("AddProcessDetail(tool_call): %v", err)
 	}
-	if err := db.SaveToolExecution(&mcp.ToolExecution{
+	if err := database.NewMonitor(db).SaveToolExecution(&mcp.ToolExecution{
 		ID:             "exec-whoami",
 		ToolName:       "exec",
 		Arguments:      map[string]interface{}{"command": "whoami"},
@@ -219,7 +219,7 @@ func TestProcessDetailsPageBackfillsEinoFilesystemArgumentsFromPrefixedExecution
 	}); err != nil {
 		t.Fatalf("AddProcessDetail(tool_call): %v", err)
 	}
-	if err := db.SaveToolExecution(&mcp.ToolExecution{
+	if err := database.NewMonitor(db).SaveToolExecution(&mcp.ToolExecution{
 		ID:             "exec-read",
 		ToolName:       "eino_fs::read_file",
 		Arguments:      map[string]interface{}{"file_path": "/tmp/requirements.txt", "limit": float64(2000)},

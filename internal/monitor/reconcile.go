@@ -5,6 +5,7 @@ import (
 
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -16,7 +17,7 @@ const (
 
 // ExecutionReconciler 在启动或运行期将无对应协程的 running 执行记录收尾为 orphaned。
 type ExecutionReconciler struct {
-	db          *database.DB
+	db          *store.Monitor
 	mcpServer   *mcp.Server
 	externalMgr *mcp.ExternalMCPManager
 	logger      *zap.Logger
@@ -25,7 +26,7 @@ type ExecutionReconciler struct {
 // NewExecutionReconciler creates a reconciler for orphaned MCP tool executions.
 func NewExecutionReconciler(db *database.DB, mcpServer *mcp.Server, externalMgr *mcp.ExternalMCPManager, logger *zap.Logger) *ExecutionReconciler {
 	return &ExecutionReconciler{
-		db:          db,
+		db:          database.NewMonitor(db),
 		mcpServer:   mcpServer,
 		externalMgr: externalMgr,
 		logger:      logger,

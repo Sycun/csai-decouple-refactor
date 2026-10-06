@@ -37,6 +37,8 @@ type depsAdapter struct {
 	db *database.DB
 	// c2 is the beacon ledger the resource-to-project lookup needs; the SQL lives in store.C2.
 	c2 *store.C2
+	// executions answers the tool-execution access question; the SQL lives in store.Monitor.
+	executions *store.Monitor
 }
 
 func (d depsAdapter) CanAccessResource(userID string, scope capability.Scope, resourceType, id string) bool {
@@ -50,7 +52,7 @@ func (d depsAdapter) CanAccessToolExecution(userID string, scope capability.Scop
 	if d.db == nil {
 		return false
 	}
-	return d.db.UserCanAccessToolExecution(userID, string(scope), executionID)
+	return d.executions.UserCanAccessToolExecution(userID, string(scope), executionID)
 }
 
 func (d depsAdapter) ConversationID(ctx context.Context) string {
@@ -255,7 +257,7 @@ func authorizeWithCapability(ctx context.Context, db *database.DB, toolName stri
 	if p, ok := authctx.PrincipalFromContext(ctx); ok {
 		ctx = capability.WithPrincipal(ctx, principalAdapter{p: p})
 	}
-	ctx = capability.WithRequestDeps(ctx, depsAdapter{db: db, c2: database.NewC2(db)})
+	ctx = capability.WithRequestDeps(ctx, depsAdapter{db: db, c2: database.NewC2(db), executions: database.NewMonitor(db)})
 	decision := evaluatorFor().Decide(ctx, toolName, args)
 	switch decision.Outcome {
 	case capability.OutcomeAllow:

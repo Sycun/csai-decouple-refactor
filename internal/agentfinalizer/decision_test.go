@@ -8,6 +8,7 @@ import (
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/multiagent"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -22,9 +23,14 @@ func newDecisionTestDB(t *testing.T) *database.DB {
 	return db
 }
 
+// decisionStore 是 finalizer 读面的真实句柄：*DB 不再实现它（tool_executions 已交回 store）。
+func decisionStore(db *database.DB) Store {
+	return store.NewMonitor(db.DB, nil)
+}
+
 func saveDecisionTestExecution(t *testing.T, db *database.DB, id, status string) {
 	t.Helper()
-	if err := db.SaveToolExecution(&mcp.ToolExecution{
+	if err := database.NewMonitor(db).SaveToolExecution(&mcp.ToolExecution{
 		ID:        id,
 		ToolName:  "test::tool",
 		Arguments: map[string]interface{}{"input": id},
@@ -41,7 +47,7 @@ func TestDecideBlocksPendingToolExecutions(t *testing.T) {
 	saveDecisionTestExecution(t, db, "run-running", mcp.ToolExecutionStatusRunning)
 	saveDecisionTestExecution(t, db, "run-completed", mcp.ToolExecutionStatusCompleted)
 
-	d := Decide(db, Input{
+	d := Decide(decisionStore(db), Input{
 		Response:        "工具还没全部结束时，这只是一段候选输出。",
 		MCPExecutionIDs: []string{"run-queued", "run-running", "run-completed"},
 	})
@@ -93,7 +99,7 @@ func TestDecideBlocksWhenOnlyFailedEvidenceIsRecorded(t *testing.T) {
 	saveDecisionTestExecution(t, db, "run-failed", mcp.ToolExecutionStatusFailed)
 	saveDecisionTestExecution(t, db, "run-cancelled", mcp.ToolExecutionStatusCancelled)
 
-	d := Decide(db, Input{
+	d := Decide(decisionStore(db), Input{
 		Response:                 "任务已处理完成。",
 		MCPExecutionIDs:          []string{"run-failed", "run-cancelled"},
 		RequireExecutionEvidence: true,
@@ -111,7 +117,7 @@ func TestDecideFinalizesCompletedEvidence(t *testing.T) {
 	db := newDecisionTestDB(t)
 	saveDecisionTestExecution(t, db, "run-ok", mcp.ToolExecutionStatusCompleted)
 
-	d := Decide(db, Input{
+	d := Decide(decisionStore(db), Input{
 		Response:                 "任务已处理完成，见工具执行记录。",
 		MCPExecutionIDs:          []string{"run-ok"},
 		RequireExecutionEvidence: true,
@@ -140,13 +146,13 @@ func TestFromRunResultDoesNotReusePreviousFinalizationStatusAsRunStatus(t *testi
 		MCPExecutionIDs: []string{"run-slow"},
 	}
 
-	first := FromRunResult(db, result, Input{})
+	first := FromRunResult(decisionStore(db), result, Input{})
 	if first.Finalizable || first.CompletionReason != ReasonPendingTools || result.Status != StatusInProgress {
 		t.Fatalf("first decision should mark pending and write metadata: decision=%+v result=%+v", first, result)
 	}
 
 	saveDecisionTestExecution(t, db, "run-slow", mcp.ToolExecutionStatusCancelled)
-	second := FromRunResult(db, result, Input{})
+	second := FromRunResult(decisionStore(db), result, Input{})
 	if !second.Finalizable || !second.Finalized || second.Status != StatusCompleted {
 		t.Fatalf("second decision should ignore previous result status after pending cleanup: decision=%+v result=%+v", second, result)
 	}

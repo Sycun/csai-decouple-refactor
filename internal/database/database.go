@@ -157,7 +157,7 @@ func NewDB(dbPath string, logger *zap.Logger) (*DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("初始化表失败: %w", err)
 	}
-	if err := database.migrateLegacyToolGuardBlocks(); err != nil {
+	if err := store.NewMonitor(database.DB, database.UserCanAccessResource).MigrateLegacyGuardBlocks(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("迁移历史安全拦截记录失败: %w", err)
 	}
@@ -204,38 +204,8 @@ func (db *DB) initTables() error {
 	// 创建过程详情表
 	// process_details 表的 DDL 在 store.Session 里（见 session_schema.go）。
 
-	// 创建工具执行记录表
-	createToolExecutionsTable := `
-	CREATE TABLE IF NOT EXISTS tool_executions (
-		id TEXT PRIMARY KEY,
-		tool_name TEXT NOT NULL,
-		arguments TEXT NOT NULL,
-		status TEXT NOT NULL,
-		result TEXT,
-		error TEXT,
-		start_time DATETIME NOT NULL,
-		end_time DATETIME,
-		duration_ms INTEGER,
-		partial_output TEXT,
-		partial_output_bytes INTEGER NOT NULL DEFAULT 0,
-		partial_output_truncated INTEGER NOT NULL DEFAULT 0,
-		partial_output_updated_at DATETIME,
-		owner_user_id TEXT,
-		conversation_id TEXT,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);`
-
-	// 创建工具统计表
-	createToolStatsTable := `
-	CREATE TABLE IF NOT EXISTS tool_stats (
-		tool_name TEXT PRIMARY KEY,
-		total_calls INTEGER NOT NULL DEFAULT 0,
-		success_calls INTEGER NOT NULL DEFAULT 0,
-		failed_calls INTEGER NOT NULL DEFAULT 0,
-		last_call_time DATETIME,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);`
-
+	// tool_executions 与 tool_stats 两张表的 DDL、四个后补列与三条索引都在 store.Monitor 里，
+	// 由启动那三步按 建表 → 补列 → 建索引 的顺序跑。
 	// 攻击链两张表的 DDL 在 store.AttackChain 里（EnsureSchema 一并建两张表与两条会话索引）。
 
 	// 创建项目表
@@ -272,9 +242,6 @@ func (db *DB) initTables() error {
 	// 创建索引
 	createIndexes := `
 	CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at);
-	CREATE INDEX IF NOT EXISTS idx_tool_executions_tool_name ON tool_executions(tool_name);
-	CREATE INDEX IF NOT EXISTS idx_tool_executions_start_time ON tool_executions(start_time);
-	CREATE INDEX IF NOT EXISTS idx_tool_executions_status ON tool_executions(status);
 	CREATE INDEX IF NOT EXISTS idx_conversations_pinned ON conversations(pinned);
 	CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 	CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at);
@@ -290,12 +257,8 @@ func (db *DB) initTables() error {
 		return err
 	}
 
-	if _, err := db.Exec(createToolExecutionsTable); err != nil {
-		return fmt.Errorf("创建tool_executions表失败: %w", err)
-	}
-
-	if _, err := db.Exec(createToolStatsTable); err != nil {
-		return fmt.Errorf("创建tool_stats表失败: %w", err)
+	if err := store.NewMonitor(db.DB, db.UserCanAccessResource).EnsureSchema(); err != nil {
+		return err
 	}
 
 	// 两张表都外键到 conversations，节点表还外键到 tool_executions，所以这一步只能在它们之后。
@@ -413,8 +376,12 @@ func (db *DB) initTables() error {
 	if err := store.NewWorkflows(db.DB).MigrateRunsTable(); err != nil {
 		db.logger.Warn("迁移 workflow 运行表失败", zap.Error(err))
 	}
-	if err := db.migrateToolExecutionsPartialOutputColumns(); err != nil {
+	if err := store.NewMonitor(db.DB, db.UserCanAccessResource).MigrateLateColumns(); err != nil {
 		db.logger.Warn("迁移tool_executions partial output字段失败", zap.Error(err))
+	}
+	// 三条 tool_executions 索引仍按原顺序跑在补列之后（全局建索引那一步的位置）。
+	if err := store.NewMonitor(db.DB, db.UserCanAccessResource).EnsureIndexes(); err != nil {
+		return fmt.Errorf("创建tool_executions索引失败: %w", err)
 	}
 	if err := db.migrateRBACOwnershipColumns(); err != nil {
 		db.logger.Warn("迁移RBAC资源归属字段失败", zap.Error(err))
@@ -427,23 +394,6 @@ func (db *DB) initTables() error {
 	// model_token_usage 的建表、四个索引与历史回填都归 store.ModelTokenUsage，
 	// 由进程启动时那一次 ensureModelTokenUsageSchema 跑（表要先于时间线写入路径存在）。
 	db.logger.Debug("数据库表初始化完成")
-	return nil
-}
-
-func (db *DB) migrateToolExecutionsPartialOutputColumns() error {
-	for _, col := range []struct {
-		name string
-		stmt string
-	}{
-		{"partial_output", "ALTER TABLE tool_executions ADD COLUMN partial_output TEXT"},
-		{"partial_output_bytes", "ALTER TABLE tool_executions ADD COLUMN partial_output_bytes INTEGER NOT NULL DEFAULT 0"},
-		{"partial_output_truncated", "ALTER TABLE tool_executions ADD COLUMN partial_output_truncated INTEGER NOT NULL DEFAULT 0"},
-		{"partial_output_updated_at", "ALTER TABLE tool_executions ADD COLUMN partial_output_updated_at DATETIME"},
-	} {
-		if err := db.addColumnIfMissing("tool_executions", col.name, col.stmt); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 

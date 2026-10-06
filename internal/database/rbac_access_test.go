@@ -29,32 +29,32 @@ func TestRBACToolExecutionOwnershipAccess(t *testing.T) {
 		{ID: "exec-u2", ToolName: "two", Status: "completed", StartTime: time.Now(), OwnerUserID: "u2"},
 		{ID: "exec-legacy", ToolName: "legacy", Status: "completed", StartTime: time.Now()},
 	} {
-		if err := db.SaveToolExecution(exec); err != nil {
+		if err := NewMonitor(db).SaveToolExecution(exec); err != nil {
 			t.Fatal(err)
 		}
 	}
 	access := store.Access{UserID: "u1", Scope: RBACScopeAssigned}
-	rows, err := db.LoadToolExecutionListPageForAccess(0, 20, "", "", access)
+	rows, err := NewMonitor(db).LoadToolExecutionListPageForAccess(0, 20, "", "", access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(rows) != 1 || rows[0].ID != "exec-u1" {
 		t.Fatalf("rows = %#v, want only exec-u1", rows)
 	}
-	summary, err := db.LoadToolStatsSummaryForAccess(10, access)
+	summary, err := NewMonitor(db).LoadToolStatsSummaryForAccess(10, access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if summary.Summary.TotalCalls != 1 || summary.Summary.ToolCount != 1 || len(summary.TopTools) != 1 || summary.TopTools[0].ToolName != "one" {
 		t.Fatalf("scoped summary = %#v", summary)
 	}
-	if !db.UserCanAccessToolExecution("u1", RBACScopeAssigned, "exec-u1") {
+	if !NewMonitor(db).UserCanAccessToolExecution("u1", RBACScopeAssigned, "exec-u1") {
 		t.Fatal("owner could not access execution")
 	}
-	if db.UserCanAccessToolExecution("u1", RBACScopeAssigned, "exec-u2") {
+	if NewMonitor(db).UserCanAccessToolExecution("u1", RBACScopeAssigned, "exec-u2") {
 		t.Fatal("foreign execution was accessible")
 	}
-	if db.UserCanAccessToolExecution("u1", RBACScopeAssigned, "exec-legacy") {
+	if NewMonitor(db).UserCanAccessToolExecution("u1", RBACScopeAssigned, "exec-legacy") {
 		t.Fatal("ownerless legacy execution did not fail closed")
 	}
 }

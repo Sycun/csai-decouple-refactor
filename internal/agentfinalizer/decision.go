@@ -3,18 +3,20 @@ package agentfinalizer
 import (
 	"strings"
 
-	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/multiagent"
+	"cyberstrike-ai/internal/store"
 )
 
 // Store is the persistence surface the finalizer needs: read a tool execution's recorded state, and
 // write one back when a cancelled run leaves an execution dangling.
 //
-// It used to take the 361-method *database.DB. This package is the leaf the report praises (final
-// status is decided in one place); keeping it able to reach any table would undercut that. The
-// method list lives in database.ToolExecutionLedger to avoid an import cycle.
-type Store = database.ToolExecutionLedger
+// 语句在 store.Monitor 里（tool_executions 的户籍）；接口按消费者侧声明——它原来别名到
+// database.ToolExecutionLedger，那张表搬走后 *DB 不再实现它。
+type Store interface {
+	GetToolExecution(id string) (*store.ToolExecution, error)
+	SaveToolExecution(exec *store.ToolExecution) error
+}
 
 const (
 	StatusCompleted    = "completed"

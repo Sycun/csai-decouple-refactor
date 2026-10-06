@@ -221,6 +221,8 @@ var writeLedger = map[string][]string{
 	"robot_user_bindings":               {"robot_identity.go"},
 	"robot_user_sessions":               {"robot_sessions.go"},
 	"skill_stats":                       {"skill_stats.go"},
+	"tool_executions":                   {"monitor.go", "monitor_guard.go"},
+	"tool_stats":                        {"monitor.go", "monitor_guard.go"},
 	"vulnerabilities":                   {"vulnerability.go"},
 	"vulnerability_alert_deliveries":    {"vulnerability_alerts.go"},
 	"vulnerability_alert_subscriptions": {"vulnerability_alerts.go"},
@@ -294,10 +296,11 @@ func TestStoreWritesOnlyTablesItOwns(t *testing.T) {
 	// The ledger size is exact while the scan's coverage is a floor: this package grows as domains are
 	// extracted, but every added table has to be an intentional edit with a file behind it. A floor on
 	// the ledger would let a failing offender be silenced by listing the table it names.
-	if len(writeLedger) != 41 {
-		t.Fatalf("the write ledger lists %d tables, want exactly 41 - 35 measured 2026-10-06 when the blackboard "+
-			"arrived, 41 after the C2 ledger of six tables joined on 2026-10-07: %d statements over %d tables "+
-			"from %d files", len(writeLedger), statements, distinct, len(writes))
+	if len(writeLedger) != 43 {
+		t.Fatalf("the write ledger lists %d tables, want exactly 43 - 35 measured 2026-10-06 when the blackboard "+
+			"arrived, 41 after the C2 ledger of six tables joined on 2026-10-07, 43 after tool_executions and "+
+			"tool_stats joined the same day: %d statements over %d tables from %d files",
+			len(writeLedger), statements, distinct, len(writes))
 	}
 	if len(writes) < 20 {
 		t.Fatalf("write ledger covers %d files, want at least 20 - the scan has gone blind", len(writes))

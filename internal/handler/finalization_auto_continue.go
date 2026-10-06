@@ -121,7 +121,7 @@ func (f *runFinalizer) cleanupPendingToolExecutionsAfterIteration(
 }
 
 func (f *runFinalizer) waitForToolExecutionsToLeavePending(ctx context.Context, executionIDs []string, wait time.Duration) {
-	if f == nil || f.db == nil || len(executionIDs) == 0 || wait <= 0 {
+	if f == nil || f.executions == nil || len(executionIDs) == 0 || wait <= 0 {
 		return
 	}
 	timer := time.NewTimer(wait)
@@ -143,11 +143,11 @@ func (f *runFinalizer) waitForToolExecutionsToLeavePending(ctx context.Context, 
 }
 
 func (f *runFinalizer) hasPendingToolExecutions(executionIDs []string) bool {
-	if f == nil || f.db == nil {
+	if f == nil || f.executions == nil {
 		return false
 	}
 	for _, executionID := range uniqueNonEmptyStrings(executionIDs) {
-		exec, err := f.db.GetToolExecution(executionID)
+		exec, err := f.executions.GetToolExecution(executionID)
 		if err != nil || exec == nil {
 			continue
 		}

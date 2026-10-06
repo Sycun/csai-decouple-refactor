@@ -54,9 +54,16 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 		{
 			storeConstructor: "NewAttackChain",
 			tablePrefix:      "attack_chain_",
-			anchorCall:       "createToolExecutionsTable",
-			anchorReason:     "attack_chain_nodes has a foreign key onto tool_executions",
+			anchorCall:       "NewMonitor",
+			anchorReason:     "attack_chain_nodes has a foreign key onto tool_executions, which store.Monitor's EnsureSchema creates now - the anchor is the call that builds that store",
 			mustNotChangeSQL: "attack_chain",
+		},
+		{
+			storeConstructor: "NewMonitor",
+			tablePrefix:      "tool_executions",
+			anchorCall:       "createConversationsTable",
+			anchorReason:     "tool_executions carries a conversation_id column (no foreign key), so the anchor only has to be a stable earlier boot step",
+			mustNotChangeSQL: "tool_executions",
 		},
 		{
 			storeConstructor: "NewWorkflows",
@@ -278,6 +285,8 @@ func TestMultiPhaseSchemaStepsRunInOrder(t *testing.T) {
 			"the run table reads columns the backfill adds"},
 		{"NewC2", []string{"EnsureSchema", "MigrateListenerColumns", "EnsureIndexes"},
 			"idx_c2_listeners_project_id sits on the column only the backfill creates"},
+		{"NewMonitor", []string{"EnsureSchema", "MigrateLateColumns", "EnsureIndexes"},
+			"the four late columns are read back by partial-output flows, and the indexes follow the original boot order - this pins it rather than a real dependency"},
 	}
 	checked := 0
 	for _, tc := range cases {
@@ -298,8 +307,8 @@ func TestMultiPhaseSchemaStepsRunInOrder(t *testing.T) {
 		}
 		checked++
 	}
-	if checked < 4 {
-		t.Fatalf("only %d multi-phase boot sequences inspected (want 4): the scan has gone blind", checked)
+	if checked < 5 {
+		t.Fatalf("only %d multi-phase boot sequences inspected (want 5): the scan has gone blind", checked)
 	}
 	// A one-phase owner must not quietly grow a second sweep: assets builds table, columns and indexes
 	// inside its own EnsureSchema, so any extra phase call here is a split nobody asked for.

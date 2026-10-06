@@ -27,7 +27,7 @@ func TestServicePurgeExpired_respectsZeroRetention(t *testing.T) {
 		Status:    "completed",
 		StartTime: mustParseTime(t, "2020-01-01T00:00:00Z"),
 	}
-	if err := db.SaveToolExecution(exec); err != nil {
+	if err := database.NewMonitor(db).SaveToolExecution(exec); err != nil {
 		t.Fatalf("SaveToolExecution: %v", err)
 	}
 
@@ -37,7 +37,7 @@ func TestServicePurgeExpired_respectsZeroRetention(t *testing.T) {
 	}, zap.NewNop())
 	svc.PurgeExpired()
 
-	if _, err := db.GetToolExecution("ancient"); err != nil {
+	if _, err := database.NewMonitor(db).GetToolExecution("ancient"); err != nil {
 		t.Fatalf("record should remain when retention_days=0: %v", err)
 	}
 }
@@ -57,7 +57,7 @@ func TestServicePurgeExpired_deletesOldRows(t *testing.T) {
 		Status:    "completed",
 		StartTime: mustParseTime(t, "2020-01-01T00:00:00Z"),
 	}
-	if err := db.SaveToolExecution(exec); err != nil {
+	if err := database.NewMonitor(db).SaveToolExecution(exec); err != nil {
 		t.Fatalf("SaveToolExecution: %v", err)
 	}
 
@@ -67,7 +67,7 @@ func TestServicePurgeExpired_deletesOldRows(t *testing.T) {
 	}, zap.NewNop())
 	svc.PurgeExpired()
 
-	if _, err := db.GetToolExecution("ancient"); err == nil {
+	if _, err := database.NewMonitor(db).GetToolExecution("ancient"); err == nil {
 		t.Fatal("record should be purged when older than retention_days")
 	}
 }

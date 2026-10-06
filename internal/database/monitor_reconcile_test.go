@@ -26,12 +26,12 @@ func TestCancelOrphanedRunningToolExecutions(t *testing.T) {
 		Status:    "running",
 		StartTime: start,
 	}
-	if err := db.SaveToolExecution(exec); err != nil {
+	if err := NewMonitor(db).SaveToolExecution(exec); err != nil {
 		t.Fatalf("SaveToolExecution: %v", err)
 	}
 
 	end := time.Now()
-	n, err := db.CancelOrphanedRunningToolExecutions(end, "执行已中断（服务重启）")
+	n, err := NewMonitor(db).CancelOrphanedRunningToolExecutions(end, "执行已中断（服务重启）")
 	if err != nil {
 		t.Fatalf("CancelOrphanedRunningToolExecutions: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestCancelOrphanedRunningToolExecutions(t *testing.T) {
 		t.Fatalf("expected 1 row updated, got %d", n)
 	}
 
-	got, err := db.GetToolExecution("orphan-hydra")
+	got, err := NewMonitor(db).GetToolExecution("orphan-hydra")
 	if err != nil {
 		t.Fatalf("GetToolExecution: %v", err)
 	}
@@ -64,19 +64,19 @@ func TestFinalizeStaleRunningToolExecutions_skipsActive(t *testing.T) {
 
 	now := time.Now()
 	oldStart := now.Add(-5 * time.Minute)
-	if err := db.SaveToolExecution(&mcp.ToolExecution{
+	if err := NewMonitor(db).SaveToolExecution(&mcp.ToolExecution{
 		ID: "stale", ToolName: "hydra", Status: "running", StartTime: oldStart,
 	}); err != nil {
 		t.Fatalf("SaveToolExecution stale: %v", err)
 	}
-	if err := db.SaveToolExecution(&mcp.ToolExecution{
+	if err := NewMonitor(db).SaveToolExecution(&mcp.ToolExecution{
 		ID: "active", ToolName: "hydra", Status: "running", StartTime: oldStart,
 	}); err != nil {
 		t.Fatalf("SaveToolExecution active: %v", err)
 	}
 
 	active := map[string]struct{}{"active": {}}
-	n, err := db.FinalizeStaleRunningToolExecutions(now, time.Minute, active, "执行已中断（会话已结束）")
+	n, err := NewMonitor(db).FinalizeStaleRunningToolExecutions(now, time.Minute, active, "执行已中断（会话已结束）")
 	if err != nil {
 		t.Fatalf("FinalizeStaleRunningToolExecutions: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestFinalizeStaleRunningToolExecutions_skipsActive(t *testing.T) {
 		t.Fatalf("expected 1 stale row updated, got %d", n)
 	}
 
-	stale, err := db.GetToolExecution("stale")
+	stale, err := NewMonitor(db).GetToolExecution("stale")
 	if err != nil {
 		t.Fatalf("GetToolExecution stale: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestFinalizeStaleRunningToolExecutions_skipsActive(t *testing.T) {
 		t.Fatalf("stale expected orphaned, got %s", stale.Status)
 	}
 
-	activeExec, err := db.GetToolExecution("active")
+	activeExec, err := NewMonitor(db).GetToolExecution("active")
 	if err != nil {
 		t.Fatalf("GetToolExecution active: %v", err)
 	}

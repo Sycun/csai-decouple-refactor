@@ -3,7 +3,6 @@ package audit
 import (
 	"strings"
 
-	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/store"
 )
 
@@ -27,11 +26,11 @@ var auditActionsResourceRemoved = map[string]bool{
 // than handing the audit log reader the whole connection wrapper.
 //
 // The handlers' own store interfaces must be a superset of this one, since they pass their storage
-// in - internal/database/stores.go keeps ResourceExistence aligned with it. The C2 lookups are not
-// part of it any more: the caller passes store.C2 itself (see ApplyResourceAvailability).
+// in - internal/database/stores.go keeps ResourceExistence aligned with it. The C2 lookups and the
+// tool-execution lookup are not part of it any more: the caller passes store.C2 / store.Monitor
+// themselves (see ApplyResourceAvailability).
 type ResourceExistenceSource interface {
 	ConversationExists(id string) (bool, error)
-	GetToolExecution(id string) (*mcp.ToolExecution, error)
 }
 
 // BatchQueueLookup is the batch queue answer split out for the same reason as the two below: that
@@ -57,9 +56,9 @@ type WebshellLookup interface {
 //
 // db is an interface, so callers must pass one built by database.Narrow: a nil *database.DB stored
 // in an interface is not nil, and the guard below would then fall through into method calls on a nil
-// receiver instead of reporting "availability unknown". c2 is a concrete pointer, so a plain nil
-// check is exact there and the c2 branches answer "unknown" without a database.
-func ApplyResourceAvailability(db ResourceExistenceSource, c2 *store.C2, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, log *store.AuditLog) {
+// receiver instead of reporting "availability unknown". c2 and executions are concrete pointers,
+// so a plain nil check is exact there and those branches answer "unknown" without a database.
+func ApplyResourceAvailability(db ResourceExistenceSource, c2 *store.C2, executions *store.Monitor, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, log *store.AuditLog) {
 	if log == nil || strings.TrimSpace(log.ResourceID) == "" {
 		return
 	}
@@ -71,13 +70,13 @@ func ApplyResourceAvailability(db ResourceExistenceSource, c2 *store.C2, finding
 	if db == nil {
 		return
 	}
-	available, known := resourceStillExists(db, c2, findings, webshells, batches, log.ResourceType, log.ResourceID)
+	available, known := resourceStillExists(db, c2, executions, findings, webshells, batches, log.ResourceType, log.ResourceID)
 	if known {
 		log.ResourceAvailable = &available
 	}
 }
 
-func resourceStillExists(db ResourceExistenceSource, c2 *store.C2, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, resourceType, resourceID string) (bool, bool) {
+func resourceStillExists(db ResourceExistenceSource, c2 *store.C2, executions *store.Monitor, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, resourceType, resourceID string) (bool, bool) {
 	resourceID = strings.TrimSpace(resourceID)
 	if resourceID == "" {
 		return false, false
@@ -134,7 +133,10 @@ func resourceStillExists(db ResourceExistenceSource, c2 *store.C2, findings Find
 		c, err := webshells.Get(resourceID)
 		return err == nil && c != nil, true
 	case "tool_execution":
-		_, err := db.GetToolExecution(resourceID)
+		if executions == nil {
+			return false, false
+		}
+		_, err := executions.GetToolExecution(resourceID)
 		return err == nil, true
 	default:
 		return false, false
