@@ -2966,6 +2966,36 @@ NewVulnerabilities owns`；② 把启动那行 `EnsureSchema()` 换成一句无�
 `writeLedger` 35 张表 / `writeDebt` 0 条；索引归属门禁扫到的表数继续涨（本刀把两张表带进来）；
 `gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿。
 
+### P6 第三十八刀 —— 任务看板是**读盘**不是查库：把 Eino plantask 的读取从连接对象上搬进 `internal/storage`
+
+`internal/database/plantask.go`（125 行）里一个 SQL 都没有：它 `os.ReadDir` 一个会话目录、
+按文件名序号排、跳过 `deleted`/非数字/读一半写坏的文件。它挂在 `*database.DB` 上只是因为
+**会话目录的根路径**当时配在连接对象里（`einoPlantaskBaseDir`）。而 `internal/storage` 这个包
+本来就按同一批配置值持有各类目录根（`storage.Paths.Plantask` 的注释就是这么写的），所以读取归它。
+
+**做的**：新 `internal/storage/plantask.go` —— `PlanTask` 传输模型 + `ReadPlanTasks(dir, since, logger)`；
+数据层侧 `plantask.go` 从 125 行降到 **52 行**，只剩三件事：解析出这一会话的目录、
+保留原有的三个空/错误分支（`db == nil` → 空表、空 conversationID → `conversation id is required`、
+根目录未配 → 空表），然后委托给 `storage.ReadPlanTasks`。
+`ConversationPlanTask` 改成**类型别名**指向 `storage.PlanTask`（消费方一个字不用改，
+也不再有两份同构 struct）。
+**目录名消毒只留一份**：读写两侧仍共用数据层的 `sanitizeConversationPathSegment`（清理路径与读取路径
+必须是同一个函数，否则就会出现"读得到但删不掉"的会话目录）；`planTaskDir` 是**包内自由函数不是方法**，
+所以 `*DB` 方法数不动（**188**），而这一层少了一次"非 SQL 的责任"。
+两条 Debug 日志（读失败 / 解析失败）原样保留：`ReadPlanTasks` 收一个可为 nil 的 `*zap.Logger`
+（`internal/storage/cleaner.go` 本来就按这个形状注入 logger）。
+
+**新测试** `internal/storage/plantask_test.go` **2 个用例**（真文件，`t.TempDir()`）：
+文件名 10/2/1 乱序写入但按序号返回、`id` 缺省时回退成文件名、`status: DELETED` 不列、
+`not-a-number.json` 与同名**目录**与 `.txt` 都不算、**写到一半的坏 JSON 只跳过不报错**（其余三条仍返回）、
+`since` 按 mtime 过滤只留新盖时间戳那一条；以及"这个会话还没有目录"必须回空表而不是 error。
+
+**这一刀对分层结论的意义**：`internal/database` 里"不是 SQL 却挂在连接对象上"的东西被扫出来一次
+（按类扫：`plantask.go` 是文件读盘、`SetEinoConversationDirs`/`SetChatUploadsDir` 与
+`removeConversationScopedDir` 一族是**目录清理**，还挂在 `*DB` 上）。
+**下一件明确的事**：把会话目录清理也交给 `internal/storage`（它已经有 `Paths` 与 cleaner），
+届时 `*DB` 上这四个 dir 字段与两个 setter 一起消失——那才是这一层"只剩 SQL"的收口。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
