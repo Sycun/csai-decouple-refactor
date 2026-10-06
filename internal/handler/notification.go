@@ -94,7 +94,7 @@ func NewNotificationHandler(db *database.DB, agentHandler *AgentHandler, logger 
 	if db != nil {
 		handler.reads = store.NewNotificationReads(db.DB)
 		handler.hitl = store.NewHITL(db.DB)
-		handler.findings = store.NewVulnerabilities(db.DB)
+		handler.findings = store.NewVulnerabilities(db.DB, nil)
 		handler.failedRuns = store.NewExecution(db.DB)
 	}
 	return handler

@@ -66,13 +66,12 @@ func deadDBSurface(t *testing.T, root string) (dead []string, scanned int) {
 			return true
 		})
 	}
-	// 269 exported methods measured as this slice landed, 296 when the scan was first written. The floor
-	// sits well under the measurement on purpose: its job is to catch a scan that stopped reading the
-	// directory, not to freeze a number that every domain cut is expected to lower.
-	if len(names) < 260 {
-		// The floor exists
-		// so a scan that silently stops reading the directory cannot report an empty dead set.
-		t.Fatalf("only %d exported *DB methods parsed (floor 260): the scan is not reading the package", len(names))
+	// 296 exported methods when the scan was first written, 269 as the findings slice landed, 256 once
+	// the record's eleven methods left for store.Vulnerabilities. The floor sits under the measurement
+	// on purpose: its job is to catch a scan that stopped reading the directory, not to freeze a number
+	// every domain cut is expected to lower.
+	if len(names) < 250 {
+		t.Fatalf("only %d exported *DB methods parsed (floor 250): the scan is not reading the package", len(names))
 	}
 
 	var production []string

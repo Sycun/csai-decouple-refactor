@@ -268,7 +268,7 @@ func (db *DB) UpdateProject(p *Project) error {
 
 // DeleteProject 删除项目（级联删除事实；对话 project_id 置空由 FK 处理；其他资源 project_id 置空）。
 func (db *DB) DeleteProject(id string) error {
-	if _, err := db.Exec(`UPDATE vulnerabilities SET project_id = NULL WHERE project_id = ?`, id); err != nil {
+	if err := NewFindings(db).UnlinkProject(id); err != nil {
 		return fmt.Errorf("解除漏洞项目关联失败: %w", err)
 	}
 	if _, err := db.Exec(`UPDATE assets SET project_id = NULL WHERE project_id = ?`, id); err != nil {

@@ -99,14 +99,14 @@ type AttackChainStore interface {
 
 var _ AttackChainStore = (*DB)(nil)
 
-// ResourceExistence is the read surface audit.ResourceExistenceSource needs: given the resource an
-// audit row points at, does that row still exist? Eight lookups over seven other tables, declared
-// here because internal/audit is the consumer and handing it the connection wrapper would put every
-// table back within reach.
+// ResourceExistence is the read surface audit's existence check needs: given the resource an audit
+// row points at, does that row still exist? Seven lookups over six other tables, declared here
+// because internal/audit is the consumer and handing it the connection wrapper would put every table
+// back within reach.
 //
-// audit_logs' own queries are deliberately absent: they live in store.AuditLogs now, and an
-// interface that mixes a table's reads with other tables' existence checks is how a surface stops
-// describing one thing.
+// audit_logs' own queries are deliberately absent: they live in store.AuditLogs now, and an interface
+// that mixes a table's reads with other tables' existence checks is how a surface stops describing
+// one thing. The findings lookup is absent for the same reason - it is store.Vulnerabilities.Get.
 type ResourceExistence interface {
 	ConversationExists(id string) (bool, error)
 	GetBatchQueue(queueID string) (*BatchTaskQueueRow, error)
@@ -114,7 +114,6 @@ type ResourceExistence interface {
 	GetC2Session(id string) (*C2Session, error)
 	GetC2Task(id string) (*C2Task, error)
 	GetToolExecution(id string) (*mcp.ToolExecution, error)
-	GetVulnerability(id string) (*store.Vulnerability, error)
 	GetWebshellConnection(id string) (*WebShellConnection, error)
 }
 
@@ -236,7 +235,6 @@ var _ NotificationStore = (*DB)(nil)
 type OpenAPIStore interface {
 	GetConversation(id string) (*Conversation, error)
 	GetMessages(conversationID string) ([]Message, error)
-	ListVulnerabilities(limit, offset int, filter store.VulnerabilityListFilter) ([]*store.Vulnerability, error)
 }
 
 var _ OpenAPIStore = (*DB)(nil)
@@ -326,20 +324,14 @@ type RobotStore interface {
 
 var _ RobotStore = (*DB)(nil)
 
-// VulnerabilityStore is the persistence surface required by VulnerabilityHandler.
+// VulnerabilityStore is what VulnerabilityHandler still needs from the connection wrapper once the
+// finding rows themselves moved to store.Vulnerabilities: the three RBAC lookups a finding's owner and
+// candidates are decided with, and the alert subscription the same page edits. The name says which
+// handler it serves, not which table it owns - the record's CRUD is deliberately not here.
 type VulnerabilityStore interface {
 	AssignResourceToUser(userID, resourceType, resourceID string) error
-	CountVulnerabilitiesForAccess(filter store.VulnerabilityListFilter, access store.Access) (int, error)
-	CreateVulnerability(vuln *store.Vulnerability) (*store.Vulnerability, error)
-	DeleteVulnerabilitiesByFilterForAccess(filter store.VulnerabilityListFilter, access store.Access) (int64, error)
-	DeleteVulnerability(id string) error
-	GetVulnerability(id string) (*store.Vulnerability, error)
 	GetVulnerabilityAlertSubscription(userID string) (*VulnerabilityAlertSubscription, error)
-	GetVulnerabilityFilterOptionsForAccess(access store.Access) (map[string][]string, error)
-	GetVulnerabilityStatsForAccess(filter store.VulnerabilityListFilter, access store.Access) (map[string]interface{}, error)
-	ListVulnerabilitiesForAccess(limit, offset int, filter store.VulnerabilityListFilter, access store.Access) ([]*store.Vulnerability, error)
 	SetResourceOwner(resourceType, resourceID, userID string) error
-	UpdateVulnerability(id string, vuln *store.Vulnerability) error
 	UpsertVulnerabilityAlertSubscription(userID string, enabled bool, minSeverity string) (*VulnerabilityAlertSubscription, error)
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }

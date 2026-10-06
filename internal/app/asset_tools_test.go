@@ -103,7 +103,7 @@ func TestAssetToolsCRUDQueryAndPageLimit(t *testing.T) {
 	if err := db.AssignResourceToUser(user.ID, "conversation", conversation.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.CreateVulnerability(&store.Vulnerability{ConversationID: conversation.ID, Title: "finding", Severity: "high", Target: "192.0.2.42"}); err != nil {
+	if _, err := database.NewFindings(db).Create(&store.Vulnerability{ConversationID: conversation.ID, Title: "finding", Severity: "high", Target: "192.0.2.42"}); err != nil {
 		t.Fatal(err)
 	}
 	scanCtx := mcp.WithMCPConversationID(ctx, conversation.ID)

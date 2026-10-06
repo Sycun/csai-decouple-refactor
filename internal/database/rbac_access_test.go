@@ -201,10 +201,10 @@ func TestRBACVulnerabilityAccessInheritsProject(t *testing.T) {
 	if err := db.AssignResourceToUser(user.ID, "project", p1.ID); err != nil {
 		t.Fatal(err)
 	}
-	v1, _ := db.CreateVulnerability(&store.Vulnerability{ProjectID: p1.ID, Title: "v1", Severity: "high"})
-	v2, _ := db.CreateVulnerability(&store.Vulnerability{ProjectID: p2.ID, Title: "v2", Severity: "high"})
+	v1, _ := NewFindings(db).Create(&store.Vulnerability{ProjectID: p1.ID, Title: "v1", Severity: "high"})
+	v2, _ := NewFindings(db).Create(&store.Vulnerability{ProjectID: p2.ID, Title: "v2", Severity: "high"})
 
-	items, err := db.ListVulnerabilitiesForAccess(50, 0, store.VulnerabilityListFilter{}, store.Access{UserID: user.ID, Scope: RBACScopeAssigned})
+	items, err := NewFindings(db).List(50, 0, store.VulnerabilityListFilter{}, store.Access{UserID: user.ID, Scope: RBACScopeAssigned})
 	if err != nil {
 		t.Fatal(err)
 	}

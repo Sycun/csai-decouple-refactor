@@ -86,7 +86,7 @@ func TestVulnerabilityCannotBeReparentedToForeignProject(t *testing.T) {
 	foreign, _ := db.CreateProject(&database.Project{Name: "foreign"})
 	_ = db.SetResourceOwner("project", owned.ID, "u1")
 	_ = db.SetResourceOwner("project", foreign.ID, "u2")
-	vulnerability, err := db.CreateVulnerability(&store.Vulnerability{Title: "v", Severity: "high", ProjectID: owned.ID})
+	vulnerability, err := database.NewFindings(db).Create(&store.Vulnerability{Title: "v", Severity: "high", ProjectID: owned.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

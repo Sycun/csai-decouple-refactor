@@ -648,11 +648,7 @@ func (db *DB) UpdateConversationTime(id string) error {
 // 注意：knowledge_retrieval_logs 在删除前会被显式清理。
 func (db *DB) DeleteConversation(id string) error {
 	// 删除对话前补全漏洞来源标签，便于在漏洞库中追溯已删除会话的发现。
-	_, err := db.Exec(`
-		UPDATE vulnerabilities
-		SET conversation_tag = COALESCE(NULLIF(TRIM(conversation_tag), ''), (SELECT title FROM conversations WHERE id = ?))
-		WHERE conversation_id = ?
-	`, id, id)
+	_, err := NewFindings(db).BackfillSourceTag(id)
 	if err != nil {
 		db.logger.Warn("更新漏洞来源标签失败", zap.String("conversationId", id), zap.Error(err))
 	}

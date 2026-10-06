@@ -112,7 +112,7 @@ func newFindingParityBase(t *testing.T) (*database.DB, map[string]string) {
 		{title: "f-orphan"},
 	}
 	for _, s := range seed {
-		v, err := db.CreateVulnerability(&store.Vulnerability{Title: s.title, Severity: "high", ProjectID: s.project, ConversationID: s.conv})
+		v, err := database.NewFindings(db).Create(&store.Vulnerability{Title: s.title, Severity: "high", ProjectID: s.project, ConversationID: s.conv})
 		if err != nil {
 			t.Fatalf("seed %s: %v", s.title, err)
 		}
@@ -145,7 +145,7 @@ func TestFindingAccessClausesAnswerTheSame(t *testing.T) {
 	for name, want := range byUser {
 		for _, scope := range []string{database.RBACScopeOwn, database.RBACScopeAssigned} {
 			access := store.Access{UserID: users[name], Scope: scope}
-			got, err := db.ListVulnerabilitiesForAccess(100, 0, store.VulnerabilityListFilter{}, access)
+			got, err := database.NewFindings(db).List(100, 0, store.VulnerabilityListFilter{}, access)
 			if err != nil {
 				t.Fatalf("%s/%s: %v", name, scope, err)
 			}
@@ -191,7 +191,7 @@ func legacyVisibleTitles(t *testing.T, db *database.DB, userID string) []string 
 // An unrestricted scope is the same answer in both wordings: no clause at all.
 func TestFindingAccessUnrestrictedScopeMatches(t *testing.T) {
 	db, users := newFindingParityBase(t)
-	all, err := db.ListVulnerabilitiesForAccess(100, 0, store.VulnerabilityListFilter{}, store.Access{Scope: database.RBACScopeAll})
+	all, err := database.NewFindings(db).List(100, 0, store.VulnerabilityListFilter{}, store.Access{Scope: database.RBACScopeAll})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestFindingAccessUnrestrictedScopeMatches(t *testing.T) {
 // reachable path today - it is the SQL-level default being moved to fail closed.
 func TestFindingAccessWithoutAnIdentityFailsClosed(t *testing.T) {
 	db, _ := newFindingParityBase(t)
-	got, err := db.ListVulnerabilitiesForAccess(100, 0, store.VulnerabilityListFilter{}, store.Access{})
+	got, err := database.NewFindings(db).List(100, 0, store.VulnerabilityListFilter{}, store.Access{})
 	if err != nil {
 		t.Fatal(err)
 	}

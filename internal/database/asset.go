@@ -16,7 +16,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
-	"go.uber.org/zap"
 	"golang.org/x/net/idna"
 )
 
@@ -746,12 +745,6 @@ func (db *DB) RefreshAssetRiskCacheForConversations(conversationIDs ...string) e
 		}
 	}
 	return nil
-}
-
-func (db *DB) refreshAssetRiskCacheForConversationsBestEffort(conversationIDs ...string) {
-	if err := db.RefreshAssetRiskCacheForConversations(conversationIDs...); err != nil && db.logger != nil {
-		db.logger.Warn("刷新资产风险缓存失败", zap.Error(err))
-	}
 }
 
 func (db *DB) ListAssets(limit, offset int, filter AssetListFilter, access store.Access) ([]*Asset, int, error) {

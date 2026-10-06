@@ -45,7 +45,15 @@ import (
 // 308 -> 306: c2_payload_artifacts moved whole - the record and the ownership lookup. Its access check
 // was a third method on the wrapper; it became a composition at the download gate instead, so the
 // table's store never answers a permission question.
-const dbMethodCeiling = 306
+// 306 -> 295: the findings record moved whole - create, get, the two lists, the two counts, update,
+// both deletes, the statistics and the filter suggestions, plus the private transaction helper that
+// collected the conversations a batch delete touched. What stays on the wrapper for that handler is
+// the RBAC trio and the alert subscription, which are not this table's rows. Two more lifecycle writes
+// came along: the retired-conversation source stamp and the project unlink, both of which the
+// conversation and project deletes used to write inline.
+// 295 -> 294: the private best-effort wrapper the findings writes used lost its last caller when the
+// SQL left this package; the adapter in findings_store.go now does that job next to the logger.
+const dbMethodCeiling = 294
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

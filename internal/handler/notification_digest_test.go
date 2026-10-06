@@ -30,7 +30,7 @@ func TestDigestListsFindingsWithoutAConversation(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	if _, err := db.CreateVulnerability(&store.Vulnerability{
+	if _, err := database.NewFindings(db).Create(&store.Vulnerability{
 		Title:    "SQL injection in the export endpoint",
 		Severity: "high",
 		Status:   "open",
@@ -44,7 +44,7 @@ func TestDigestListsFindingsWithoutAConversation(t *testing.T) {
 	}
 	// A second one that *is* attached, so the test would notice a query that only ever
 	// returns one row for some other reason.
-	if _, err := db.CreateVulnerability(&store.Vulnerability{
+	if _, err := database.NewFindings(db).Create(&store.Vulnerability{
 		ConversationID: "c-seeded",
 		Title:          "Exposed keys",
 		Severity:       "critical",

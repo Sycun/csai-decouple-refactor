@@ -15,10 +15,11 @@ import (
 
 // AuditHandler serves platform audit log APIs.
 type AuditHandler struct {
-	logs   *store.AuditLogs           // audit_logs: 这个页面唯一的读来源
-	db     database.ResourceExistence // 只剩"被审计的资源还在不在"那八条查询
-	audit  *audit.Service
-	logger *zap.Logger
+	logs     *store.AuditLogs           // audit_logs: 这个页面唯一的读来源
+	db       database.ResourceExistence // 只剩"被审计的资源还在不在"那七条查询
+	findings audit.FindingLookup        // 漏洞那条存在性检查在 store.Vulnerabilities 里，不在这七条里
+	audit    *audit.Service
+	logger   *zap.Logger
 }
 
 // NewAuditHandler creates an audit log handler.
@@ -26,10 +27,11 @@ func NewAuditHandler(db *database.DB, auditSvc *audit.Service, logger *zap.Logge
 	return &AuditHandler{
 		// Narrow, not a plain assignment: a nil *database.DB has to stay a nil interface, or every
 		// guard below takes the wrong branch.
-		logs:   newAuditLogsStore(db),
-		db:     database.Narrow[database.ResourceExistence](db),
-		audit:  auditSvc,
-		logger: logger,
+		logs:     newAuditLogsStore(db),
+		db:       database.Narrow[database.ResourceExistence](db),
+		findings: newFindingLookup(db),
+		audit:    auditSvc,
+		logger:   logger,
 	}
 }
 
@@ -130,7 +132,7 @@ func (h *AuditHandler) GetLog(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
 		return
 	}
-	audit.ApplyResourceAvailability(h.db, row)
+	audit.ApplyResourceAvailability(h.db, h.findings, row)
 	c.JSON(http.StatusOK, gin.H{"log": row})
 }
 
@@ -169,6 +171,17 @@ func auditFilterForAccess(c *gin.Context, filter store.AuditListFilter) store.Au
 
 // newAuditLogsStore is the only way this package comes by audit_logs. A handler built without a
 // database keeps a nil store, whose methods answer an error instead of panicking.
+// newFindingLookup mirrors newAuditLogsStore's nil rule: a handler built without a connection must
+// leave the findings existence answer at "unknown", and only an untyped nil in the interface field
+// reads that way - a typed (*store.Vulnerabilities)(nil) would pass the guard and then claim the
+// finding is gone.
+func newFindingLookup(db *database.DB) audit.FindingLookup {
+	if db == nil {
+		return nil
+	}
+	return database.NewFindings(db)
+}
+
 func newAuditLogsStore(db *database.DB) *store.AuditLogs {
 	if db == nil {
 		return nil

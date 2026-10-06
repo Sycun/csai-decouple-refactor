@@ -24,13 +24,12 @@ var auditActionsResourceRemoved = map[string]bool{
 
 // ResourceExistenceSource is the read surface this check needs: given the resource an audit row
 // points at, does that row still exist? Declared here because internal/audit is the consumer, and
-// listing eight lookups is cheaper than handing the audit log reader the whole 361-method database.
+// listing seven lookups is cheaper than handing the audit log reader the whole connection wrapper.
 //
 // The handlers' own store interfaces must be a superset of this one, since they pass their storage
 // in - internal/database/stores.go keeps ResourceExistence aligned with it.
 type ResourceExistenceSource interface {
 	ConversationExists(id string) (bool, error)
-	GetVulnerability(id string) (*store.Vulnerability, error)
 	GetBatchQueue(queueID string) (*database.BatchTaskQueueRow, error)
 	GetC2Listener(id string) (*database.C2Listener, error)
 	GetC2Session(id string) (*database.C2Session, error)
@@ -39,12 +38,19 @@ type ResourceExistenceSource interface {
 	GetToolExecution(id string) (*mcp.ToolExecution, error)
 }
 
+// FindingLookup is the findings answer split out, because that read is store.Vulnerabilities.Get now
+// rather than a method on the connection wrapper. A caller without one (no database wired) passes nil
+// and the audit row keeps answering "availability unknown" instead of "this finding is gone".
+type FindingLookup interface {
+	Get(id string) (*store.Vulnerability, error)
+}
+
 // ApplyResourceAvailability sets log.ResourceAvailable when the linked resource can be checked.
 //
 // db is an interface, so callers must pass one built by database.Narrow: a nil *database.DB stored
 // in an interface is not nil, and the guard below would then fall through into method calls on a nil
 // receiver instead of reporting "availability unknown".
-func ApplyResourceAvailability(db ResourceExistenceSource, log *store.AuditLog) {
+func ApplyResourceAvailability(db ResourceExistenceSource, findings FindingLookup, log *store.AuditLog) {
 	if log == nil || strings.TrimSpace(log.ResourceID) == "" {
 		return
 	}
@@ -56,13 +62,13 @@ func ApplyResourceAvailability(db ResourceExistenceSource, log *store.AuditLog) 
 	if db == nil {
 		return
 	}
-	available, known := resourceStillExists(db, log.ResourceType, log.ResourceID)
+	available, known := resourceStillExists(db, findings, log.ResourceType, log.ResourceID)
 	if known {
 		log.ResourceAvailable = &available
 	}
 }
 
-func resourceStillExists(db ResourceExistenceSource, resourceType, resourceID string) (bool, bool) {
+func resourceStillExists(db ResourceExistenceSource, findings FindingLookup, resourceType, resourceID string) (bool, bool) {
 	resourceID = strings.TrimSpace(resourceID)
 	if resourceID == "" {
 		return false, false
@@ -80,7 +86,10 @@ func resourceStillExists(db ResourceExistenceSource, resourceType, resourceID st
 		ok, err := db.ConversationExists(resourceID)
 		return ok, err == nil
 	case "vulnerability":
-		_, err := db.GetVulnerability(resourceID)
+		if findings == nil {
+			return false, false
+		}
+		_, err := findings.Get(resourceID)
 		if err != nil {
 			return false, strings.Contains(err.Error(), "不存在")
 		}

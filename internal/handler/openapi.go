@@ -13,6 +13,7 @@ import (
 // OpenAPIHandler OpenAPI处理器
 type OpenAPIHandler struct {
 	db               database.OpenAPIStore
+	findings         *store.Vulnerabilities // the exported document reads the findings rows directly
 	logger           *zap.Logger
 	conversationHdlr *ConversationHandler
 	agentHdlr        *AgentHandler
@@ -22,6 +23,7 @@ type OpenAPIHandler struct {
 func NewOpenAPIHandler(db *database.DB, logger *zap.Logger, conversationHdlr *ConversationHandler, agentHdlr *AgentHandler) *OpenAPIHandler {
 	return &OpenAPIHandler{
 		db:               database.Narrow[database.OpenAPIStore](db),
+		findings:         newFindingsStore(db),
 		logger:           logger,
 		conversationHdlr: conversationHdlr,
 		agentHdlr:        agentHdlr,
@@ -87,7 +89,7 @@ func (h *OpenAPIHandler) GetConversationResults(c *gin.Context) {
 	}
 
 	// 获取漏洞列表
-	vulnList, err := h.db.ListVulnerabilities(1000, 0, store.VulnerabilityListFilter{ConversationID: conversationID})
+	vulnList, err := h.findings.ListAll(1000, 0, store.VulnerabilityListFilter{ConversationID: conversationID})
 	if err != nil {
 		h.logger.Warn("获取漏洞列表失败", zap.Error(err))
 		vulnList = []*store.Vulnerability{}
