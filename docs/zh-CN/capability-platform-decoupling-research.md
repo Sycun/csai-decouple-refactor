@@ -3355,7 +3355,7 @@ P4 硬网络边界、P4 内嵌 CPython、P5 registry / 气隙包 / 引爆自动�
 `git show HEAD:internal/database/vulnerability.go` 逐字节取回再改名导出）。
 教训：跨包搬类型时**先在新家写好，再删老家**，删的那条正则必须限定在老家文件。
 
-### 12.2 交付方式：二开分叉，任务结束推自己的 fork，不提 PR
+### 12.2 交付方式：二开分叉，任务结束推自己的独立仓库，不提 PR
 
 **曾经的风险**（这一版报告写完时的状态）：`git log -1` 还指向重构前的 `470eb5e`，
 全部改动（约 260 个路径）只存在于工作区——一次 `git checkout .` / `git clean -fd` 就不可恢复，
@@ -3365,18 +3365,24 @@ P4 硬网络边界、P4 内嵌 CPython、P5 registry / 气隙包 / 引爆自动�
 每轮任务结束上传到用户自己的 GitHub，**不向任何仓库提 PR**（除非用户明确说要）。落地口径：
 
 ```
-mine    https://github.com/Sycun/CyberStrikeAI.git   # 我的 fork，交付推这里
-origin  https://github.com/AIPentest/CyberStrikeAI.git  # 上游父仓库，只读，永不推
+decouple  https://github.com/Sycun/csai-decouple-refactor.git  # 重构线交付仓（唯一），每轮任务结束推这里
+mine      https://github.com/Sycun/CyberStrikeAI.git           # 历史交付仓（fork）：2026-10-07 起停用、本地 remote 已移除——fork 属开发线（PR 用），重构线不得再推
+origin    https://github.com/AIPentest/CyberStrikeAI.git       # 上游父仓库，只读，永不推
 ```
 
-- 提交 `14fde40`（319 路径，+45283/-3235）→ `git push mine main` 是 **fast-forward**
-  （推之前 `git ls-remote` 确认过 `mine/main` 恰等于本地 HEAD `470eb5e`），没有 `--force`、没有改写历史。
-- 复验：`mine/main` = `14fde40`；`origin/main` 仍是 `470eb5e`（未被触碰）；未创建任何 PR。
+- 早期交付曾推 `mine`：提交 `14fde40`（319 路径，+45283/-3235）→ `git push mine main` 是 **fast-forward**
+  （推前 `git ls-remote` 确认过 `mine/main` 恰等于本地 HEAD `470eb5e`），没有 `--force`、没有改写历史；
+  当时复验 `mine/main` = `14fde40`、`origin/main` 仍为 `470eb5e`、未创建 PR。
+- **2026-10-07 两仓分离归位**：此前推送口径混用（decouple 与 mine 成对推），fork 的 `main` 因此混入
+  重构线内容。经用户确认后，fork `main` 以 `--force-with-lease` 强制归位为上游镜像
+  （= `AIPentest/CyberStrikeAI` 的 main `d2084a94`；同一批重构提交在 `csai-decouple-refactor` 上均有
+  副本，未丢任何提交），重构线此后**只推 `decouple`**，本地 `mine` remote 同步移除。
+- 复验口径：`decouple/main` = 本地 HEAD；`origin/main` 未被触碰（上游只读）；fork 的 `main` 与上游逐字节一致；未创建任何 PR。
 - 仓库级 `user.name` / `user.email` 设为 GitHub noreply 身份（`165354365+Sycun@users.noreply.github.com`），
   只写进 `.git/config`，不动全局配置。
 - 提交前的两道人工检查：`git status --short` 看清包含什么，以及对暂存清单按
   `config.yaml|.env|*.db|secret|token|credential|*.backup` 过滤（`.gitignore` 已挡运行期数据与本地配置）。
-- 往后的每一轮交付都按这个口径落远端快照；若 `mine/main` 已领先本地，先问用户而不是 force 或 rebase。
+- 往后的每一轮交付都按这个口径落远端快照；若 `decouple/main` 已领先本地，先问用户而不是 force 或 rebase。
 
 ### 12.3 下一轮的第一件事（已排好，直接接着做）
 
