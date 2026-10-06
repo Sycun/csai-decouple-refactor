@@ -18,6 +18,7 @@ import (
 	"cyberstrike-ai/internal/c2"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -1194,12 +1195,12 @@ func osCreate(path string) (*os.File, error) {
 	return os.Create(path)
 }
 
-func c2AccessFromContext(c *gin.Context) database.RBACListAccess {
+func c2AccessFromContext(c *gin.Context) store.Access {
 	session, ok := security.CurrentSession(c)
 	if !ok {
-		return database.RBACListAccess{}
+		return store.Access{}
 	}
-	return database.RBACListAccess{UserID: session.UserID, Scope: session.Scope}
+	return store.Access{UserID: session.UserID, Scope: session.Scope}
 }
 
 func (h *C2Handler) canAccessProject(c *gin.Context, projectID string) bool {

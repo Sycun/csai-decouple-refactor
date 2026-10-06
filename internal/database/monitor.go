@@ -8,6 +8,7 @@ import (
 
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/sqltime"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -121,10 +122,10 @@ func sqlNullString(s string) sql.NullString {
 
 // CountToolExecutions 统计工具执行记录总数
 func (db *DB) CountToolExecutions(status, toolName string) (int, error) {
-	return db.CountToolExecutionsForAccess(status, toolName, RBACListAccess{Scope: RBACScopeAll})
+	return db.CountToolExecutionsForAccess(status, toolName, store.Access{Scope: RBACScopeAll})
 }
 
-func (db *DB) CountToolExecutionsForAccess(status, toolName string, access RBACListAccess) (int, error) {
+func (db *DB) CountToolExecutionsForAccess(status, toolName string, access store.Access) (int, error) {
 	query := `SELECT COUNT(*) FROM tool_executions`
 	args := []interface{}{}
 	conditions := []string{}
@@ -380,7 +381,7 @@ func (db *DB) LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error) {
 	return result, nil
 }
 
-func (db *DB) LoadToolStatsSummaryForAccess(topN int, access RBACListAccess) (*ToolStatsSummaryResult, error) {
+func (db *DB) LoadToolStatsSummaryForAccess(topN int, access store.Access) (*ToolStatsSummaryResult, error) {
 	if access.Scope == RBACScopeAll {
 		return db.LoadToolStatsSummary(topN)
 	}
@@ -432,7 +433,7 @@ func (db *DB) LoadToolStatsSummaryForAccess(topN int, access RBACListAccess) (*T
 	return result, rows.Err()
 }
 
-func (db *DB) LoadToolExecutionListPageForAccess(offset, limit int, status, toolName string, access RBACListAccess) ([]*mcp.ToolExecution, error) {
+func (db *DB) LoadToolExecutionListPageForAccess(offset, limit int, status, toolName string, access store.Access) ([]*mcp.ToolExecution, error) {
 	if limit <= 0 {
 		limit = 20
 	}
@@ -487,7 +488,7 @@ func (db *DB) LoadToolExecutionListPageForAccess(offset, limit int, status, tool
 	return executions, nil
 }
 
-func appendToolExecutionAccessSQL(query string, args []interface{}, access RBACListAccess, hasWhere bool) (string, []interface{}) {
+func appendToolExecutionAccessSQL(query string, args []interface{}, access store.Access, hasWhere bool) (string, []interface{}) {
 	if access.Scope == RBACScopeAll {
 		return query, args
 	}
@@ -1092,5 +1093,5 @@ func (db *DB) DecreaseToolStats(toolName string, totalCalls, successCalls, faile
 
 // LoadToolExecutionListPage 分页加载执行记录列表（不含 arguments/result，供监控列表使用）
 func (db *DB) LoadToolExecutionListPage(offset, limit int, status, toolName string) ([]*mcp.ToolExecution, error) {
-	return db.LoadToolExecutionListPageForAccess(offset, limit, status, toolName, RBACListAccess{Scope: RBACScopeAll})
+	return db.LoadToolExecutionListPageForAccess(offset, limit, status, toolName, store.Access{Scope: RBACScopeAll})
 }

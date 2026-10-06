@@ -675,12 +675,12 @@ func registerC2EventTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 	})
 }
 
-func c2ToolAccess(ctx context.Context) database.RBACListAccess {
+func c2ToolAccess(ctx context.Context) store.Access {
 	principal, ok := authctx.PrincipalFromContext(ctx)
 	if !ok {
-		return database.RBACListAccess{Scope: database.RBACScopeAssigned}
+		return store.Access{Scope: database.RBACScopeAssigned}
 	}
-	return database.RBACListAccess{UserID: principal.UserID, Scope: principal.ScopeFor("c2:read")}
+	return store.Access{UserID: principal.UserID, Scope: principal.ScopeFor("c2:read")}
 }
 
 // ============================================================================

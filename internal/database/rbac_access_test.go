@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"cyberstrike-ai/internal/mcp"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -32,7 +33,7 @@ func TestRBACToolExecutionOwnershipAccess(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	access := RBACListAccess{UserID: "u1", Scope: RBACScopeAssigned}
+	access := store.Access{UserID: "u1", Scope: RBACScopeAssigned}
 	rows, err := db.LoadToolExecutionListPageForAccess(0, 20, "", "", access)
 	if err != nil {
 		t.Fatal(err)
@@ -203,7 +204,7 @@ func TestRBACVulnerabilityAccessInheritsProject(t *testing.T) {
 	v1, _ := db.CreateVulnerability(&Vulnerability{ProjectID: p1.ID, Title: "v1", Severity: "high"})
 	v2, _ := db.CreateVulnerability(&Vulnerability{ProjectID: p2.ID, Title: "v2", Severity: "high"})
 
-	items, err := db.ListVulnerabilitiesForAccess(50, 0, VulnerabilityListFilter{}, RBACListAccess{UserID: user.ID, Scope: RBACScopeAssigned})
+	items, err := db.ListVulnerabilitiesForAccess(50, 0, VulnerabilityListFilter{}, store.Access{UserID: user.ID, Scope: RBACScopeAssigned})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +450,7 @@ func TestRBACC2AccessInheritsListener(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	access := RBACListAccess{UserID: "u1", Scope: RBACScopeOwn}
+	access := store.Access{UserID: "u1", Scope: RBACScopeOwn}
 	listeners, err := db.ListC2ListenersForAccess(access, "")
 	if err != nil {
 		t.Fatal(err)
@@ -577,7 +578,7 @@ func TestRBACC2AssignedDeleteIsScoped(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	access := RBACListAccess{UserID: user.ID, Scope: RBACScopeAssigned}
+	access := store.Access{UserID: user.ID, Scope: RBACScopeAssigned}
 	n, err := db.DeleteC2TasksByIDsForAccess([]string{"t_assigned", "t_hidden"}, access)
 	if err != nil {
 		t.Fatal(err)

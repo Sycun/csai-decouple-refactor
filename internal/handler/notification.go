@@ -171,21 +171,21 @@ func i18nText(english bool, zh string, en string) string {
 	return zh
 }
 
-func notificationAccessFromContext(c *gin.Context) database.RBACListAccess {
+func notificationAccessFromContext(c *gin.Context) store.Access {
 	session, ok := security.CurrentSession(c)
 	if !ok {
-		return database.RBACListAccess{}
+		return store.Access{}
 	}
-	return database.RBACListAccess{UserID: session.UserID, Scope: session.Scope}
+	return store.Access{UserID: session.UserID, Scope: session.Scope}
 }
 
 // storeAccess re-expresses the legacy read scope for the domain stores, which do not
 // import internal/database: the scope strings are the same values, declared in each place.
-func storeAccess(access database.RBACListAccess) store.Access {
+func storeAccess(access store.Access) store.Access {
 	return store.Access{UserID: access.UserID, Scope: access.Scope}
 }
 
-func (h *NotificationHandler) loadPendingHITLItems(limit int, english bool, access database.RBACListAccess) ([]NotificationSummaryItem, error) {
+func (h *NotificationHandler) loadPendingHITLItems(limit int, english bool, access store.Access) ([]NotificationSummaryItem, error) {
 	if h.hitl == nil {
 		return []NotificationSummaryItem{}, nil
 	}
@@ -217,7 +217,7 @@ func (h *NotificationHandler) loadPendingHITLItems(limit int, english bool, acce
 	return items, nil
 }
 
-func (h *NotificationHandler) loadVulnerabilityItems(sinceMs int64, limit int, english bool, access database.RBACListAccess) ([]NotificationSummaryItem, map[string]int, error) {
+func (h *NotificationHandler) loadVulnerabilityItems(sinceMs int64, limit int, english bool, access store.Access) ([]NotificationSummaryItem, map[string]int, error) {
 	sinceSec := normalizedSinceSec(sinceMs)
 	items := make([]NotificationSummaryItem, 0, limit)
 	counts := map[string]int{
@@ -278,7 +278,7 @@ func (h *NotificationHandler) loadVulnerabilityItems(sinceMs int64, limit int, e
 }
 
 // loadC2SessionOnlineEvents 新会话上线（c2_events：session + critical，与 Manager.IngestCheckIn 一致）
-func (h *NotificationHandler) loadC2SessionOnlineEvents(sinceMs int64, limit int, english bool, access database.RBACListAccess) ([]NotificationSummaryItem, int, error) {
+func (h *NotificationHandler) loadC2SessionOnlineEvents(sinceMs int64, limit int, english bool, access store.Access) ([]NotificationSummaryItem, int, error) {
 	sinceSec := normalizedSinceSec(sinceMs)
 	events, err := h.db.ListC2EventsForAccess(database.ListC2EventsFilter{
 		Category: "session",
@@ -350,7 +350,7 @@ func (h *NotificationHandler) loadFailedExecutionItems(sinceMs int64, limit int,
 	return items, count, nil
 }
 
-func (h *NotificationHandler) summarizeLongRunningTasks(threshold time.Duration, english bool, access database.RBACListAccess) ([]NotificationSummaryItem, int) {
+func (h *NotificationHandler) summarizeLongRunningTasks(threshold time.Duration, english bool, access store.Access) ([]NotificationSummaryItem, int) {
 	if h.agentHandler == nil || h.agentHandler.tasks == nil {
 		return nil, 0
 	}
@@ -382,7 +382,7 @@ func (h *NotificationHandler) summarizeLongRunningTasks(threshold time.Duration,
 	return items, len(items)
 }
 
-func (h *NotificationHandler) summarizeCompletedTasksSince(sinceMs int64, limit int, english bool, access database.RBACListAccess) ([]NotificationSummaryItem, int) {
+func (h *NotificationHandler) summarizeCompletedTasksSince(sinceMs int64, limit int, english bool, access store.Access) ([]NotificationSummaryItem, int) {
 	if h.agentHandler == nil || h.agentHandler.tasks == nil {
 		return nil, 0
 	}
@@ -649,7 +649,7 @@ func (h *NotificationHandler) GetSummary(c *gin.Context) {
 	})
 }
 
-func (h *NotificationHandler) notificationConversationAllowed(access database.RBACListAccess, conversationID string) bool {
+func (h *NotificationHandler) notificationConversationAllowed(access store.Access, conversationID string) bool {
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
 		return access.Scope == database.RBACScopeAll

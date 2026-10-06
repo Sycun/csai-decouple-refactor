@@ -12,6 +12,7 @@ import (
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/mcp/builtin"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -414,20 +415,20 @@ func stringSliceArg(raw interface{}) ([]string, error) {
 	return values, nil
 }
 
-func assetAccessOnly(ctx context.Context, permission string) database.RBACListAccess {
+func assetAccessOnly(ctx context.Context, permission string) store.Access {
 	principal, ok := authctx.PrincipalFromContext(ctx)
 	if !ok {
-		return database.RBACListAccess{}
+		return store.Access{}
 	}
-	return database.RBACListAccess{UserID: principal.UserID, Scope: principal.ScopeFor(permission)}
+	return store.Access{UserID: principal.UserID, Scope: principal.ScopeFor(permission)}
 }
 
-func assetAccessFromToolContext(ctx context.Context, permission string) (database.RBACListAccess, string, bool) {
+func assetAccessFromToolContext(ctx context.Context, permission string) (store.Access, string, bool) {
 	principal, ok := authctx.PrincipalFromContext(ctx)
 	if !ok {
-		return database.RBACListAccess{}, "", false
+		return store.Access{}, "", false
 	}
-	access := database.RBACListAccess{UserID: principal.UserID, Scope: principal.ScopeFor(permission)}
+	access := store.Access{UserID: principal.UserID, Scope: principal.ScopeFor(permission)}
 	return access, principal.UserID, access.Scope == database.RBACScopeAll
 }
 

@@ -17,6 +17,7 @@ import (
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/monitor"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -205,7 +206,7 @@ func (h *MonitorHandler) loadExecutions() []*mcp.ToolExecution {
 	return executions
 }
 
-func (h *MonitorHandler) loadExecutionListWithPagination(page, pageSize int, status, toolName string, access database.RBACListAccess) ([]*mcp.ToolExecution, int) {
+func (h *MonitorHandler) loadExecutionListWithPagination(page, pageSize int, status, toolName string, access store.Access) ([]*mcp.ToolExecution, int) {
 	if h.db == nil {
 		allExecutions := filterToolExecutionsForAccess(h.mcpServer.GetAllExecutions(), access, h.db)
 		if status != "" || toolName != "" {
@@ -258,7 +259,7 @@ func (h *MonitorHandler) loadExecutionListWithPagination(page, pageSize int, sta
 	return executions, total
 }
 
-func (h *MonitorHandler) loadExecutionListWithPaginationFromMemory(page, pageSize int, status, toolName string, access database.RBACListAccess) ([]*mcp.ToolExecution, int) {
+func (h *MonitorHandler) loadExecutionListWithPaginationFromMemory(page, pageSize int, status, toolName string, access store.Access) ([]*mcp.ToolExecution, int) {
 	allExecutions := filterToolExecutionsForAccess(h.mcpServer.GetAllExecutions(), access, h.db)
 	if status != "" || toolName != "" {
 		filtered := make([]*mcp.ToolExecution, 0)
@@ -318,7 +319,7 @@ type conversationAccessLookup interface {
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 
-func filterToolExecutionsForAccess(executions []*mcp.ToolExecution, access database.RBACListAccess, db conversationAccessLookup) []*mcp.ToolExecution {
+func filterToolExecutionsForAccess(executions []*mcp.ToolExecution, access store.Access, db conversationAccessLookup) []*mcp.ToolExecution {
 	if access.Scope == database.RBACScopeAll {
 		return executions
 	}
@@ -331,7 +332,7 @@ func filterToolExecutionsForAccess(executions []*mcp.ToolExecution, access datab
 	return out
 }
 
-func toolExecutionVisible(exec *mcp.ToolExecution, access database.RBACListAccess, db conversationAccessLookup) bool {
+func toolExecutionVisible(exec *mcp.ToolExecution, access store.Access, db conversationAccessLookup) bool {
 	if exec == nil || strings.TrimSpace(access.UserID) == "" {
 		return false
 	}

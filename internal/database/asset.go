@@ -2,6 +2,7 @@ package database
 
 import (
 	"cyberstrike-ai/internal/sqltime"
+	"cyberstrike-ai/internal/store"
 	"database/sql"
 
 	"encoding/json"
@@ -285,7 +286,7 @@ func assetDedupKey(a *Asset) string {
 	return strings.Join([]string{target, strconv.Itoa(a.Port), a.Protocol}, "|")
 }
 
-func appendAssetAccess(query string, args []interface{}, access RBACListAccess, alias string) (string, []interface{}) {
+func appendAssetAccess(query string, args []interface{}, access store.Access, alias string) (string, []interface{}) {
 	if strings.TrimSpace(access.UserID) == "" || access.Scope == RBACScopeAll {
 		return query, args
 	}
@@ -397,7 +398,7 @@ func (db *DB) UpsertAssets(assets []*Asset, ownerUserID string, allowGlobal ...b
 	return result, nil
 }
 
-func assetWhere(filter AssetListFilter, access RBACListAccess) (string, []interface{}) {
+func assetWhere(filter AssetListFilter, access store.Access) (string, []interface{}) {
 	query := " WHERE 1=1"
 	args := []interface{}{}
 	if q := strings.TrimSpace(filter.Search); q != "" {
@@ -587,7 +588,7 @@ const assetSelectColumns = `assets.id,COALESCE(assets.project_id,''),COALESCE(p.
 
 // MarkAssetScanned links an asset to the conversation or batch subtask created from it.
 // The link lets the asset list show the latest scan time and vulnerabilities produced by that scan.
-func (db *DB) MarkAssetScanned(id, conversationID, queueID, taskID string, access RBACListAccess) error {
+func (db *DB) MarkAssetScanned(id, conversationID, queueID, taskID string, access store.Access) error {
 	where, args := appendAssetAccess(" WHERE id = ?", []interface{}{strings.TrimSpace(id)}, access, "assets")
 	res, err := db.Exec(`UPDATE assets SET last_scan_at=?,last_scan_conversation_id=?,last_scan_queue_id=?,last_scan_task_id=?,updated_at=?`+where,
 		append([]interface{}{time.Now(), strings.TrimSpace(conversationID), strings.TrimSpace(queueID), strings.TrimSpace(taskID), time.Now()}, args...)...)
@@ -608,7 +609,7 @@ func (db *DB) MarkAssetScanned(id, conversationID, queueID, taskID string, acces
 // the asset was launched as a batch task, keep its task/queue link only when
 // that task belongs to the current conversation; a later ad-hoc chat scan must
 // not retain stale task associations.
-func (db *DB) CompleteAssetScan(id, conversationID string, access RBACListAccess) error {
+func (db *DB) CompleteAssetScan(id, conversationID string, access store.Access) error {
 	id = strings.TrimSpace(id)
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
@@ -753,7 +754,7 @@ func (db *DB) refreshAssetRiskCacheForConversationsBestEffort(conversationIDs ..
 	}
 }
 
-func (db *DB) ListAssets(limit, offset int, filter AssetListFilter, access RBACListAccess) ([]*Asset, int, error) {
+func (db *DB) ListAssets(limit, offset int, filter AssetListFilter, access store.Access) ([]*Asset, int, error) {
 	if limit < 1 {
 		limit = 20
 	}
@@ -787,7 +788,7 @@ func (db *DB) ListAssets(limit, offset int, filter AssetListFilter, access RBACL
 
 // ListAssetsForOperation resolves the complete filtered selection used by
 // cross-page bulk actions. The caller supplies a strict upper bound.
-func (db *DB) ListAssetsForOperation(limit int, filter AssetListFilter, access RBACListAccess) ([]*Asset, int, error) {
+func (db *DB) ListAssetsForOperation(limit int, filter AssetListFilter, access store.Access) ([]*Asset, int, error) {
 	if limit < 1 || limit > 10000 {
 		limit = 10000
 	}
@@ -850,12 +851,12 @@ func assetOrderBy(sortBy, sortOrder string) string {
 	return expression + " " + direction + ", assets.id ASC"
 }
 
-func (db *DB) GetAsset(id string, access RBACListAccess) (*Asset, error) {
+func (db *DB) GetAsset(id string, access store.Access) (*Asset, error) {
 	query, args := appendAssetAccess("SELECT "+assetSelectColumns+" FROM assets LEFT JOIN projects p ON p.id=assets.project_id WHERE assets.id = ?", []interface{}{id}, access, "assets")
 	return scanAsset(db.QueryRow(query, args...))
 }
 
-func (db *DB) UpdateAsset(id string, a *Asset, access RBACListAccess) error {
+func (db *DB) UpdateAsset(id string, a *Asset, access store.Access) error {
 	normalizeAsset(a)
 	if err := validateAsset(a); err != nil {
 		return err
@@ -929,7 +930,7 @@ func normalizeBulkTags(tags []string) ([]string, error) {
 }
 
 // UpdateAssetsBulk atomically applies operational metadata to a selected set.
-func (db *DB) UpdateAssetsBulk(ids []string, patch AssetBulkPatch, access RBACListAccess) (int, error) {
+func (db *DB) UpdateAssetsBulk(ids []string, patch AssetBulkPatch, access store.Access) (int, error) {
 	unique := normalizeAssetIDs(ids)
 	if len(unique) == 0 {
 		return 0, fmt.Errorf("资产列表不能为空")
@@ -1041,7 +1042,7 @@ func valueOrEmpty(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
-func (db *DB) DeleteAssets(ids []string, access RBACListAccess) (int, error) {
+func (db *DB) DeleteAssets(ids []string, access store.Access) (int, error) {
 	unique := normalizeAssetIDs(ids)
 	if len(unique) == 0 {
 		return 0, fmt.Errorf("资产列表不能为空")
@@ -1081,7 +1082,7 @@ func (db *DB) DeleteAssets(ids []string, access RBACListAccess) (int, error) {
 
 // MergeAssets atomically updates the surviving asset and removes duplicates.
 // Separate access scopes preserve permission-specific RBAC boundaries.
-func (db *DB) MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, deleteAccess RBACListAccess) (int, error) {
+func (db *DB) MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, deleteAccess store.Access) (int, error) {
 	if primary == nil || strings.TrimSpace(primary.ID) == "" {
 		return 0, fmt.Errorf("主资产不能为空")
 	}
@@ -1150,7 +1151,7 @@ func (db *DB) MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, de
 // UpdateAssetsProject atomically replaces the project binding for every asset.
 // It refuses the whole update when any requested asset is missing or outside
 // the caller's access scope, so a bulk action can never partially succeed.
-func (db *DB) UpdateAssetsProject(ids []string, projectID string, access RBACListAccess) (int, error) {
+func (db *DB) UpdateAssetsProject(ids []string, projectID string, access store.Access) (int, error) {
 	unique := normalizeAssetIDs(ids)
 	if len(unique) == 0 {
 		return 0, fmt.Errorf("资产列表不能为空")
@@ -1196,7 +1197,7 @@ func (db *DB) UpdateAssetsProject(ids []string, projectID string, access RBACLis
 	return int(updated), nil
 }
 
-func (db *DB) DeleteAsset(id string, access RBACListAccess) error {
+func (db *DB) DeleteAsset(id string, access store.Access) error {
 	where, args := appendAssetAccess(" WHERE id = ?", []interface{}{id}, access, "assets")
 	res, err := db.Exec("DELETE FROM assets"+where, args...)
 	if err != nil {
@@ -1209,7 +1210,7 @@ func (db *DB) DeleteAsset(id string, access RBACListAccess) error {
 	return nil
 }
 
-func (db *DB) GetAssetStats(access RBACListAccess, requestedDays ...int) (map[string]interface{}, error) {
+func (db *DB) GetAssetStats(access store.Access, requestedDays ...int) (map[string]interface{}, error) {
 	days := 30
 	if len(requestedDays) > 0 && (requestedDays[0] == 7 || requestedDays[0] == 30 || requestedDays[0] == 90) {
 		days = requestedDays[0]

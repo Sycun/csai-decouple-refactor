@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"cyberstrike-ai/internal/mcp"
+	"cyberstrike-ai/internal/store"
 	"database/sql"
 	"time"
 )
@@ -60,18 +61,18 @@ var _ AgentStore = (*DB)(nil)
 // AssetStore is the persistence surface required by AssetHandler.
 type AssetStore interface {
 	BatchTaskBelongsToQueue(taskID, queueID string) bool
-	DeleteAsset(id string, access RBACListAccess) error
-	DeleteAssets(ids []string, access RBACListAccess) (int, error)
-	GetAsset(id string, access RBACListAccess) (*Asset, error)
-	GetAssetStats(access RBACListAccess, requestedDays ...int) (map[string]interface{}, error)
+	DeleteAsset(id string, access store.Access) error
+	DeleteAssets(ids []string, access store.Access) (int, error)
+	GetAsset(id string, access store.Access) (*Asset, error)
+	GetAssetStats(access store.Access, requestedDays ...int) (map[string]interface{}, error)
 	GetProject(id string) (*Project, error)
-	ListAssets(limit, offset int, filter AssetListFilter, access RBACListAccess) ([]*Asset, int, error)
-	ListAssetsForOperation(limit int, filter AssetListFilter, access RBACListAccess) ([]*Asset, int, error)
-	MarkAssetScanned(id, conversationID, queueID, taskID string, access RBACListAccess) error
-	MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, deleteAccess RBACListAccess) (int, error)
-	UpdateAsset(id string, a *Asset, access RBACListAccess) error
-	UpdateAssetsBulk(ids []string, patch AssetBulkPatch, access RBACListAccess) (int, error)
-	UpdateAssetsProject(ids []string, projectID string, access RBACListAccess) (int, error)
+	ListAssets(limit, offset int, filter AssetListFilter, access store.Access) ([]*Asset, int, error)
+	ListAssetsForOperation(limit int, filter AssetListFilter, access store.Access) ([]*Asset, int, error)
+	MarkAssetScanned(id, conversationID, queueID, taskID string, access store.Access) error
+	MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, deleteAccess store.Access) (int, error)
+	UpdateAsset(id string, a *Asset, access store.Access) error
+	UpdateAssetsBulk(ids []string, patch AssetBulkPatch, access store.Access) (int, error)
+	UpdateAssetsProject(ids []string, projectID string, access store.Access) (int, error)
 	UpsertAssets(assets []*Asset, ownerUserID string, allowGlobal ...bool) (AssetImportResult, error)
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
@@ -200,18 +201,18 @@ var _ ConversationStore = (*DB)(nil)
 // MonitorStore is the persistence surface required by MonitorHandler.
 type MonitorStore interface {
 	CountToolExecutions(status, toolName string) (int, error)
-	CountToolExecutionsForAccess(status, toolName string, access RBACListAccess) (int, error)
+	CountToolExecutionsForAccess(status, toolName string, access store.Access) (int, error)
 	DecreaseToolStats(toolName string, totalCalls, successCalls, failedCalls int) error
 	DeleteToolExecution(id string) error
 	DeleteToolExecutions(ids []string) error
 	GetToolExecution(id string) (*mcp.ToolExecution, error)
 	GetToolExecutionsByIds(ids []string) ([]*mcp.ToolExecution, error)
 	LoadCallsTimeline(since time.Time, dailyBuckets bool) ([]CallsTimelineBucket, error)
-	LoadToolExecutionListPageForAccess(offset, limit int, status, toolName string, access RBACListAccess) ([]*mcp.ToolExecution, error)
+	LoadToolExecutionListPageForAccess(offset, limit int, status, toolName string, access store.Access) ([]*mcp.ToolExecution, error)
 	LoadToolExecutionsWithPagination(offset, limit int, status, toolName string) ([]*mcp.ToolExecution, error)
 	LoadToolStats() (map[string]*mcp.ToolStats, error)
 	LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error)
-	LoadToolStatsSummaryForAccess(topN int, access RBACListAccess) (*ToolStatsSummaryResult, error)
+	LoadToolStatsSummaryForAccess(topN int, access store.Access) (*ToolStatsSummaryResult, error)
 	UserCanAccessToolExecution(userID, scope, executionID string) bool
 	// Reached through handler.toolExecutionVisible, which takes the handler's storage as a
 	// one-method interface: an execution with no owner match is visible iff its conversation is.
@@ -223,7 +224,7 @@ var _ MonitorStore = (*DB)(nil)
 
 // NotificationStore is the persistence surface required by NotificationHandler.
 type NotificationStore interface {
-	ListC2EventsForAccess(filter ListC2EventsFilter, access RBACListAccess) ([]*C2Event, error)
+	ListC2EventsForAccess(filter ListC2EventsFilter, access store.Access) ([]*C2Event, error)
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 	Begin() (*sql.Tx, error)
 	Query(query string, args ...any) (*sql.Rows, error)
@@ -328,15 +329,15 @@ var _ RobotStore = (*DB)(nil)
 // VulnerabilityStore is the persistence surface required by VulnerabilityHandler.
 type VulnerabilityStore interface {
 	AssignResourceToUser(userID, resourceType, resourceID string) error
-	CountVulnerabilitiesForAccess(filter VulnerabilityListFilter, access RBACListAccess) (int, error)
+	CountVulnerabilitiesForAccess(filter VulnerabilityListFilter, access store.Access) (int, error)
 	CreateVulnerability(vuln *Vulnerability) (*Vulnerability, error)
-	DeleteVulnerabilitiesByFilterForAccess(filter VulnerabilityListFilter, access RBACListAccess) (int64, error)
+	DeleteVulnerabilitiesByFilterForAccess(filter VulnerabilityListFilter, access store.Access) (int64, error)
 	DeleteVulnerability(id string) error
 	GetVulnerability(id string) (*Vulnerability, error)
 	GetVulnerabilityAlertSubscription(userID string) (*VulnerabilityAlertSubscription, error)
-	GetVulnerabilityFilterOptionsForAccess(access RBACListAccess) (map[string][]string, error)
-	GetVulnerabilityStatsForAccess(filter VulnerabilityListFilter, access RBACListAccess) (map[string]interface{}, error)
-	ListVulnerabilitiesForAccess(limit, offset int, filter VulnerabilityListFilter, access RBACListAccess) ([]*Vulnerability, error)
+	GetVulnerabilityFilterOptionsForAccess(access store.Access) (map[string][]string, error)
+	GetVulnerabilityStatsForAccess(filter VulnerabilityListFilter, access store.Access) (map[string]interface{}, error)
+	ListVulnerabilitiesForAccess(limit, offset int, filter VulnerabilityListFilter, access store.Access) ([]*Vulnerability, error)
 	SetResourceOwner(resourceType, resourceID, userID string) error
 	UpdateVulnerability(id string, vuln *Vulnerability) error
 	UpsertVulnerabilityAlertSubscription(userID string, enabled bool, minSeverity string) (*VulnerabilityAlertSubscription, error)

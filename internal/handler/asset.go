@@ -9,6 +9,7 @@ import (
 
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -27,18 +28,18 @@ func NewAssetHandler(db *database.DB, logger *zap.Logger) *AssetHandler {
 	return &AssetHandler{db: database.Narrow[database.AssetStore](db), logger: logger}
 }
 
-func assetAccess(c *gin.Context) database.RBACListAccess {
+func assetAccess(c *gin.Context) store.Access {
 	if session, ok := security.CurrentSession(c); ok {
-		return database.RBACListAccess{UserID: session.UserID, Scope: session.Scope}
+		return store.Access{UserID: session.UserID, Scope: session.Scope}
 	}
-	return database.RBACListAccess{}
+	return store.Access{}
 }
 
-func assetAccessForPermission(c *gin.Context, permission string) database.RBACListAccess {
+func assetAccessForPermission(c *gin.Context, permission string) store.Access {
 	if session, ok := security.CurrentSession(c); ok {
-		return database.RBACListAccess{UserID: session.UserID, Scope: session.ScopeFor(permission)}
+		return store.Access{UserID: session.UserID, Scope: session.ScopeFor(permission)}
 	}
-	return database.RBACListAccess{}
+	return store.Access{}
 }
 
 type importAssetsRequest struct {

@@ -1,6 +1,7 @@
 package database
 
 import (
+	"cyberstrike-ai/internal/store"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -294,7 +295,7 @@ func (db *DB) ListC2Listeners() ([]*C2Listener, error) {
 }
 
 // ListC2ListenersForAccess lists listeners visible to the resolved RBAC scope.
-func (db *DB) ListC2ListenersForAccess(access RBACListAccess, projectID string) ([]*C2Listener, error) {
+func (db *DB) ListC2ListenersForAccess(access store.Access, projectID string) ([]*C2Listener, error) {
 	conditions := []string{"1=1"}
 	args := []interface{}{}
 	if projectID = strings.TrimSpace(projectID); projectID == ProjectFilterUnbound {
@@ -340,7 +341,7 @@ func (db *DB) ListC2ListenersForAccess(access RBACListAccess, projectID string) 
 	return list, rows.Err()
 }
 
-func appendC2ListenerAccessFilter(conditions *[]string, args *[]interface{}, access RBACListAccess) {
+func appendC2ListenerAccessFilter(conditions *[]string, args *[]interface{}, access store.Access) {
 	if access.Scope == RBACScopeAll {
 		return
 	}
@@ -633,7 +634,7 @@ func (db *DB) ListC2Sessions(filter ListC2SessionsFilter) ([]*C2Session, error) 
 }
 
 // ListC2SessionsForAccess lists sessions whose parent listener is visible.
-func (db *DB) ListC2SessionsForAccess(filter ListC2SessionsFilter, access RBACListAccess) ([]*C2Session, error) {
+func (db *DB) ListC2SessionsForAccess(filter ListC2SessionsFilter, access store.Access) ([]*C2Session, error) {
 	conditions, args := buildC2SessionsWhere(filter)
 	appendC2SessionAccessFilter(&conditions, &args, access)
 	query := `
@@ -724,7 +725,7 @@ func (db *DB) scanC2SessionRows(rows *sql.Rows) ([]*C2Session, error) {
 	return list, rows.Err()
 }
 
-func appendC2SessionAccessFilter(conditions *[]string, args *[]interface{}, access RBACListAccess) {
+func appendC2SessionAccessFilter(conditions *[]string, args *[]interface{}, access store.Access) {
 	if access.Scope == RBACScopeAll {
 		return
 	}
@@ -798,7 +799,7 @@ func (db *DB) DeleteC2SessionsByIDs(ids []string) (int64, error) {
 	return res.RowsAffected()
 }
 
-func (db *DB) DeleteC2SessionsByIDsForAccess(ids []string, access RBACListAccess) (int64, error) {
+func (db *DB) DeleteC2SessionsByIDsForAccess(ids []string, access store.Access) (int64, error) {
 	if access.Scope == RBACScopeAll {
 		return db.DeleteC2SessionsByIDs(ids)
 	}
@@ -1023,7 +1024,7 @@ func buildC2TasksWhere(filter ListC2TasksFilter) (where string, args []interface
 	return strings.Join(conditions, " AND "), args
 }
 
-func appendC2TaskAccessFilter(conditions *[]string, args *[]interface{}, access RBACListAccess) {
+func appendC2TaskAccessFilter(conditions *[]string, args *[]interface{}, access store.Access) {
 	if access.Scope == RBACScopeAll {
 		return
 	}
@@ -1049,14 +1050,14 @@ func appendC2TaskAccessFilter(conditions *[]string, args *[]interface{}, access 
 	*conditions = append(*conditions, "("+strings.Join(clauses, " OR ")+")")
 }
 
-func buildC2TasksWhereForAccess(filter ListC2TasksFilter, access RBACListAccess) (string, []interface{}) {
+func buildC2TasksWhereForAccess(filter ListC2TasksFilter, access store.Access) (string, []interface{}) {
 	where, args := buildC2TasksWhere(filter)
 	conditions := []string{where}
 	appendC2TaskAccessFilter(&conditions, &args, access)
 	return strings.Join(conditions, " AND "), args
 }
 
-func (db *DB) CountC2TasksForAccess(filter ListC2TasksFilter, access RBACListAccess) (int64, error) {
+func (db *DB) CountC2TasksForAccess(filter ListC2TasksFilter, access store.Access) (int64, error) {
 	where, args := buildC2TasksWhereForAccess(filter, access)
 	query := `SELECT COUNT(*) FROM c2_tasks WHERE ` + where
 	var n int64
@@ -1065,7 +1066,7 @@ func (db *DB) CountC2TasksForAccess(filter ListC2TasksFilter, access RBACListAcc
 }
 
 // CountC2TasksByStatusForAccess 与 ListC2Tasks 相同过滤条件下按状态统计
-func (db *DB) CountC2TasksByStatusForAccess(filter ListC2TasksFilter, access RBACListAccess) (map[string]int64, error) {
+func (db *DB) CountC2TasksByStatusForAccess(filter ListC2TasksFilter, access store.Access) (map[string]int64, error) {
 	where, args := buildC2TasksWhereForAccess(filter, access)
 	query := `SELECT status, COUNT(*) FROM c2_tasks WHERE ` + where + ` GROUP BY status`
 	rows, err := db.Query(query, args...)
@@ -1101,7 +1102,7 @@ func (db *DB) CountC2TasksByStatusForAccess(filter ListC2TasksFilter, access RBA
 	return counts, rows.Err()
 }
 
-func (db *DB) CountC2TasksQueuedOrPendingForAccess(sessionID, projectID string, access RBACListAccess) (int64, error) {
+func (db *DB) CountC2TasksQueuedOrPendingForAccess(sessionID, projectID string, access store.Access) (int64, error) {
 	filter := ListC2TasksFilter{SessionID: sessionID, ProjectID: projectID}
 	where, args := buildC2TasksWhereForAccess(filter, access)
 	query := `SELECT COUNT(*) FROM c2_tasks WHERE status IN ('queued', 'pending') AND ` + where
@@ -1175,7 +1176,7 @@ func (db *DB) ListC2Tasks(filter ListC2TasksFilter) ([]*C2Task, error) {
 	return list, rows.Err()
 }
 
-func (db *DB) ListC2TasksForAccess(filter ListC2TasksFilter, access RBACListAccess) ([]*C2Task, error) {
+func (db *DB) ListC2TasksForAccess(filter ListC2TasksFilter, access store.Access) ([]*C2Task, error) {
 	where, args := buildC2TasksWhereForAccess(filter, access)
 	query := `
 		SELECT id, session_id, task_type, COALESCE(payload_json, '{}'),
@@ -1342,7 +1343,7 @@ func (db *DB) DeleteC2TasksByIDs(ids []string) (int64, error) {
 	return res.RowsAffected()
 }
 
-func (db *DB) DeleteC2TasksByIDsForAccess(ids []string, access RBACListAccess) (int64, error) {
+func (db *DB) DeleteC2TasksByIDsForAccess(ids []string, access store.Access) (int64, error) {
 	if access.Scope == RBACScopeAll {
 		return db.DeleteC2TasksByIDs(ids)
 	}
@@ -1547,7 +1548,7 @@ func buildC2EventsWhere(filter ListC2EventsFilter) (where string, args []interfa
 	return strings.Join(conditions, " AND "), args
 }
 
-func appendC2EventAccessFilter(conditions *[]string, args *[]interface{}, access RBACListAccess) {
+func appendC2EventAccessFilter(conditions *[]string, args *[]interface{}, access store.Access) {
 	if access.Scope == RBACScopeAll {
 		return
 	}
@@ -1590,14 +1591,14 @@ func appendC2EventAccessFilter(conditions *[]string, args *[]interface{}, access
 	*conditions = append(*conditions, "("+strings.Join(clauses, " OR ")+")")
 }
 
-func buildC2EventsWhereForAccess(filter ListC2EventsFilter, access RBACListAccess) (string, []interface{}) {
+func buildC2EventsWhereForAccess(filter ListC2EventsFilter, access store.Access) (string, []interface{}) {
 	where, args := buildC2EventsWhere(filter)
 	conditions := []string{where}
 	appendC2EventAccessFilter(&conditions, &args, access)
 	return strings.Join(conditions, " AND "), args
 }
 
-func (db *DB) CountC2EventsForAccess(filter ListC2EventsFilter, access RBACListAccess) (int64, error) {
+func (db *DB) CountC2EventsForAccess(filter ListC2EventsFilter, access store.Access) (int64, error) {
 	where, args := buildC2EventsWhereForAccess(filter, access)
 	query := `SELECT COUNT(*) FROM c2_events WHERE ` + where
 	var n int64
@@ -1606,7 +1607,7 @@ func (db *DB) CountC2EventsForAccess(filter ListC2EventsFilter, access RBACListA
 }
 
 // CountC2EventsByLevelForAccess 与 ListC2Events 相同过滤条件下按级别统计
-func (db *DB) CountC2EventsByLevelForAccess(filter ListC2EventsFilter, access RBACListAccess) (map[string]int64, error) {
+func (db *DB) CountC2EventsByLevelForAccess(filter ListC2EventsFilter, access store.Access) (map[string]int64, error) {
 	where, args := buildC2EventsWhereForAccess(filter, access)
 	query := `SELECT level, COUNT(*) FROM c2_events WHERE ` + where + ` GROUP BY level`
 	rows, err := db.Query(query, args...)
@@ -1632,7 +1633,7 @@ func (db *DB) CountC2EventsByLevelForAccess(filter ListC2EventsFilter, access RB
 	return counts, rows.Err()
 }
 
-func (db *DB) ListC2EventsForAccess(filter ListC2EventsFilter, access RBACListAccess) ([]*C2Event, error) {
+func (db *DB) ListC2EventsForAccess(filter ListC2EventsFilter, access store.Access) ([]*C2Event, error) {
 	where, args := buildC2EventsWhereForAccess(filter, access)
 	limit := filter.Limit
 	if limit <= 0 || limit > 1000 {
@@ -1714,7 +1715,7 @@ func (db *DB) DeleteC2EventsByIDs(ids []string) (int64, error) {
 	return res.RowsAffected()
 }
 
-func (db *DB) DeleteC2EventsByIDsForAccess(ids []string, access RBACListAccess) (int64, error) {
+func (db *DB) DeleteC2EventsByIDsForAccess(ids []string, access store.Access) (int64, error) {
 	if access.Scope == RBACScopeAll {
 		return db.DeleteC2EventsByIDs(ids)
 	}
