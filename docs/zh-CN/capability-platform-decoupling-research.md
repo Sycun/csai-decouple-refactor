@@ -3012,7 +3012,7 @@ NewVulnerabilities owns`；② 把启动那行 `EnsureSchema()` 换成一句无�
 `RemoveConversation(id, projectID)`（附件永远删；两个项目共享的 scratch 根只在**非项目会话**时删——
 与原判断逐字一致）+ `RemoveProject(id)`。数据层侧：`*DB` 换成一个 `dirs storage.ConversationDirs` 字段、
 两个 setter 合成一个 `SetConversationDirs(plantask, checkpoint, reduction, workspace, chatUploads)`，
-`conversation.go` 从 ~800 行降到     1611 行。**水位 188 → 181**（−7：两个 setter 合一个、六个方法搬走；
+`conversation.go` 从 1705 行降到 1611 行（`database.go` 802 → 796）。**水位 188 → 181**（−7：两个 setter 合一个、六个方法搬走；
 `EinoReductionBaseDir` / `EinoWorkspaceBaseDir` 两条**留着**——handler 经自己的 store 接口读它们，
 现在是两个只剩默认值兜底的 getter）。
 `app.go` 里 `chat_uploads` 那**一个字面量的两份拷贝**也合成一份（原来 `SetChatUploadsDir(chatUploadsRoot)`
