@@ -63,11 +63,11 @@ func TestFactsEnsureSchemaBuildsBothTablesAndSixIndexes(t *testing.T) {
 func TestFactsUpsertPreservesBodyOnEmptyUpdate(t *testing.T) {
 	f, _ := newFactStore(t)
 	const body = "## 攻击链\n1. step\n```http\nGET / HTTP/1.1\n```\n"
-	if _, err := f.Upsert(&ProjectFact{ProjectID: "p1", FactKey: "finding/sqli-login",
+	if _, err := f.UpsertProjectFact(&ProjectFact{ProjectID: "p1", FactKey: "finding/sqli-login",
 		Category: "finding", Summary: "SQLi on /login", Body: body}); err != nil {
 		t.Fatal(err)
 	}
-	updated, err := f.Upsert(&ProjectFact{ProjectID: "p1", FactKey: "finding/sqli-login",
+	updated, err := f.UpsertProjectFact(&ProjectFact{ProjectID: "p1", FactKey: "finding/sqli-login",
 		Summary: "SQLi on /login (confirmed)", Body: ""})
 	if err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ func TestFactsUpsertPreservesBodyOnEmptyUpdate(t *testing.T) {
 	if updated.Summary != "SQLi on /login (confirmed)" || updated.Body != body {
 		t.Fatalf("update returned summary=%q body=%q, want the attack chain preserved", updated.Summary, updated.Body)
 	}
-	stored, err := f.GetByKey("p1", "finding/sqli-login")
+	stored, err := f.GetProjectFactByKey("p1", "finding/sqli-login")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,10 +86,10 @@ func TestFactsUpsertPreservesBodyOnEmptyUpdate(t *testing.T) {
 
 func TestFactsUpsertReplacesBodyWhenProvided(t *testing.T) {
 	f, _ := newFactStore(t)
-	if _, err := f.Upsert(&ProjectFact{ProjectID: "p1", FactKey: "target/primary", Summary: "v1", Body: "old body"}); err != nil {
+	if _, err := f.UpsertProjectFact(&ProjectFact{ProjectID: "p1", FactKey: "target/primary", Summary: "v1", Body: "old body"}); err != nil {
 		t.Fatal(err)
 	}
-	updated, err := f.Upsert(&ProjectFact{ProjectID: "p1", FactKey: "target/primary", Summary: "v2", Body: "new body with evidence"})
+	updated, err := f.UpsertProjectFact(&ProjectFact{ProjectID: "p1", FactKey: "target/primary", Summary: "v2", Body: "new body with evidence"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,21 +100,21 @@ func TestFactsUpsertReplacesBodyWhenProvided(t *testing.T) {
 
 func TestFactsRestoreOnlyFromDeprecated(t *testing.T) {
 	f, _ := newFactStore(t)
-	if _, err := f.Upsert(&ProjectFact{ProjectID: "p1", FactKey: "target/restore-me",
+	if _, err := f.UpsertProjectFact(&ProjectFact{ProjectID: "p1", FactKey: "target/restore-me",
 		Summary: "s", Confidence: "confirmed"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.Restore("p1", "target/restore-me", "tentative"); err == nil ||
+	if err := f.RestoreProjectFact("p1", "target/restore-me", "tentative"); err == nil ||
 		!strings.Contains(err.Error(), "未处于废弃状态") {
 		t.Fatalf("restore of a live fact = %v, want the 未处于废弃状态 refusal", err)
 	}
-	if err := f.Deprecate("p1", "target/restore-me"); err != nil {
+	if err := f.DeprecateProjectFact("p1", "target/restore-me"); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.Restore("p1", "target/restore-me", "confirmed"); err != nil {
+	if err := f.RestoreProjectFact("p1", "target/restore-me", "confirmed"); err != nil {
 		t.Fatal(err)
 	}
-	restored, err := f.GetByKey("p1", "target/restore-me")
+	restored, err := f.GetProjectFactByKey("p1", "target/restore-me")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestFactsRestoreOnlyFromDeprecated(t *testing.T) {
 		t.Fatalf("confidence=%q, want confirmed", restored.Confidence)
 	}
 	// An unknown key answers the same string the handler turns into a 404.
-	if err := f.Deprecate("p1", "target/absent"); err == nil || err.Error() != "事实不存在" {
+	if err := f.DeprecateProjectFact("p1", "target/absent"); err == nil || err.Error() != "事实不存在" {
 		t.Fatalf("deprecate unknown = %v, want 事实不存在", err)
 	}
 }
@@ -145,7 +145,7 @@ func TestMergeFactBody(t *testing.T) {
 // never sees a null - and a cleared link must read back as "" rather than error the scan.
 func TestFactsNullabilityRoundTrip(t *testing.T) {
 	f, db := newFactStore(t)
-	created, err := f.Upsert(&ProjectFact{ProjectID: "p1", FactKey: "note/plain", Summary: "s"})
+	created, err := f.UpsertProjectFact(&ProjectFact{ProjectID: "p1", FactKey: "note/plain", Summary: "s"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestFactsNullabilityRoundTrip(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	after, err := f.Get(created.ID)
+	after, err := f.GetProjectFact(created.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestFactsUnlinkOnlyClearsTheNamedFindings(t *testing.T) {
 	ids := make([]string, 0, 502)
 	for i := 0; i < 502; i++ {
 		key := "note.f" + strconv.Itoa(i)
-		if _, err := f.Upsert(&ProjectFact{ProjectID: "p1", FactKey: key, Summary: "s",
+		if _, err := f.UpsertProjectFact(&ProjectFact{ProjectID: "p1", FactKey: key, Summary: "s",
 			RelatedVulnerabilityID: "v" + strconv.Itoa(i)}); err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
@@ -203,7 +203,7 @@ func TestFactsUnlinkOnlyClearsTheNamedFindings(t *testing.T) {
 			ids = append(ids, "v"+strconv.Itoa(i))
 		}
 	}
-	survivor, err := f.GetByKey("p1", "note.f501")
+	survivor, err := f.GetProjectFactByKey("p1", "note.f501")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,14 +219,14 @@ func TestFactsUnlinkOnlyClearsTheNamedFindings(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first, err := f.GetByKey("p1", "note.f0")
+	first, err := f.GetProjectFactByKey("p1", "note.f0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.RelatedVulnerabilityID != "" {
 		t.Fatalf("the first chunk left %q", first.RelatedVulnerabilityID)
 	}
-	boundary, err := f.GetByKey("p1", "note.f500")
+	boundary, err := f.GetProjectFactByKey("p1", "note.f500")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,17 +241,17 @@ func TestFactsUnlinkOnlyClearsTheNamedFindings(t *testing.T) {
 func TestFactsEdgeCascadesAndOrdering(t *testing.T) {
 	f, _ := newFactStore(t)
 	for _, key := range []string{"note.a", "note.b", "note.c"} {
-		if _, err := f.Upsert(&ProjectFact{ProjectID: "p1", FactKey: key, Summary: key}); err != nil {
+		if _, err := f.UpsertProjectFact(&ProjectFact{ProjectID: "p1", FactKey: key, Summary: key}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := f.ReplaceOutgoing("p1", "note.a", "conv-1", []ProjectFactEdgeInput{
+	if err := f.ReplaceOutgoingProjectFactEdges("p1", "note.a", "conv-1", []ProjectFactEdgeInput{
 		{To: "note.b", Type: "leads_to", Confidence: "confirmed"},
 		{To: "note.c", Type: "depends_on"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	edges, err := f.ListOutgoing("p1", "note.a")
+	edges, err := f.ListOutgoingProjectFactEdges("p1", "note.a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,21 +263,21 @@ func TestFactsEdgeCascadesAndOrdering(t *testing.T) {
 		t.Fatalf("edge order = %v, %v", edges[0].TargetFactKey, edges[1].TargetFactKey)
 	}
 	// Replacing with an empty list clears them: "links were provided but are empty" is a delete.
-	if err := f.ReplaceOutgoing("p1", "note.a", "", []ProjectFactEdgeInput{}); err != nil {
+	if err := f.ReplaceOutgoingProjectFactEdges("p1", "note.a", "", []ProjectFactEdgeInput{}); err != nil {
 		t.Fatal(err)
 	}
-	if edges, err := f.ListOutgoing("p1", "note.a"); err != nil || len(edges) != 0 {
+	if edges, err := f.ListOutgoingProjectFactEdges("p1", "note.a"); err != nil || len(edges) != 0 {
 		t.Fatalf("edges after empty replace = %+v (%v), want none", edges, err)
 	}
 
 	// Deprecating a fact marks its edges; deleting it removes them.
-	if _, err := f.AddEdge("p1", ProjectFactEdgeInput{To: "note.b", Type: "supports"}, "note.a", ""); err != nil {
+	if _, err := f.AddProjectFactEdge("p1", ProjectFactEdgeInput{To: "note.b", Type: "supports"}, "note.a", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.Deprecate("p1", "note.b"); err != nil {
+	if err := f.DeprecateProjectFact("p1", "note.b"); err != nil {
 		t.Fatal(err)
 	}
-	incoming, err := f.ListIncoming("p1", "note.b")
+	incoming, err := f.ListIncomingProjectFactEdges("p1", "note.b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,41 +285,41 @@ func TestFactsEdgeCascadesAndOrdering(t *testing.T) {
 		t.Fatalf("incoming edges after deprecate = %+v, want the one marked deprecated", incoming)
 	}
 	// Renaming a key moves both ends of every edge that names it.
-	if err := f.RenameKeyEdges("p1", "note.b", "note/renamed"); err != nil {
+	if err := f.RenameProjectFactKeyEdges("p1", "note.b", "note/renamed"); err != nil {
 		t.Fatal(err)
 	}
-	all, err := f.ListEdges("p1")
+	all, err := f.ListProjectFactEdgesByProject("p1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(all) != 1 || all[0].TargetFactKey != "note/renamed" {
 		t.Fatalf("edges after rename = %+v", all)
 	}
-	if err := f.DeleteEdgesForKey("p1", "note.a"); err != nil {
+	if err := f.DeleteProjectFactEdgesForKey("p1", "note.a"); err != nil {
 		t.Fatal(err)
 	}
-	if all, err = f.ListEdges("p1"); err != nil || len(all) != 0 {
+	if all, err = f.ListProjectFactEdgesByProject("p1"); err != nil || len(all) != 0 {
 		t.Fatalf("edges after delete-for-key = %+v (%v), want none", all, err)
 	}
 	// The self-link and unknown-type refusals are the answers the MCP tool surfaces to the agent.
-	if err := f.ReplaceOutgoing("p1", "note.a", "", []ProjectFactEdgeInput{{To: "note.a", Type: "leads_to"}}); err == nil ||
+	if err := f.ReplaceOutgoingProjectFactEdges("p1", "note.a", "", []ProjectFactEdgeInput{{To: "note.a", Type: "leads_to"}}); err == nil ||
 		!strings.Contains(err.Error(), "自身") {
 		t.Fatalf("self edge = %v, want the 边不能指向自身 refusal", err)
 	}
-	if _, err := f.AddEdge("p1", ProjectFactEdgeInput{To: "note/renamed", Type: "invented"}, "note.a", ""); err == nil {
+	if _, err := f.AddProjectFactEdge("p1", ProjectFactEdgeInput{To: "note/renamed", Type: "invented"}, "note.a", ""); err == nil {
 		t.Fatal("an unknown edge type was accepted")
 	}
 }
 
 func TestFactsRefuseAConnectionlessHandle(t *testing.T) {
 	f := NewFacts(nil)
-	if _, err := f.List("p1", ProjectFactListFilter{}, 10, 0); err == nil {
+	if _, err := f.ListProjectFacts("p1", ProjectFactListFilter{}, 10, 0); err == nil {
 		t.Fatal("List on a connectionless store answered no error")
 	}
-	if _, err := f.Upsert(&ProjectFact{ProjectID: "p1", FactKey: "note/x", Summary: "s"}); err == nil {
+	if _, err := f.UpsertProjectFact(&ProjectFact{ProjectID: "p1", FactKey: "note/x", Summary: "s"}); err == nil {
 		t.Fatal("Upsert answered no error")
 	}
-	if _, err := f.ListEdges("p1"); err == nil {
+	if _, err := f.ListProjectFactEdgesByProject("p1"); err == nil {
 		t.Fatal("ListEdges answered no error")
 	}
 	if err := f.EnsureSchema(); err == nil {

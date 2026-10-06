@@ -14,73 +14,73 @@ import (
 func NewFacts(db *DB) *store.Facts { return store.NewFacts(db.DB) }
 
 func (db *DB) ListProjectFactsForIndex(projectID string, includeDeprecated bool) ([]*store.ProjectFact, error) {
-	return NewFacts(db).ListForIndex(projectID, includeDeprecated)
+	return NewFacts(db).ListProjectFactsForIndex(projectID, includeDeprecated)
 }
 
 func (db *DB) ListProjectFacts(projectID string, filter store.ProjectFactListFilter, limit, offset int) ([]*store.ProjectFact, error) {
-	return NewFacts(db).List(projectID, filter, limit, offset)
+	return NewFacts(db).ListProjectFacts(projectID, filter, limit, offset)
 }
 
 func (db *DB) ListProjectFactsForSparseCheck(projectID string) ([]store.ProjectFactSparseRow, error) {
-	return NewFacts(db).ListForSparseCheck(projectID)
+	return NewFacts(db).ListProjectFactsForSparseCheck(projectID)
 }
 
 func (db *DB) GetProjectFactByKey(projectID, factKey string) (*store.ProjectFact, error) {
-	return NewFacts(db).GetByKey(projectID, factKey)
+	return NewFacts(db).GetProjectFactByKey(projectID, factKey)
 }
 
 func (db *DB) GetProjectFact(id string) (*store.ProjectFact, error) {
-	return NewFacts(db).Get(id)
+	return NewFacts(db).GetProjectFact(id)
 }
 
 func (db *DB) UpsertProjectFact(f *store.ProjectFact) (*store.ProjectFact, error) {
-	return NewFacts(db).Upsert(f)
+	return NewFacts(db).UpsertProjectFact(f)
 }
 
 func (db *DB) DeprecateProjectFact(projectID, factKey string) error {
-	return NewFacts(db).Deprecate(projectID, factKey)
+	return NewFacts(db).DeprecateProjectFact(projectID, factKey)
 }
 
 func (db *DB) RestoreProjectFact(projectID, factKey, confidence string) error {
-	return NewFacts(db).Restore(projectID, factKey, confidence)
+	return NewFacts(db).RestoreProjectFact(projectID, factKey, confidence)
 }
 
 func (db *DB) DeleteProjectFact(id string) error {
-	return NewFacts(db).Delete(id)
+	return NewFacts(db).DeleteProjectFact(id)
 }
 
 func (db *DB) ListProjectFactEdgesByProject(projectID string) ([]*store.ProjectFactEdge, error) {
-	return NewFacts(db).ListEdges(projectID)
+	return NewFacts(db).ListProjectFactEdgesByProject(projectID)
 }
 
 func (db *DB) ListOutgoingProjectFactEdges(projectID, sourceFactKey string) ([]*store.ProjectFactEdge, error) {
-	return NewFacts(db).ListOutgoing(projectID, sourceFactKey)
+	return NewFacts(db).ListOutgoingProjectFactEdges(projectID, sourceFactKey)
 }
 
 func (db *DB) ListIncomingProjectFactEdges(projectID, targetFactKey string) ([]*store.ProjectFactEdge, error) {
-	return NewFacts(db).ListIncoming(projectID, targetFactKey)
+	return NewFacts(db).ListIncomingProjectFactEdges(projectID, targetFactKey)
 }
 
 func (db *DB) ReplaceOutgoingProjectFactEdges(projectID, sourceFactKey, sourceConversationID string, inputs []store.ProjectFactEdgeInput) error {
-	return NewFacts(db).ReplaceOutgoing(projectID, sourceFactKey, sourceConversationID, inputs)
+	return NewFacts(db).ReplaceOutgoingProjectFactEdges(projectID, sourceFactKey, sourceConversationID, inputs)
 }
 
 func (db *DB) ReplaceIncomingProjectFactEdges(projectID, targetFactKey string, inputs []store.ProjectFactEdgeFromInput) error {
-	return NewFacts(db).ReplaceIncoming(projectID, targetFactKey, inputs)
+	return NewFacts(db).ReplaceIncomingProjectFactEdges(projectID, targetFactKey, inputs)
 }
 
 func (db *DB) GetProjectFactEdge(edgeID string) (*store.ProjectFactEdge, error) {
-	return NewFacts(db).GetEdge(edgeID)
+	return NewFacts(db).GetProjectFactEdge(edgeID)
 }
 
 func (db *DB) AddProjectFactEdge(projectID string, in store.ProjectFactEdgeInput, sourceFactKey, sourceConversationID string) (*store.ProjectFactEdge, error) {
-	return NewFacts(db).AddEdge(projectID, in, sourceFactKey, sourceConversationID)
+	return NewFacts(db).AddProjectFactEdge(projectID, in, sourceFactKey, sourceConversationID)
 }
 
 func (db *DB) DeleteProjectFactEdge(edgeID string) error {
-	return NewFacts(db).DeleteEdge(edgeID)
+	return NewFacts(db).DeleteProjectFactEdge(edgeID)
 }
 
 func (db *DB) RenameProjectFactKeyEdges(projectID, oldKey, newKey string) error {
-	return NewFacts(db).RenameKeyEdges(projectID, oldKey, newKey)
+	return NewFacts(db).RenameProjectFactKeyEdges(projectID, oldKey, newKey)
 }

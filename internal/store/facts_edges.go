@@ -18,7 +18,7 @@ const edgeColumns = `id, project_id, source_fact_key, target_fact_key, edge_type
 	        COALESCE(source_conversation_id,''), created_at, updated_at`
 
 // ListEdges 列出项目全部边。
-func (s *Facts) ListEdges(projectID string) ([]*ProjectFactEdge, error) {
+func (s *Facts) ListProjectFactEdgesByProject(projectID string) ([]*ProjectFactEdge, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
@@ -37,7 +37,7 @@ func (s *Facts) ListEdges(projectID string) ([]*ProjectFactEdge, error) {
 }
 
 // ListOutgoing 列出某事实的全部出边。
-func (s *Facts) ListOutgoing(projectID, sourceFactKey string) ([]*ProjectFactEdge, error) {
+func (s *Facts) ListOutgoingProjectFactEdges(projectID, sourceFactKey string) ([]*ProjectFactEdge, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
@@ -56,7 +56,7 @@ func (s *Facts) ListOutgoing(projectID, sourceFactKey string) ([]*ProjectFactEdg
 }
 
 // ListIncoming 列出某事实的全部入边。
-func (s *Facts) ListIncoming(projectID, targetFactKey string) ([]*ProjectFactEdge, error) {
+func (s *Facts) ListIncomingProjectFactEdges(projectID, targetFactKey string) ([]*ProjectFactEdge, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
@@ -79,7 +79,7 @@ func (s *Facts) ListIncoming(projectID, targetFactKey string) ([]*ProjectFactEdg
 // The delete and the inserts are deliberately not wrapped in a transaction: that is how the statements
 // were written for as long as the console has been calling them, and a slice about ownership does not
 // get to decide that a partial failure should now leave a different state behind.
-func (s *Facts) ReplaceOutgoing(projectID, sourceFactKey, sourceConversationID string, inputs []ProjectFactEdgeInput) error {
+func (s *Facts) ReplaceOutgoingProjectFactEdges(projectID, sourceFactKey, sourceConversationID string, inputs []ProjectFactEdgeInput) error {
 	if err := s.requireDB(); err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func (s *Facts) ReplaceOutgoing(projectID, sourceFactKey, sourceConversationID s
 			CreatedAt:            time.Now(),
 			UpdatedAt:            time.Now(),
 		}
-		if err := s.insertEdge(edge); err != nil {
+		if err := s.insertProjectFactEdge(edge); err != nil {
 			return err
 		}
 	}
@@ -126,7 +126,7 @@ func (s *Facts) ReplaceOutgoing(projectID, sourceFactKey, sourceConversationID s
 }
 
 // ReplaceIncoming 替换某事实的全部入边（From 为来源 fact_key）。
-func (s *Facts) ReplaceIncoming(projectID, targetFactKey string, inputs []ProjectFactEdgeFromInput) error {
+func (s *Facts) ReplaceIncomingProjectFactEdges(projectID, targetFactKey string, inputs []ProjectFactEdgeFromInput) error {
 	if err := s.requireDB(); err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func (s *Facts) ReplaceIncoming(projectID, targetFactKey string, inputs []Projec
 			return err
 		}
 		sourceConversationID := ""
-		if srcFact, err := s.GetByKey(projectID, source); err == nil && srcFact != nil {
+		if srcFact, err := s.GetProjectFactByKey(projectID, source); err == nil && srcFact != nil {
 			sourceConversationID = srcFact.SourceConversationID
 		}
 		edge := &ProjectFactEdge{
@@ -169,7 +169,7 @@ func (s *Facts) ReplaceIncoming(projectID, targetFactKey string, inputs []Projec
 			CreatedAt:            time.Now(),
 			UpdatedAt:            time.Now(),
 		}
-		if err := s.insertEdge(edge); err != nil {
+		if err := s.insertProjectFactEdge(edge); err != nil {
 			return err
 		}
 	}
@@ -178,7 +178,7 @@ func (s *Facts) ReplaceIncoming(projectID, targetFactKey string, inputs []Projec
 
 // GetEdge 按 ID 获取边。Any read failure answers "边不存在", including a real database error - the
 // handler turns that into a 404, and this preserved quirk is why.
-func (s *Facts) GetEdge(edgeID string) (*ProjectFactEdge, error) {
+func (s *Facts) GetProjectFactEdge(edgeID string) (*ProjectFactEdge, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
@@ -198,7 +198,7 @@ func (s *Facts) GetEdge(edgeID string) (*ProjectFactEdge, error) {
 }
 
 // AddEdge 新增单条边（已存在则更新 confidence）。
-func (s *Facts) AddEdge(projectID string, in ProjectFactEdgeInput, sourceFactKey, sourceConversationID string) (*ProjectFactEdge, error) {
+func (s *Facts) AddProjectFactEdge(projectID string, in ProjectFactEdgeInput, sourceFactKey, sourceConversationID string) (*ProjectFactEdge, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
@@ -260,7 +260,7 @@ func (s *Facts) AddEdge(projectID string, in ProjectFactEdgeInput, sourceFactKey
 }
 
 // DeleteEdge 删除单条边。
-func (s *Facts) DeleteEdge(edgeID string) error {
+func (s *Facts) DeleteProjectFactEdge(edgeID string) error {
 	if err := s.requireDB(); err != nil {
 		return err
 	}
@@ -275,7 +275,7 @@ func (s *Facts) DeleteEdge(edgeID string) error {
 	return nil
 }
 
-func (s *Facts) insertEdge(e *ProjectFactEdge) error {
+func (s *Facts) insertProjectFactEdge(e *ProjectFactEdge) error {
 	_, err := s.db.Exec(
 		`INSERT INTO project_fact_edges (
 			id, project_id, source_fact_key, target_fact_key, edge_type, confidence,
@@ -291,7 +291,7 @@ func (s *Facts) insertEdge(e *ProjectFactEdge) error {
 }
 
 // RenameKeyEdges 事实 key 变更时同步边上的引用。
-func (s *Facts) RenameKeyEdges(projectID, oldKey, newKey string) error {
+func (s *Facts) RenameProjectFactKeyEdges(projectID, oldKey, newKey string) error {
 	if err := s.requireDB(); err != nil {
 		return err
 	}
@@ -317,7 +317,7 @@ func (s *Facts) RenameKeyEdges(projectID, oldKey, newKey string) error {
 }
 
 // DeleteEdgesForKey 删除与某 fact_key 相关的全部边。
-func (s *Facts) DeleteEdgesForKey(projectID, factKey string) error {
+func (s *Facts) DeleteProjectFactEdgesForKey(projectID, factKey string) error {
 	if err := s.requireDB(); err != nil {
 		return err
 	}
@@ -330,7 +330,7 @@ func (s *Facts) DeleteEdgesForKey(projectID, factKey string) error {
 }
 
 // DeprecateEdgesForKey 将关联边标记为 deprecated。
-func (s *Facts) DeprecateEdgesForKey(projectID, factKey string) error {
+func (s *Facts) DeprecateProjectFactEdgesForKey(projectID, factKey string) error {
 	if err := s.requireDB(); err != nil {
 		return err
 	}

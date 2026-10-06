@@ -2442,6 +2442,14 @@ deprecated 的边改回来**（边留在 `deprecated`）。这是原行为，这
 `internal/store` **20 个 store 构造器 / 25 个生产文件 / 178 条包内测试**；全仓测试函数 **1546**；
 `go build ./...`、`gofmt -l` 空、`go vet ./...`、`go test -count=1 ./...` 全绿。
 
+**紧跟着的一处改名（为下一刀铺路）**：`store.Facts` 的方法名从 `Upsert` / `ListEdges` 这一类短名
+改回**带域前缀**的 `UpsertProjectFact` / `ListProjectFactEdgesByProject`（`store.Workflows` 本来就是这个命名法）。
+理由不是口味：下一刀要把 `database.ProjectFactStore` 劈成"项目行"与"黑板账本"两半、让 `*store.Facts`
+**直接满足**账本那一半——名字对上，删那 18 个转发就是机械改动；名字不对，`internal/project` 里
+**26 处**事实/边调用点（那条 grep 含测试文件；生产文件里是 **11** 处：`fact_edges_apply.go` 6、
+`blackboard.go` 2、`fact_edges.go` 2、`stats.go` 1）
+要与转发删除混在同一次改动里，"行为中性"就没法单独证明。纯改名，`go vet` 与受影响的五个包全绿。
+
 **DDL 搬家必须看的才是真机**：测试树里新编译的二进制 + **全新库** + 独立端口 18098 与独立 data/log
 （沙箱 `.livecheck-facts27c`，跑完按记录的 PID 37810 停掉并删除）。开机日志 **0 条 error、0 条 panic**；
 全新库里 `sqlite_master` 数得出**两张表与全部 6 条索引**（两张表都在主人手里建出来了，

@@ -102,7 +102,7 @@ const factColumns = `id, project_id, fact_key, category, summary, COALESCE(body,
 			COALESCE(related_vulnerability_id,''), created_at, updated_at`
 
 // ListForIndex 列出用于黑板索引注入的事实（不含 deprecated，除非 includeDeprecated）。
-func (s *Facts) ListForIndex(projectID string, includeDeprecated bool) ([]*ProjectFact, error) {
+func (s *Facts) ListProjectFactsForIndex(projectID string, includeDeprecated bool) ([]*ProjectFact, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
@@ -122,7 +122,7 @@ func (s *Facts) ListForIndex(projectID string, includeDeprecated bool) ([]*Proje
 }
 
 // List 分页列出项目事实。
-func (s *Facts) List(projectID string, filter ProjectFactListFilter, limit, offset int) ([]*ProjectFact, error) {
+func (s *Facts) ListProjectFacts(projectID string, filter ProjectFactListFilter, limit, offset int) ([]*ProjectFact, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
@@ -164,7 +164,7 @@ func (s *Facts) List(projectID string, filter ProjectFactListFilter, limit, offs
 }
 
 // ListForSparseCheck 返回用于待补全检测的事实字段（非 deprecated）。
-func (s *Facts) ListForSparseCheck(projectID string) ([]ProjectFactSparseRow, error) {
+func (s *Facts) ListProjectFactsForSparseCheck(projectID string) ([]ProjectFactSparseRow, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
@@ -188,7 +188,7 @@ func (s *Facts) ListForSparseCheck(projectID string) ([]ProjectFactSparseRow, er
 }
 
 // GetByKey 按 key 获取事实。
-func (s *Facts) GetByKey(projectID, factKey string) (*ProjectFact, error) {
+func (s *Facts) GetProjectFactByKey(projectID, factKey string) (*ProjectFact, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func (s *Facts) GetByKey(projectID, factKey string) (*ProjectFact, error) {
 }
 
 // Get 按 ID 获取事实。
-func (s *Facts) Get(id string) (*ProjectFact, error) {
+func (s *Facts) GetProjectFact(id string) (*ProjectFact, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
@@ -221,7 +221,7 @@ func mergeFactBody(incoming, existing string) string {
 }
 
 // Upsert 创建或更新事实（按 project_id + fact_key）。
-func (s *Facts) Upsert(f *ProjectFact) (*ProjectFact, error) {
+func (s *Facts) UpsertProjectFact(f *ProjectFact) (*ProjectFact, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
@@ -236,7 +236,7 @@ func (s *Facts) Upsert(f *ProjectFact) (*ProjectFact, error) {
 	}
 	now := time.Now()
 
-	existing, err := s.GetByKey(f.ProjectID, f.FactKey)
+	existing, err := s.GetProjectFactByKey(f.ProjectID, f.FactKey)
 	if err == nil && existing != nil {
 		f.ID = existing.ID
 		f.CreatedAt = existing.CreatedAt
@@ -287,7 +287,7 @@ func (s *Facts) Upsert(f *ProjectFact) (*ProjectFact, error) {
 }
 
 // Deprecate 将事实标记为 deprecated（关联边同步 deprecated）。
-func (s *Facts) Deprecate(projectID, factKey string) error {
+func (s *Facts) DeprecateProjectFact(projectID, factKey string) error {
 	if err := s.requireDB(); err != nil {
 		return err
 	}
@@ -302,11 +302,11 @@ func (s *Facts) Deprecate(projectID, factKey string) error {
 	if n == 0 {
 		return fmt.Errorf("事实不存在")
 	}
-	return s.DeprecateEdgesForKey(projectID, factKey)
+	return s.DeprecateProjectFactEdgesForKey(projectID, factKey)
 }
 
 // Restore 将已废弃事实恢复为 tentative 或 confirmed（重新参与黑板索引）。
-func (s *Facts) Restore(projectID, factKey, confidence string) error {
+func (s *Facts) RestoreProjectFact(projectID, factKey, confidence string) error {
 	if err := s.requireDB(); err != nil {
 		return err
 	}
@@ -318,7 +318,7 @@ func (s *Facts) Restore(projectID, factKey, confidence string) error {
 		return fmt.Errorf("confidence 须为 confirmed 或 tentative")
 	}
 
-	existing, err := s.GetByKey(projectID, factKey)
+	existing, err := s.GetProjectFactByKey(projectID, factKey)
 	if err != nil {
 		return fmt.Errorf("事实不存在")
 	}
@@ -334,15 +334,15 @@ func (s *Facts) Restore(projectID, factKey, confidence string) error {
 }
 
 // Delete 删除事实（级联删除相关边）。
-func (s *Facts) Delete(id string) error {
+func (s *Facts) DeleteProjectFact(id string) error {
 	if err := s.requireDB(); err != nil {
 		return err
 	}
-	f, err := s.Get(id)
+	f, err := s.GetProjectFact(id)
 	if err != nil {
 		return err
 	}
-	if err := s.DeleteEdgesForKey(f.ProjectID, f.FactKey); err != nil {
+	if err := s.DeleteProjectFactEdgesForKey(f.ProjectID, f.FactKey); err != nil {
 		return err
 	}
 	_, err = s.db.Exec(`DELETE FROM project_facts WHERE id = ?`, id)
