@@ -66,10 +66,11 @@ func deadDBSurface(t *testing.T, root string) (dead []string, scanned int) {
 			return true
 		})
 	}
-	if len(names) < 280 {
-		// Measured: 296 exported methods on *database.DB across 27 production files. The floor exists
+	if len(names) < 270 {
+		// Measured: 277 exported methods on *database.DB (296 when this scan was first written; every
+		// domain cut since has taken a few more out of the layer). The floor exists
 		// so a scan that silently stops reading the directory cannot report an empty dead set.
-		t.Fatalf("only %d exported *DB methods parsed (floor 280): the scan is not reading the package", len(names))
+		t.Fatalf("only %d exported *DB methods parsed (floor 270): the scan is not reading the package", len(names))
 	}
 
 	var production []string

@@ -294,17 +294,6 @@ func (db *DB) initTables() error {
 		FOREIGN KEY (target_node_id) REFERENCES attack_chain_nodes(id) ON DELETE CASCADE
 	);`
 
-	// 机器人会话绑定表（用于跨重启保持「平台+租户+用户」到 conversation 的映射）
-	createRobotUserSessionsTable := `
-	CREATE TABLE IF NOT EXISTS robot_user_sessions (
-		session_key TEXT PRIMARY KEY,
-		conversation_id TEXT NOT NULL,
-		role_name TEXT NOT NULL DEFAULT '默认',
-		agent_mode TEXT NOT NULL DEFAULT 'eino_single',
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-	);`
-
 	// 创建项目表
 	createProjectsTable := `
 	CREATE TABLE IF NOT EXISTS projects (
@@ -677,7 +666,6 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_chain_edges_conversation ON attack_chain_edges(conversation_id);
 	CREATE INDEX IF NOT EXISTS idx_chain_edges_source ON attack_chain_edges(source_node_id);
 	CREATE INDEX IF NOT EXISTS idx_chain_edges_target ON attack_chain_edges(target_node_id);
-	CREATE INDEX IF NOT EXISTS idx_robot_user_sessions_updated_at ON robot_user_sessions(updated_at);
 	CREATE INDEX IF NOT EXISTS idx_conversations_pinned ON conversations(pinned);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_conversation_id ON vulnerabilities(conversation_id);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_conversation_tag ON vulnerabilities(conversation_tag);
@@ -764,12 +752,8 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("创建attack_chain_edges表失败: %w", err)
 	}
 
-	if _, err := db.Exec(createRobotUserSessionsTable); err != nil {
-		return fmt.Errorf("创建robot_user_sessions表失败: %w", err)
-	}
-	if err := db.migrateRobotUserSessionsTable(); err != nil {
-		return fmt.Errorf("迁移robot_user_sessions表失败: %w", err)
-	}
+	// robot_user_sessions 的建表、索引与 agent_mode 补列归 store.RobotSessions，
+	// 由启动那一次 ensureRobotSessionSchema 跑。
 
 	if _, err := db.Exec(createProjectsTable); err != nil {
 		return fmt.Errorf("创建projects表失败: %w", err)
@@ -898,18 +882,6 @@ func (db *DB) initTables() error {
 	// model_token_usage 的建表、四个索引与历史回填都归 store.ModelTokenUsage，
 	// 由进程启动时那一次 ensureModelTokenUsageSchema 跑（表要先于时间线写入路径存在）。
 	db.logger.Debug("数据库表初始化完成")
-	return nil
-}
-
-func (db *DB) migrateRobotUserSessionsTable() error {
-	var count int
-	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('robot_user_sessions') WHERE name='agent_mode'").Scan(&count); err != nil {
-		return err
-	}
-	if count == 0 {
-		_, err := db.Exec("ALTER TABLE robot_user_sessions ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'eino_single'")
-		return err
-	}
 	return nil
 }
 

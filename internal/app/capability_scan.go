@@ -330,6 +330,15 @@ func ensureAuditLogsSchema(db *database.DB) error {
 	return store.NewAuditLogs(db.DB).EnsureSchema()
 }
 
+// ensureRobotSessionSchema creates robot_user_sessions through the store that owns it, including the
+// agent_mode column a base predating that field does not have.
+func ensureRobotSessionSchema(db *database.DB) error {
+	if db == nil {
+		return nil
+	}
+	return store.NewRobotSessions(db.DB).EnsureSchema()
+}
+
 // ensureModelTokenUsageSchema creates model_token_usage through the store that owns it and carries
 // over the usage events written before the table existed. The carry-over walks process_details, so it
 // has to run after the timeline tables are there - which is why it belongs to start-up rather than to

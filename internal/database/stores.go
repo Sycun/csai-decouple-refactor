@@ -306,13 +306,11 @@ type RobotStore interface {
 	CreateRobotBindingCode(userID, codeHash string, expiresAt time.Time) error
 	DeleteConversation(id string) error
 	DeleteRobotIdentityBinding(platform, externalUserID string) error
-	DeleteRobotSessionBinding(sessionKey string) error
 	DeleteRobotUserBindingForUser(bindingID, userID string) error
 	EnqueueVulnerabilityAlertDeliveries(vulnerabilityID string, recipients []VulnerabilityAlertRecipient) error
 	GetConversation(id string) (*Conversation, error)
 	GetConversationProjectID(conversationID string) (string, error)
 	GetProject(id string) (*Project, error)
-	GetRobotSessionBinding(sessionKey string) (*RobotSessionBinding, error)
 	GetVulnerabilityAlertSubscription(userID string) (*VulnerabilityAlertSubscription, error)
 	ListConversationsForAccess(limit, offset int, search, sortBy, projectID, userID, scope string) ([]*Conversation, error)
 	ListDueVulnerabilityAlertDeliveries(limit int) ([]VulnerabilityAlertDelivery, error)
@@ -326,7 +324,6 @@ type RobotStore interface {
 	SetConversationProjectID(conversationID, projectID string) error
 	SetResourceOwner(resourceType, resourceID, userID string) error
 	UpdateConversationTitle(id, title string) error
-	UpsertRobotSessionBinding(sessionKey, conversationID, roleName, agentMode string) error
 	UpsertVulnerabilityAlertSubscription(userID string, enabled bool, minSeverity string) (*VulnerabilityAlertSubscription, error)
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }

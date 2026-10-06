@@ -25,6 +25,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -87,6 +88,7 @@ type RobotHandler struct {
 	wecomReplay          map[string]time.Time
 	wecom                *WecomGateway
 	pendingConfirmations map[string]robotPendingConfirmation
+	threadBindings       *store.RobotSessions // robot_user_sessions: 线程到会话的映射，跨重启
 	alertWake            chan struct{}
 	audit                *audit.Service
 }
@@ -96,6 +98,7 @@ func NewRobotHandler(cfg *config.Config, db *database.DB, agentHandler *AgentHan
 	handler := &RobotHandler{
 		config:               cfg,
 		db:                   database.Narrow[database.RobotStore](db),
+		threadBindings:       newRobotSessionsStore(db),
 		agentHandler:         agentHandler,
 		logger:               logger,
 		sessions:             make(map[string]string),
@@ -207,7 +210,7 @@ func (h *RobotHandler) loadSessionBinding(sk string) (convID, role, agentMode st
 	if h.db == nil || strings.TrimSpace(sk) == "" {
 		return "", "", ""
 	}
-	binding, err := h.db.GetRobotSessionBinding(sk)
+	binding, err := h.threadBindings.Get(sk)
 	if err != nil {
 		h.logger.Warn("读取机器人会话绑定失败", zap.String("session_key", sk), zap.Error(err))
 		return "", "", ""
@@ -222,7 +225,7 @@ func (h *RobotHandler) persistSessionBinding(sk, convID, role, agentMode string)
 	if h.db == nil || strings.TrimSpace(sk) == "" || strings.TrimSpace(convID) == "" {
 		return
 	}
-	if err := h.db.UpsertRobotSessionBinding(sk, convID, role, agentMode); err != nil {
+	if err := h.threadBindings.Upsert(sk, convID, role, agentMode); err != nil {
 		h.logger.Warn("写入机器人会话绑定失败", zap.String("session_key", sk), zap.Error(err))
 	}
 }
@@ -231,7 +234,7 @@ func (h *RobotHandler) deleteSessionBinding(sk string) {
 	if h.db == nil || strings.TrimSpace(sk) == "" {
 		return
 	}
-	if err := h.db.DeleteRobotSessionBinding(sk); err != nil {
+	if err := h.threadBindings.Delete(sk); err != nil {
 		h.logger.Warn("删除机器人会话绑定失败", zap.String("session_key", sk), zap.Error(err))
 	}
 }

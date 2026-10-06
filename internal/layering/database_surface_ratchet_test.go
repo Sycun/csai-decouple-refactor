@@ -35,7 +35,9 @@ import (
 // 327 -> 320: model_token_usage moved whole - two public reads, the upsert, the history backfill, the
 // timeline hook and the two private query helpers. The last two are why the drop is seven rather than
 // the four the method list shows: the counter counts every *DB receiver, exported or not.
-const dbMethodCeiling = 320
+// 320 -> 316: robot_user_sessions moved whole - the read, the write, the delete, and the private
+// migrateRobotUserSessionsTable that backfilled its one late column.
+const dbMethodCeiling = 316
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

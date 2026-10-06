@@ -40,6 +40,7 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	auditLogsSchema := 0
 	knowledgeRetrievalSchema := 0
 	modelTokenUsageSchema := 0
+	robotSessionSchema := 0
 	auditSchemaOffset := -1
 	usageSchemaOffset := -1
 	usageSchemaFile := ""
@@ -88,6 +89,10 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 						mcpProvisioned++
 					case "ensureKnowledgeRetrievalSchema":
 						knowledgeRetrievalSchema++
+					case "ensureRobotSessionSchema":
+						// The table left the data layer's start-up sweep; without this it is only
+						// ever created on installations that predate the cut.
+						robotSessionSchema++
 					case "ensureModelTokenUsageSchema":
 						// model_token_usage left the data layer's start-up sweep, and its history
 						// carry-over reads process_details: called before the main database exists,
@@ -233,6 +238,10 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 			"offset %d, ensureModelTokenUsageSchema at %d): its history carry-over reads process_details, "+
 			"so running it earlier fails with \"no such table\" and the usage page stays empty",
 			newDBOffset, usageSchemaOffset)
+	}
+	if robotSessionSchema < 1 {
+		t.Fatalf("ensureRobotSessionSchema is never called at boot: a robot conversation would not " +
+			"survive a restart, because the table mapping a thread to its conversation is created nowhere")
 	}
 	if modelTokenUsageSchema < 1 {
 		t.Fatalf("ensureModelTokenUsageSchema is never called at boot: the table left the data layer's " +

@@ -1578,6 +1578,32 @@ Go 的 `Parse` 里布局的空格也匹配 `T`、`.999999999` 也匹配短小数
 `TestParseOKSeparatesUnparseableFromZero`（空串/垃圾 → false 且零值；库里真存了 `0001-01-01 00:00:00` → true 且零值，
 这条是 asset/monitor 那两个"要区分没读到 vs 读到零"的调用点需要的形状）。
 
+### P6 数据层第十四片 —— `robot_user_sessions`：一条"重启后还认得这个聊天线程"的映射
+
+3 个方法 + 一条私有补列迁移（`migrateRobotUserSessionsTable`）进 `store.RobotSessions`，
+`internal/database/robot_session.go` 删除，`*database.DB` **320 → 316**。
+建表、索引与 `agent_mode` 补列从 `initTables` 挪进启动的 `ensureRobotSessionSchema`（配 AST 接线门禁）。
+`RobotHandler` 加 `threadBindings *store.RobotSessions` 字段（构造函数签名不变），
+三处调用点改指 store；`RobotStore` 少 3 个成员。字段第一次叫 `sessions` 时与结构体里已有的
+`sessions map[string]string`（内存里的线程→会话缓存）**撞名**，编译立刻红——
+这两个名字讲的是同一件事的两份状态，改名 `threadBindings` 之后边界反而更清楚。
+
+`store.RobotSessions` 刻意**不解释** session key 的形状（那是 handler 按平台拼的），也不做鉴权；
+读回来的行把两个默认值补好（`默认` / `eino_single`），使读侧不必知道哪一列是空的——
+这套默认原来在读写两侧各有一份，现在写侧补完、读侧只为老行兜底。
+
+测试 8 条真库：建表幂等 + 索引存在、**老表（无 `agent_mode`）被补出新形状**、
+未知 key 与空 key 都返回 `nil, nil`（"没写过"和"没身份"都不是错误）、
+写入读出逐字段一致、空 role/mode 落默认值、同 key 重写**不新增行**且 `updated_at` 前进、
+"没会话可记"的四种入参静默不写、删会话**级联删掉指针**（外键开着，这正是留孤儿的那类 bug）、
+无连接四处被拒。
+
+门禁复测：`*database.DB` 上限 320→316 并写下轨迹；归属清单加 `robot_user_sessions`；
+死面扫描的**地板**从 280 教到 270（实测 277）——注意这条断言的**文字**里还写着旧数字，
+改判据时把消息一起改，否则将来报出的数字没人信。探针两条：删掉启动那次 ensure → 接线门禁红
+（消息直接说"机器人会话重启后不认线程"）；往 handler 塞一条 `SELECT session_key FROM robot_user_sessions`
+→ 归属门禁红并报表名。两条都撤销即绿。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
