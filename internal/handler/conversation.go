@@ -32,6 +32,7 @@ type ConversationTaskStateProvider interface {
 type ConversationHandler struct {
 	db          database.ConversationStore
 	usage       *store.ModelTokenUsage // model_token_usage: 用量页唯一的读来源
+	execArgs    *store.Execution       // tool_executions: 历史渲染补全工具参数时唯一的读来源
 	logger      *zap.Logger
 	audit       *audit.Service
 	taskStopper ConversationTaskStopper
@@ -57,9 +58,10 @@ func (h *ConversationHandler) SetTaskStateProvider(provider ConversationTaskStat
 // NewConversationHandler 创建新的对话处理器
 func NewConversationHandler(db *database.DB, logger *zap.Logger) *ConversationHandler {
 	return &ConversationHandler{
-		db:     database.Narrow[database.ConversationStore](db),
-		usage:  newModelTokenUsageStore(db),
-		logger: logger,
+		db:       database.Narrow[database.ConversationStore](db),
+		usage:    newModelTokenUsageStore(db),
+		execArgs: newExecutionStore(db),
+		logger:   logger,
 	}
 }
 
@@ -349,7 +351,7 @@ func (h *ConversationHandler) GetMessageProcessDetails(c *gin.Context) {
 		}
 
 		details = database.DedupeConsecutiveProcessDetails(details)
-		out := processDetailsToJSON(h.logger, h.db, details, true)
+		out := processDetailsToJSON(h.logger, h.execArgs, details, true)
 		c.JSON(http.StatusOK, gin.H{
 			"processDetails": out,
 			"total":          len(out),
@@ -398,7 +400,7 @@ func (h *ConversationHandler) GetMessageProcessDetails(c *gin.Context) {
 		return
 	}
 	details = database.DedupeConsecutiveProcessDetails(details)
-	out := processDetailsToJSON(h.logger, h.db, details, false)
+	out := processDetailsToJSON(h.logger, h.execArgs, details, false)
 	// A page may end between tool_call and tool_result. Return the full-history
 	// execution summary so the UI can render terminal status without pretending
 	// that an unloaded result is still running.
@@ -433,7 +435,7 @@ func (h *ConversationHandler) GetProcessDetail(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "过程详情不存在"})
 		return
 	}
-	out := processDetailsToJSON(h.logger, h.db, []database.ProcessDetail{*detail}, true)
+	out := processDetailsToJSON(h.logger, h.execArgs, []database.ProcessDetail{*detail}, true)
 	if len(out) == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "过程详情不存在"})
 		return
@@ -447,6 +449,16 @@ func (h *ConversationHandler) GetProcessDetail(c *gin.Context) {
 // and the whole point is that it cannot reach any other table.
 type toolExecutionArgumentSource interface {
 	FindNearestToolExecutionArguments(conversationID, toolName string, at time.Time, window time.Duration) (string, map[string]interface{}, error)
+}
+
+// newExecutionStore is the nil-safe half of wiring that source: a handler built without a database
+// gets a connectionless store, which answers sql.ErrNoRows here exactly as the old wrapper did, and
+// not a crash on db.DB.
+func newExecutionStore(db *database.DB) *store.Execution {
+	if db == nil {
+		return store.NewExecution(nil)
+	}
+	return store.NewExecution(db.DB)
 }
 
 func processDetailsToJSON(logger *zap.Logger, db toolExecutionArgumentSource, details []database.ProcessDetail, includeToolPayload bool) []map[string]interface{} {

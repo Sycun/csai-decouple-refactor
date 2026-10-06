@@ -2502,6 +2502,41 @@ provider 的结构体**（照 `workflow.Store` 的写法），于是 `internal/p
 `go build` / `go vet ./...` 干净。复现"账本不再经过连接包装"：
 `grep -rn '\.db\.\(UpsertProjectFact\|ListProjectFacts\|AddProjectFactEdge\)' internal --include='*.go' | wc -l` → **0**。
 
+### P6 第二十八刀 —— 历史渲染器对 `tool_executions` 的那一问，交给表的另一个主人
+
+`internal/database/tool_execution_args_lookup.go` 整文件只有一个方法（`FindNearestToolExecutionArguments`，
+53 行），是"单域小文件"里最后两个之一。它的表主人已经在 `internal/store/execution.go` 里
+（那片最早是通知摘要的失败执行读面），所以这一刀不是新建 store，而是**把第二个问题也交给同一个主人**。
+搬法与前面几刀一样：整块原文 + 三行映射（`db.Query→e.db.Query`、`e == nil || e.db == nil` 顶掉
+`db == nil`），老家文件删除、`ConversationStore` 上那个成员同时删掉。
+
+**一处刻意保留的"软拒绝"**：这个方法所有答不上来的情形——输入为空、时间戳为零、窗口内没有、
+连接本身没有——一律回 `sql.ErrNoRows`，而**不是**store 层常见的 `store: ... requires a database` 错误。
+理由是调用方的语义：历史渲染器把"查不到参数"当成"就按存下来的样子渲染"，
+它以前拿到的就是这个答案；把失败闭合的错误塞进来会多出一条 debug 日志以外的可观察差异。
+而**真正坏了的数据**（`arguments` 列不是 JSON）仍然是显式错误，不许塌回 `ErrNoRows`——
+测试把这条不对称钉住了，因为它正是"损坏行看起来像缺席行"那类事故的入口。
+
+**新测试 5 条**（`internal/store/execution_test.go`，真库、零 mock）：最近优先、并列取更早的 `start_time`、
+`eino_fs::` 别名命中（这方法的第二半存在理由）、六种软拒绝 + `window<=0` 回落 5 秒、
+JSON 坏数据仍报错 + 无连接句柄不 panic。
+**第一条写完是假绿过的**：我原来只放两行（-4s 与 -0.4s），探针把 `ORDER BY` 换成 `start_time DESC`
+后测试照过——因为"最近的"恰好也是"最新的"。改成**三行**（-4s / -0.4s / +4s，最近的是中间那条）之后
+两种错误排序各自红：`DESC` → `matched execution = "far-after"`；只留 `ABS(...) ASC` 去掉次级键 →
+`tie answered "after", want the earlier start_time`。**夹具必须让每条错误的排序都答不同的行**，
+否则钉住的只是"这一行碰巧赢了"。
+
+**账**：`*database.DB` **241 → 240**（上限同步收紧），`internal/database` 里再也搜不到这个名字
+（`grep -rn "FindNearestToolExecutionArguments" internal/database` → 空）；
+传输层"持有自己表的 store"的字段 **25 → 26**（扫 1157 个字段，`*database.DB` 仍 0）；
+`internal/store` 包内测试 **178 → 183**，全仓测试函数 **1551**。
+`gofmt -l` 空、`go vet ./...` 干净、`go test -count=1 ./...` 全绿。
+
+**没顺手做的**：同目录的 `tool_guard_migration.go`（1 个方法）**留在数据层**——它在一条事务里同时写
+`tool_executions` 与 `tool_stats` 两张表，还夹着一段"旧版拦截文案"的文本判定；按"以表定主人"，
+`tool_stats` 还没有自己的主人，先搬 `tool_executions` 那一半只会造出第二个写者，
+而那段文本判定根本不该住在存储层。这一条留在 §10 之外当作下一片的前置。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
@@ -2551,7 +2586,7 @@ provider 的结构体**（照 `workflow.Store` 的写法），于是 `internal/p
 | P3 契约与前端 | **部分：三套事件名契约已完成并双侧比对**；逐文件 ES 模块未做 | `go test -count=1 -run 'TestSSEPage|TestPersistedDetail|TestGeneratedSSEEnum|TestPageLoads' ./internal/handler/`；手拼帧基线 0 |
 | P4 进程外插件宿主 | **部分：进程外 ABI + 软出网已落**；netns/seccomp 硬边界与内嵌 CPython **未做** | `ls internal/pluginhost`；`grep -rl 'seccomp\|CLONE_NEWNET' internal/` → **无匹配**（这就是"未做"的证据） |
 | P5 审核流水线/商店 | **部分：客户端强制 + 制品签名/撤销已落**；registry 服务端、气隙离线包、沙箱引爆自动化 **未做** | `ls internal/artifact`；`ls internal/registry` → **不存在** |
-| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、**数据层按域切出 20 个 store / `internal/store` 25 个生产文件、包内 178 条测试**（`*database.DB` 361 → **241**，只降门禁；漏洞域两片 + 攻击链一片 + workflow 一片已交，`internal/database/vulnerability.go`、`vulnerability_alert.go`、`attackchain.go`、`workflow.go` + `workflow_package.go`、`project_fact_edges.go` 六个文件删除）、**分层裸 SQL 归零**（两个自有层之外 0 条）、DATETIME 读法 24 处 → 1 处、应用回调不再挂在连接包装上、**handler 层不持有任何数据库句柄**、`vulnerabilities` 表按"唯一写入者"认领（`TestFindingsTableHasOneWriter`），告警两张表、`robot_user_bindings` 与攻击链两张表进归属清单；**黑板两张表（`project_facts` / `project_fact_edges`）的 SQL 与 DDL 整体进 `store.Facts`**，`TestProjectFactsHasOneWriter` 按写入者认领（事实 6 条写、边 9 条写，各自只有一个主人文件），store 的写面由 `TestStoreWritesOnlyTablesItOwns` 双向核对（账本 29 张表）；黑板账本已彻底离开连接包装（`ProjectFactStore` 劈成 `ProjectRowStore` + `BlackboardLedger`，18 个转发删掉）；搬走的 DDL 由 `TestSchemaEnsuresAreWiredAtBoot` 逐条盯开机接线、外键顺序与"老家不许再提这张表"、Eino 6 包（适配外 3 包）、`AgentHandler` 六刀至 **88 方法 / 20 文件**、审计注入门禁、手写 OpenAPI 文档按域拆成 5 个分组文件 + golden（157 操作逐字节等值） | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `transport layer: 0 structs hold *database.DB, 18 fields hold a narrowed database interface, 25 hold their own table store, 1156 struct fields scanned (started 19/0)`；`go test -count=1 -v -run TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt ./internal/layering/` 报 `0 statements in 0 files, over 511 production files scanned`；`go test -count=1 -run 'TestFindingContract' ./internal/handler/` 9 条契约用例；`go test -count=1 -run 'TestOpenAPI' ./internal/handler/` |
+| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、**数据层按域切出 20 个 store / `internal/store` 25 个生产文件、包内 183 条测试**（`*database.DB` 361 → **240**，只降门禁；漏洞域两片 + 攻击链一片 + workflow 一片已交，`internal/database/vulnerability.go`、`vulnerability_alert.go`、`attackchain.go`、`workflow.go` + `workflow_package.go`、`project_fact_edges.go` 六个文件删除）、**分层裸 SQL 归零**（两个自有层之外 0 条）、DATETIME 读法 24 处 → 1 处、应用回调不再挂在连接包装上、**handler 层不持有任何数据库句柄**、`vulnerabilities` 表按"唯一写入者"认领（`TestFindingsTableHasOneWriter`），告警两张表、`robot_user_bindings` 与攻击链两张表进归属清单；**黑板两张表（`project_facts` / `project_fact_edges`）的 SQL 与 DDL 整体进 `store.Facts`**，`TestProjectFactsHasOneWriter` 按写入者认领（事实 6 条写、边 9 条写，各自只有一个主人文件），store 的写面由 `TestStoreWritesOnlyTablesItOwns` 双向核对（账本 29 张表）；黑板账本已彻底离开连接包装（`ProjectFactStore` 劈成 `ProjectRowStore` + `BlackboardLedger`，18 个转发删掉）；搬走的 DDL 由 `TestSchemaEnsuresAreWiredAtBoot` 逐条盯开机接线、外键顺序与"老家不许再提这张表"、Eino 6 包（适配外 3 包）、`AgentHandler` 六刀至 **88 方法 / 20 文件**、审计注入门禁、手写 OpenAPI 文档按域拆成 5 个分组文件 + golden（157 操作逐字节等值） | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `transport layer: 0 structs hold *database.DB, 18 fields hold a narrowed database interface, 26 hold their own table store, 1157 struct fields scanned (started 19/0)`；`go test -count=1 -v -run TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt ./internal/layering/` 报 `0 statements in 0 files, over 511 production files scanned`；`go test -count=1 -run 'TestFindingContract' ./internal/handler/` 9 条契约用例；`go test -count=1 -run 'TestOpenAPI' ./internal/handler/` |
 | §6.1 社区知识控制 | **代码层已落**（围栏 + 入库拒绝 + 装配点守卫）；是否按运行期不可信处理仍待裁决（决策项 4） | `go test -count=1 ./internal/contentpolicy/` |
 
 **没有做成的事**（不假装完成）：`AgentHandler` 分解本体（88 方法 / 20 文件，仍是全仓最大的类型；
