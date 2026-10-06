@@ -1,6 +1,7 @@
 package database
 
 import (
+	"cyberstrike-ai/internal/store"
 	"path/filepath"
 	"testing"
 
@@ -40,7 +41,7 @@ func TestConversationProjectFilter(t *testing.T) {
 		t.Fatalf("CountConversations project: total=%d err=%v", totalBound, err)
 	}
 
-	totalUnbound, err := db.CountConversations("", ProjectFilterUnbound)
+	totalUnbound, err := db.CountConversations("", store.ProjectUnbound)
 	if err != nil || totalUnbound != 1 {
 		t.Fatalf("CountConversations unbound: total=%d err=%v", totalUnbound, err)
 	}
@@ -50,7 +51,7 @@ func TestConversationProjectFilter(t *testing.T) {
 		t.Fatalf("ListConversations project: %+v err=%v", listBound, err)
 	}
 
-	listUnbound, err := db.ListConversations(10, 0, "", "", ProjectFilterUnbound)
+	listUnbound, err := db.ListConversations(10, 0, "", "", store.ProjectUnbound)
 	if err != nil || len(listUnbound) != 1 || listUnbound[0].ID != convNone.ID {
 		t.Fatalf("ListConversations unbound: %+v err=%v", listUnbound, err)
 	}

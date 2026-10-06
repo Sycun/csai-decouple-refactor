@@ -1427,7 +1427,7 @@ func registerWebshellManagementTools(mcpServer *mcp.Server, db *database.DB, web
 		if projectID == "" {
 			return nil
 		}
-		if projectID == database.ProjectFilterUnbound {
+		if projectID == store.ProjectUnbound {
 			return nil
 		}
 		if !db.UserCanAccessResource(principal.UserID, principal.ScopeFor(permission), "project", projectID) {

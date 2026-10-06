@@ -2587,7 +2587,39 @@ COALESCE 才是它活下来的原因）、`UnlinkProject` 只清该清的、无�
 **账**：`internal/store` **21 个构造器 / 26 个生产文件 / 192 条包内测试**；传输层
 **0 / 18 / 28**（扫 1160 字段）；全仓测试函数 **1560**；`gofmt -l` 空、`go vet ./...` 干净。
 
-### 明确还没做（不假装完成）
+### P6 第三十刀 —— 「未绑定项目」这个哨兵值只剩一处声明，并且和控制台、API 文档互相钉住
+
+同一个事实此前写了**三遍**，而且是两种不同的字面量：`database.ProjectFilterUnbound = "__none__"`（数据层）、
+`store.ProjectUnbound = "__none__"`（store 层，值相同、声明重复），以及 `capability.ProjectFilterUnbound = "__unbound__"`
+（能力策略适配器**自己**的词）。两份 `"__none__"` 是最危险的那种重复：改任何一边都能干净编译，另一边从此
+**再也不匹配**——列表筛选会把"只要未绑定项目的对话"读成"筛一个不存在的项目 id"，返回空集且不报错。
+
+**做的**：删掉数据层那份 const，13 个引用点（`internal/database/conversation.go`、`c2.go` 五处、
+`app/` 四处限定名）统一改成 `store.ProjectUnbound`；`capability` 那份**留着**并在原处写清理由——它是策略
+适配器对外的词，边界上那一次显式翻译（`app/capability_policy.go` 把 `store.ProjectUnbound` 换成
+`capability.ProjectFilterUnbound`）比两处各自揣测同一个字面量更清楚。`*database.DB` 方法数不变（232）。
+
+**新漂移测试** `internal/store/project_sentinel_test.go` **3 个用例**，判据一律**从源码字面量里解析**而不是
+信任何摘要：① 生产代码里 `= "__none__"` 的 const 声明恰好一处、必须在 `internal/store`，且值仍是 `__none__`
+（这是线上的值，不是可以改名的名字）；② 解析 `web/static/js/chat.js` 里 `CONVERSATION_PROJECT_FILTER_NONE`
+的字面量与 `store.ProjectUnbound` 比对；③ 用 go/ast 读 OpenAPI 那份文档的字符串字面量，要求凡出现
+"按项目筛选"的描述都必须带着这个值、且全文至少一处带它。每个用例都带"解析不到就失败"的断言——
+**扫不到东西的漂移测试比没有测试更糟**。三次探针各自验红：把数据层 const 加回去 →
+`declared 2 times: [internal/database/conversation.go: ProjectFilterUnbound internal/store/model_token_usage.go: ProjectUnbound]`；
+把 chat.js 改成 `__unbound__` → `console sends "__unbound__", Go compares against "__none__"`；
+抹掉文档里的值 → `the project filter description no longer names the sentinel callers must pass`。
+
+**第 ③ 条自己先写错一次**：我最初要求同一条字面量里**既有 `project_id` 又有 `__none__`**，而真实描述是
+`按项目筛选；传 __none__ 表示仅未绑定项目的对话`（参数名在别的字面量里），于是它以一个**测试自身的 bug**
+报了红。改的是判据（把两类命中分开数），不是放宽断言——先把真正的线上事实单独确认过才动手。
+
+**脚本自伤第三次，记成规矩**：先用一段 python 把数据层 const 换成注释却**没回写文件**，紧接着的全量改名
+于是从磁盘读到旧内容，最后落盘的是 `const store.ProjectUnbound = "__none__"`——语法错误，被 `go build`
+当场抓住。**规矩**：每一步脚本变换都必须**立刻写盘**再让下一步读，否则两步各自"看起来成功"、合起来造出
+第三条路径。（同一次插入还把手册里的小标题重复了一行——写文档的脚本同样要读回结果核对，这里已改正。）
+
+**账**：`internal/store` 包内测试 **192 → 195**、全仓测试函数 **1563**；`gofmt -l` 空、`go vet ./...` 干净、
+`go test -count=1 ./...` 全绿；`grep -rn '"__none__"' --include='*.go' internal | grep -v _test | wc -l` 从 2 降到 1。
 
 ### 明确还没做（不假装完成）
 

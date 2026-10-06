@@ -13,6 +13,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -54,7 +55,7 @@ func (d depsAdapter) ConversationID(ctx context.Context) string {
 
 func (d depsAdapter) ProjectFilter(ctx context.Context) string {
 	filter := mcpEffectiveProjectFilter(ctx, d.db)
-	if filter == database.ProjectFilterUnbound {
+	if filter == store.ProjectUnbound {
 		return capability.ProjectFilterUnbound
 	}
 	return filter

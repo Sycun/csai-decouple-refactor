@@ -16,9 +16,6 @@ import (
 	"go.uber.org/zap"
 )
 
-// ProjectFilterUnbound 列表 API 中 project_id=__none__ 表示仅未绑定项目的对话。
-const ProjectFilterUnbound = "__none__"
-
 // Conversation 对话
 type Conversation struct {
 	ID        string    `json:"id"`
@@ -401,7 +398,7 @@ func appendConversationProjectFilter(where string, args []interface{}, projectID
 		return where, args
 	}
 	col := conversationProjectIDColumn(alias)
-	if pid == ProjectFilterUnbound {
+	if pid == store.ProjectUnbound {
 		return where + fmt.Sprintf(" AND (%s IS NULL OR TRIM(COALESCE(%s, '')) = '')", col, col), args
 	}
 	return where + fmt.Sprintf(" AND %s = ?", col), append(args, pid)

@@ -121,7 +121,7 @@ tcp_reverse 默认仅接受 CSB1 加密 Beacon（AES-GCM + ImplantToken）才登
 			projectID := strings.TrimSpace(getString(params, "project_id"))
 			if projectID == "" {
 				projectID = mcpEffectiveProjectFilter(ctx, m.DB())
-				if projectID == database.ProjectFilterUnbound {
+				if projectID == store.ProjectUnbound {
 					projectID = ""
 				}
 			}

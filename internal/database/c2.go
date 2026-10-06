@@ -298,7 +298,7 @@ func (db *DB) ListC2Listeners() ([]*C2Listener, error) {
 func (db *DB) ListC2ListenersForAccess(access store.Access, projectID string) ([]*C2Listener, error) {
 	conditions := []string{"1=1"}
 	args := []interface{}{}
-	if projectID = strings.TrimSpace(projectID); projectID == ProjectFilterUnbound {
+	if projectID = strings.TrimSpace(projectID); projectID == store.ProjectUnbound {
 		conditions = append(conditions, "COALESCE(project_id, '') = ''")
 	} else if projectID != "" {
 		conditions = append(conditions, "COALESCE(project_id, '') = ?")
@@ -559,7 +559,7 @@ func (db *DB) ListC2Sessions(filter ListC2SessionsFilter) ([]*C2Session, error) 
 		conditions = append(conditions, "listener_id = ?")
 		args = append(args, filter.ListenerID)
 	}
-	if strings.TrimSpace(filter.ProjectID) == ProjectFilterUnbound {
+	if strings.TrimSpace(filter.ProjectID) == store.ProjectUnbound {
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM c2_listeners l
 			WHERE l.id = c2_sessions.listener_id AND COALESCE(l.project_id, '') = ''
@@ -666,7 +666,7 @@ func buildC2SessionsWhere(filter ListC2SessionsFilter) ([]string, []interface{})
 		conditions = append(conditions, "listener_id = ?")
 		args = append(args, filter.ListenerID)
 	}
-	if strings.TrimSpace(filter.ProjectID) == ProjectFilterUnbound {
+	if strings.TrimSpace(filter.ProjectID) == store.ProjectUnbound {
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM c2_listeners l
 			WHERE l.id = c2_sessions.listener_id AND COALESCE(l.project_id, '') = ''
@@ -995,7 +995,7 @@ func buildC2TasksWhere(filter ListC2TasksFilter) (where string, args []interface
 		conditions = append(conditions, "session_id = ?")
 		args = append(args, filter.SessionID)
 	}
-	if strings.TrimSpace(filter.ProjectID) == ProjectFilterUnbound {
+	if strings.TrimSpace(filter.ProjectID) == store.ProjectUnbound {
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM c2_sessions s
 			JOIN c2_listeners l ON l.id = s.listener_id
@@ -1490,7 +1490,7 @@ func buildC2EventsWhere(filter ListC2EventsFilter) (where string, args []interfa
 		conditions = append(conditions, "category = ?")
 		args = append(args, filter.Category)
 	}
-	if strings.TrimSpace(filter.ProjectID) == ProjectFilterUnbound {
+	if strings.TrimSpace(filter.ProjectID) == store.ProjectUnbound {
 		conditions = append(conditions, `(
 			EXISTS (
 				SELECT 1 FROM c2_sessions s
