@@ -86,7 +86,9 @@ import (
 // the seven late columns and the conversation-key rebuild that used to run at start-up. The two
 // migration methods are gone; EnsureSchema now runs from store.Vulnerabilities at the same boot
 // position, still after conversations because of the foreign key onto it.
-const dbMethodCeiling = 189
+// 188: the migration that backfilled messages.updated_at / reasoning_content left *DB too, so the
+// table's owner now runs its own schema, its indexes, its late columns and its start-up backfill.
+const dbMethodCeiling = 188
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

@@ -94,6 +94,13 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 			mustNotChangeSQL: "webshell_connection",
 		},
 		{
+			storeConstructor: "NewSession",
+			tablePrefix:      "messages",
+			anchorCall:       "createConversationsTable",
+			anchorReason:     "both tables cascade off conversations, so they cannot be created before it",
+			mustNotChangeSQL: "process_details",
+		},
+		{
 			storeConstructor: "NewFacts",
 			tablePrefix:      "project_fact",
 			anchorCall:       "createProjectsTable",

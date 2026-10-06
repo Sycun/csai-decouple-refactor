@@ -2932,6 +2932,38 @@ NewVulnerabilities owns`；② 把启动那行 `EnsureSchema()` 换成一句无�
 `writeLedger` 35 张表、`writeDebt` 仍 **0**；`gofmt -l` 空、`go build ./...`、`go vet ./...`、
 `go test -count=1 ./...` 全绿。
 
+### P6 第三十七刀 —— `messages` 与 `process_details` 的建表与补列也从启动里搬进 `store.Session`
+
+这两张表的**写**在第三十五刀已经归到一个主人（`writeDebt` 清零），但**表本身**还是 `database.go`
+启动里建的：两条 CREATE、三条索引，加上 `migrateMessagesTable`（补 `updated_at`、补 `reasoning_content`、
+中间那句 `UPDATE messages SET updated_at = created_at …` 回填）。
+新 `internal/store/session_schema.go`：`EnsureSchema`（两张表按依赖顺序 + 3 条索引）、
+`MigrateMessageColumns`（**顺序与失败规则照原样**：补列失败就带着列名中止后续，
+"重复列"是正常答案不算失败，回填 UPDATE 失败不拦启动），外键/列探针抽成包内共享的
+`schemaColumnCount(db, table, column)` 与导出的 `SchemaHasColumn`（漏洞那边那份 5 行 helper 现在也调它，
+一个包里只剩一种"探 schema"的写法）。**水位 189 → 188**，`database.go` 里 `CREATE INDEX`
+39 → 22 行、`CREATE TABLE` 剩 10 张（conversations / tool_executions / tool_stats / projects
+与 c2 那一组——它们的主人都还没到）。
+
+**门禁三条各自验红**：boot 清单新增 `NewSession`（锚点 `createConversationsTable`，两张表都级联指向它；
+`mustNotChangeSQL: "process_details"`）。
+① 把启动那行 `EnsureSchema()` 换成另一个 store 的调用 →
+`NewSession: EnsureSchema is called 0 times on the boot path, want exactly 1`；
+② 在锚点之后多插一次内联建表（造出"第二个主人"的样子）→ 同一条 case 以"still runs / called 0 times"红；
+③ 撤销后复绿。**两次探针都打印了"文件确实被改过"**，不然"绿"可能只是脚本没写进去。
+
+**新测试** `internal/store/session_schema_test.go` **3 个用例**（真库）：两张表建出来且二次幂等、
+三条索引逐一数、**`PRAGMA foreign_key_list` 读回 messages→conversations 与 process_details→messages 的
+`ON DELETE CASCADE`**（删对话保留/连带清空的语义就在这几条外键上，不能只看建表不报错）；
+用"第一版发布"的 messages DDL（没有 `updated_at`、没有 `reasoning_content`）建库塞一行数据，
+跑两遍补列（第二遍全是重复列）→ 两列都在，且**那行老数据的 `updated_at` 被回填成它自己的 `created_at`
+而不是当前时间**；无连接时两个方法一律拒，且"探一张不存在的表"必须**报错**而不是当作"列不存在"
+（否则下一次读会在一个没人提过的列上失败）。
+
+**账（实测）**：`*database.DB` **188**；`internal/store` 包内测试 **209 → 212**；全仓测试函数 **1588**；
+`writeLedger` 35 张表 / `writeDebt` 0 条；索引归属门禁扫到的表数继续涨（本刀把两张表带进来）；
+`gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

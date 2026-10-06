@@ -205,31 +205,10 @@ func (db *DB) initTables() error {
 	);`
 
 	// 创建消息表
-	createMessagesTable := `
-	CREATE TABLE IF NOT EXISTS messages (
-		id TEXT PRIMARY KEY,
-		conversation_id TEXT NOT NULL,
-		role TEXT NOT NULL,
-		content TEXT NOT NULL,
-		mcp_execution_ids TEXT,
-		created_at DATETIME NOT NULL,
-		updated_at DATETIME NOT NULL,
-		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-	);`
+	// messages 表的 DDL 在 store.Session 里（见 session_schema.go）。
 
 	// 创建过程详情表
-	createProcessDetailsTable := `
-	CREATE TABLE IF NOT EXISTS process_details (
-		id TEXT PRIMARY KEY,
-		message_id TEXT NOT NULL,
-		conversation_id TEXT NOT NULL,
-		event_type TEXT NOT NULL,
-		message TEXT,
-		data TEXT,
-		created_at DATETIME NOT NULL,
-		FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE,
-		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-	);`
+	// process_details 表的 DDL 在 store.Session 里（见 session_schema.go）。
 
 	// 创建工具执行记录表
 	createToolExecutionsTable := `
@@ -405,10 +384,7 @@ func (db *DB) initTables() error {
 
 	// 创建索引
 	createIndexes := `
-	CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
 	CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at);
-	CREATE INDEX IF NOT EXISTS idx_process_details_message_id ON process_details(message_id);
-	CREATE INDEX IF NOT EXISTS idx_process_details_conversation_id ON process_details(conversation_id);
 	CREATE INDEX IF NOT EXISTS idx_tool_executions_tool_name ON tool_executions(tool_name);
 	CREATE INDEX IF NOT EXISTS idx_tool_executions_start_time ON tool_executions(start_time);
 	CREATE INDEX IF NOT EXISTS idx_tool_executions_status ON tool_executions(status);
@@ -436,13 +412,11 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("创建conversations表失败: %w", err)
 	}
 
-	if _, err := db.Exec(createMessagesTable); err != nil {
-		return fmt.Errorf("创建messages表失败: %w", err)
+	// 两张表的 DDL 与三条索引归 store.Session；顺序仍在 conversations 之后（两张表都外键指向它）。
+	if err := store.NewSession(db.DB).EnsureSchema(); err != nil {
+		return err
 	}
 
-	if _, err := db.Exec(createProcessDetailsTable); err != nil {
-		return fmt.Errorf("创建process_details表失败: %w", err)
-	}
 
 	if _, err := db.Exec(createToolExecutionsTable); err != nil {
 		return fmt.Errorf("创建tool_executions表失败: %w", err)
@@ -522,7 +496,7 @@ func (db *DB) initTables() error {
 		// 不返回错误，允许继续运行
 	}
 
-	if err := db.migrateMessagesTable(); err != nil {
+	if err := store.NewSession(db.DB).MigrateMessageColumns(); err != nil {
 		db.logger.Warn("迁移messages表失败", zap.Error(err))
 		// 不返回错误，允许继续运行
 	}
@@ -604,52 +578,6 @@ func (db *DB) migrateToolExecutionsPartialOutputColumns() error {
 	return nil
 }
 
-// migrateMessagesTable 迁移 messages 表，补充 updated_at 字段。
-// 语义：updated_at 表示该条消息最后一次被写入/更新的时间（例如助手占位消息在任务结束时更新正文）。
-func (db *DB) migrateMessagesTable() error {
-	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name='updated_at'").Scan(&count)
-	if err != nil {
-		// 如果查询失败，尝试添加字段
-		if _, addErr := db.Exec("ALTER TABLE messages ADD COLUMN updated_at DATETIME"); addErr != nil {
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				return fmt.Errorf("添加 messages.updated_at 字段失败: %w", addErr)
-			}
-		}
-	} else if count == 0 {
-		if _, err := db.Exec("ALTER TABLE messages ADD COLUMN updated_at DATETIME"); err != nil {
-			errMsg := strings.ToLower(err.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				return fmt.Errorf("添加 messages.updated_at 字段失败: %w", err)
-			}
-		}
-	}
-
-	// 回填已有数据：让 updated_at 至少等于 created_at，避免前端出现空/当前时间回退。
-	// 这条 UPDATE 归表的拥有者，所以这里只负责在原来的位置调用它，并沿用"失败也继续启动"。
-	_ = store.NewSession(db.DB).BackfillMessageUpdatedAt()
-
-	// reasoning_content：DeepSeek 思考模式 + 工具调用续跑；与 last_react_input 互补，供消息表回退路径回放
-	var rcColCount int
-	errRC := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name='reasoning_content'").Scan(&rcColCount)
-	if errRC != nil {
-		if _, addErr := db.Exec("ALTER TABLE messages ADD COLUMN reasoning_content TEXT"); addErr != nil {
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				return fmt.Errorf("添加 messages.reasoning_content 字段失败: %w", addErr)
-			}
-		}
-	} else if rcColCount == 0 {
-		if _, err := db.Exec("ALTER TABLE messages ADD COLUMN reasoning_content TEXT"); err != nil {
-			errMsg := strings.ToLower(err.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				return fmt.Errorf("添加 messages.reasoning_content 字段失败: %w", err)
-			}
-		}
-	}
-	return nil
-}
 
 // migrateConversationsTable 迁移conversations表，添加新字段
 func (db *DB) migrateConversationsTable() error {
