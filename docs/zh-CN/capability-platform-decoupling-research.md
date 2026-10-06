@@ -2839,7 +2839,8 @@ SQLite 因为 `idx_batch_task_queues_title` 占用而**拒绝** DROP `title` 这
 `dbMethodCeiling` 213 → **191**；导出方法地板 180 → **158**（实测正好 158，减掉的 22 条全是这批转发）；
 `narrowedAssignmentFloor` 18 → **17**（少的那一条就是 `m.db = Narrow[...]`）；
 `consumerSurfaceMemberFloor` 180 → **162**（`BatchTaskStore` 连同它描述的 22 个成员一起消失，
-消费者面少了一个域）。`gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿。
+消费者面少了一个域）。`gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿；
+`internal/audit` 新增 1 个测试函数，全仓测试函数 **1575 → 1576**。
 
 ### 明确还没做（不假装完成）
 
