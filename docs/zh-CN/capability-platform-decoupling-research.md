@@ -1348,7 +1348,7 @@ store 侧 6 条真库用例（前缀级联删除、子树改名带同一套 `LIK
 `internal/database.DB` **仍然是 `struct { *sql.DB; ... }`**（`database.go:48-49`）——
 嵌入意味着"任何持有 `*database.DB` 的包都能对任意表写 SQL"。前七片靠窄接口 + `database.Narrow`
 把 handler 层的可达收掉了（`h.db.Exec/Query/...` 在 `internal/handler` 已归零），
-但嵌入本身还在。用**接收者形状**重新量了一遍（`(db|d|conn|sqlDB)\.(Exec|Query|QueryRow|Begin|Prepare|MustExec)\(`，
+但嵌入本身还在。用**接收者形状**重新量了一遍（正则 `\b(db|d|conn|sqlDB)\.(Exec|Query|QueryRow|Begin|Prepare|MustExec)\(`，
 遍历域 = `internal/` + `cmd/` 全部非测试文件，**排除** `internal/database/` 与 `internal/store/`
 ——这两层写 SQL 是设计在起作用而不是泄漏）：
 
