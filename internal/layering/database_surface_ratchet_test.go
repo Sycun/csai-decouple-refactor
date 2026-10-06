@@ -42,7 +42,10 @@ import (
 // 310 -> 308: the connection wrapper stopped being a callback registry. SetVulnerabilityCreatedHook and
 // NotifyVulnerabilityCreated are gone; the route lives in internal/app, where the ordering reason for
 // an indirection (tools registered before the listener exists) is actually a wiring concern.
-const dbMethodCeiling = 308
+// 308 -> 306: c2_payload_artifacts moved whole - the record and the ownership lookup. Its access check
+// was a third method on the wrapper; it became a composition at the download gate instead, so the
+// table's store never answers a permission question.
+const dbMethodCeiling = 306
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

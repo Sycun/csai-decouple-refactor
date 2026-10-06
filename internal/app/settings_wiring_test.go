@@ -42,6 +42,7 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	modelTokenUsageSchema := 0
 	robotSessionSchema := 0
 	robotIdentitySchema := 0
+	c2ArtifactSchema := 0
 	auditSchemaOffset := -1
 	usageSchemaOffset := -1
 	usageSchemaFile := ""
@@ -92,6 +93,10 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 						mcpProvisioned++
 					case "ensureKnowledgeRetrievalSchema":
 						knowledgeRetrievalSchema++
+					case "ensureC2PayloadArtifactSchema":
+						// The table left the RBAC sweep with its own store; created nowhere, every
+						// payload download would be refused as "belongs to nobody".
+						c2ArtifactSchema++
 					case "ensureRobotIdentitySchema":
 						// The two binding tables left the RBAC start-up sweep; created nowhere, a
 						// fresh install would fail the first 绑定 command it ever received.
@@ -258,6 +263,10 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 			"offset %d, ensureModelTokenUsageSchema at %d): its history carry-over reads process_details, "+
 			"so running it earlier fails with \"no such table\" and the usage page stays empty",
 			newDBOffset, usageSchemaOffset)
+	}
+	if c2ArtifactSchema < 1 {
+		t.Fatalf("ensureC2PayloadArtifactSchema is never called at boot: c2_payload_artifacts left the " +
+			"RBAC sweep, so the payload download gate would find no ownership record and deny everything")
 	}
 	if robotIdentitySchema < 1 {
 		t.Fatalf("ensureRobotIdentitySchema is never called at boot: robot_user_bindings left the RBAC " +

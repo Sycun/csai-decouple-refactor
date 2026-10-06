@@ -140,18 +140,11 @@ func (db *DB) initRBACTables() error {
 		);`,
 		// robot_user_bindings / robot_binding_codes 由 store.RobotIdentity 自己建，
 		// 见 internal/app 启动里的那一次 ensureRobotIdentitySchema。
-		`CREATE TABLE IF NOT EXISTS c2_payload_artifacts (
-			filename TEXT PRIMARY KEY,
-			payload_id TEXT NOT NULL,
-			listener_id TEXT NOT NULL,
-			owner_user_id TEXT NOT NULL,
-			created_at DATETIME NOT NULL
-		);`,
+		// c2_payload_artifacts 由 store.C2PayloadArtifacts 自己建，见启动里的 ensureC2PayloadArtifactSchema。
 		`CREATE INDEX IF NOT EXISTS idx_rbac_user_roles_user ON rbac_user_roles(user_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_rbac_role_permissions_role ON rbac_role_permissions(role_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_rbac_assignments_user_resource ON rbac_resource_assignments(user_id, resource_type, resource_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_rbac_assignments_resource ON rbac_resource_assignments(resource_type, resource_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_c2_payload_artifacts_listener ON c2_payload_artifacts(listener_id);`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {

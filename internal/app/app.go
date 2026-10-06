@@ -135,6 +135,11 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	// registered further down, while the listener - the robot handler's alert method - is built even
 	// later, so the route is what lets both ends be wired in their natural order.
 	vulnAlerts := &vulnerabilityAlertRoute{logger: log.Logger}
+	// c2_payload_artifacts records who built which payload; the download gate denies what it cannot
+	// attribute, so the table has to exist before the first beacon is built.
+	if err := ensureC2PayloadArtifactSchema(db); err != nil {
+		log.Logger.Warn("初始化 c2_payload_artifacts 表失败", zap.Error(err))
+	}
 	// robot_user_bindings / robot_binding_codes have foreign keys onto rbac_users, created just above.
 	if err := ensureRobotIdentitySchema(db); err != nil {
 		log.Logger.Warn("初始化机器人绑定表失败", zap.Error(err))

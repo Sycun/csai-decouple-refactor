@@ -15,6 +15,7 @@ import (
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/mcp/builtin"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -620,7 +621,7 @@ func registerC2PayloadTool(s *mcp.Server, m *c2.Manager, l *zap.Logger, webListe
 				return makeC2Result(nil, err)
 			}
 			if principal, ok := authctx.PrincipalFromContext(ctx); ok {
-				_ = m.DB().RecordC2PayloadArtifact(filepath.Base(result.OutputPath), result.PayloadID, result.ListenerID, principal.UserID)
+				_ = store.NewC2PayloadArtifacts(m.DB().DB).Record(filepath.Base(result.OutputPath), result.PayloadID, result.ListenerID, principal.UserID)
 			}
 			return makeC2Result(map[string]interface{}{
 				"payload_id": result.PayloadID, "download_path": result.DownloadPath,

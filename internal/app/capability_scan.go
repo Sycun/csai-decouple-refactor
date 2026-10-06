@@ -330,6 +330,15 @@ func ensureAuditLogsSchema(db *database.DB) error {
 	return store.NewAuditLogs(db.DB).EnsureSchema()
 }
 
+// ensureC2PayloadArtifactSchema creates c2_payload_artifacts through the store that owns it. The table
+// is what the payload download gate reads, so a base without it refuses every download.
+func ensureC2PayloadArtifactSchema(db *database.DB) error {
+	if db == nil {
+		return nil
+	}
+	return store.NewC2PayloadArtifacts(db.DB).EnsureSchema()
+}
+
 // ensureRobotIdentitySchema creates robot_user_bindings and robot_binding_codes through the store that
 // owns them. Both carry a foreign key onto rbac_users, which NewDB has just created.
 func ensureRobotIdentitySchema(db *database.DB) error {

@@ -773,8 +773,8 @@ grep -rn go:embed --include='*.go' . | grep -v _test | wc -l       # 3（原 0�
 当前基线（2026-10-06 第十四片后复测，全部为当场命令输出）：`make fmt-check` **硬零（gofmt: clean）**、
 `go build ./...` 干净、`go vet ./...` 干净、`make test-gates`（= 同步测试树 + verify + gofmt + vet +
 `go test -race -count=1 ./...` + js 检查 + layering + wiring + build）**exit 0，69 个 ok 行、
-其中含测试的包 47 个、0 竞争**；测试函数 **1478** 个（重构前 HEAD 为 989，**+489**），
-`internal/store` 生产文件 **17 个**、包内测试 **128** 条，`*database.DB` 方法 **308** 个。
+其中含测试的包 47 个、0 竞争**；测试函数 **1485** 个（重构前 HEAD 为 989，**+496**），
+`internal/store` 生产文件 **18 个**、包内测试 **134** 条，`*database.DB` 方法 **306** 个。
 四条数字均为本片当场命令的第一手读数
 （`grep -rh "^func Test" --include='*_test.go' internal cmd | wc -l`、`ls internal/store/*.go | grep -v _test | wc -l`、
 同形命令数 `internal/store/*_test.go` 里的 `^func Test`）；上一版此处写的是凭记忆的数字，被同一条命令当场否掉——
@@ -1692,6 +1692,30 @@ Go 的 `Parse` 里布局的空格也匹配 `T`、`.999999999` 也匹配短小数
 死面扫描的地板这次从 270 降到 **260**（实测 269）并改写它的注释：
 地板的职责是"扫描器还在读整个目录"，不是把每个切片都会下降的数字冻在原地——
 上一片把它教得太贴实测值，这一片两方法一删就撞线了。
+
+### P6 第十七刀 —— `c2_payload_artifacts`：payload 下载门改成"两个问题"
+
+最后一个自带表的小文件（2 个方法）交回 `store.C2PayloadArtifacts`，`internal/database/c2_payload.go` 整文件删除，
+`*database.DB` **306**。原来的 `UserCanAccessC2Payload(userID, scope, filename)` 把两件事写在一条方法里：
+查这张表的归属，以及调 RBAC 层问"这个用户能不能碰那个 listener"。现在拆开——store 只答
+`Lookup(filename) → {owner, listener, found}`，下载门 `userMayFetchPayloadArtifact` 依次问
+"是不是你建的"与"你能不能访问那个 listener"；建表与索引照例从 `rbac.go` 的启动清单搬进
+`EnsureSchema` + 启动的 `ensureC2PayloadArtifactSchema`（AST 接线门禁盯住）。归属清单加上这张表。
+
+测试：store 侧 6 条（幂等建表与索引、写入读出逐字段、按文件名重建只留一条且换掉归属、
+**残缺归属静默不写**——build 路径忽略返回的 error，写一条没人能认领的记录比不写更糟、
+未记录文件 `found=false` 且不是错误、trim 后再查、无连接被拒）；
+下载门 1 条 7 例走真库真 RBAC：owner 命中、陌生人拒、**被分到那个 listener 的人**命中、
+分配不跨 listener、scope=all 命中、未记录文件对受限调用者拒、未记录文件对 scope=all **仍然放行**
+（这是被原样保下来的旧行为： unrestricted 那条路径从来没查过记录，文件在不在磁盘上才是下一道）。
+
+**两条负结果，都不假装被测到**：
+① `!found` 那道守卫**测试区分不出来**——记录缺失时 owner 与 listener 都是空串，后面两条检查照样拒。
+删掉守卫，7 例仍全绿。守卫作为"规则的字面陈述"保留，注释里写明没有测试证明它必要。
+② 我第一版的并发测试**断言写错了**：路由是异步派发的，只 `wg.Wait()` 等调用方并不等投递，
+`-race` 下 16 条只收到 15 条。改成等 `delivered` 通道收满 16 次，连跑 6 轮稳定。
+教训：异步边界的测试必须等**副作用发生**，不是等"提交副作用的那次调用"返回——
+本地不带 `-race` 单跑时它是绿的，只有全套 race 才暴露。
 
 ### 明确还没做（不假装完成）
 

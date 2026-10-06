@@ -798,7 +798,7 @@ func (h *C2Handler) PayloadBuild(c *gin.Context) {
 		return
 	}
 	if session, ok := security.CurrentSession(c); ok {
-		_ = h.mgr().DB().RecordC2PayloadArtifact(filepath.Base(result.OutputPath), result.PayloadID, result.ListenerID, session.UserID)
+		_ = c2PayloadArtifacts(h.mgr()).Record(filepath.Base(result.OutputPath), result.PayloadID, result.ListenerID, session.UserID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -819,7 +819,7 @@ func (h *C2Handler) PayloadDownload(c *gin.Context) {
 		return
 	}
 	session, ok := security.CurrentSession(c)
-	if !ok || !h.mgr().DB().UserCanAccessC2Payload(session.UserID, session.Scope, filename) {
+	if !ok || !userMayFetchPayloadArtifact(h.mgr(), session, filename) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
 		return
 	}
