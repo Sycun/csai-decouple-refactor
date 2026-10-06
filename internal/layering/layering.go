@@ -278,9 +278,8 @@ func FieldTypesByFile(root, pkgDir string) (map[string]map[string]int, error) {
 
 // DatabaseInterfaces returns every interface name declared inside internal/database, parsed from
 // source. The shape gate used to guess "is this a narrowed surface?" from the name pattern
-// `database.*Store`, which silently skipped the surfaces that are not called stores:
-// `store.Access` (5 handler fields) and `database.VulnerabilityListFilter` (1).
-// Those six fields held a consumer interface with no gate over how it was assigned.
+// `database.*Store`, which silently skipped every surface declared without that suffix. Six handler
+// fields were of that kind, so the gate had no view of how they were assigned.
 // The truth source is the declaration list, so a future rename cannot hide a field from the gate.
 func DatabaseInterfaces(root string) (map[string]bool, error) {
 	names := map[string]bool{}

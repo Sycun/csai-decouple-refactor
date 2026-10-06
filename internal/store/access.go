@@ -12,9 +12,10 @@ const (
 	ScopeAssigned = "assigned"
 )
 
-// Access is what a query needs to know about the caller: who they are and how far
-// that reaches. It repeats the two fields the legacy data layer uses for the same
-// purpose so a domain store never has to import that package to constrain itself.
+// Access is what a query needs to know about the caller: who they are and how far that reaches.
+// It is now the only declaration of that pair. The data layer carried its own copy under another
+// name - same two fields, same three scope strings, declared twice - which meant a rename or a
+// widened default on one side compiled cleanly and changed reachability on the other.
 type Access struct {
 	UserID string
 	Scope  string
