@@ -21,7 +21,7 @@ func projectIDFromConversation(db *database.DB, ctx context.Context) (string, er
 	if convID == "" {
 		return "", fmt.Errorf("无法确定当前对话，请在对话上下文中使用项目事实工具")
 	}
-	pid, err := db.GetConversationProjectID(convID)
+	pid, err := database.NewConversations(db).GetConversationProjectID(convID)
 	if err != nil {
 		return "", err
 	}

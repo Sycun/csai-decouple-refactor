@@ -28,7 +28,7 @@ func openSessionWritesDB(t *testing.T, name string) *DB {
 
 func newConversation(t *testing.T, db *DB, title string) *Conversation {
 	t.Helper()
-	conv, err := db.CreateConversation(title, ConversationCreateMeta{})
+	conv, err := NewConversations(db).CreateConversation(title, ConversationCreateMeta{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestAddMessageWritesEveryColumnTheRowContractPromises(t *testing.T) {
 	db := openSessionWritesDB(t, "session-add-message.db")
 	conv := newConversation(t, db, "add")
 
-	message, err := db.AddMessage(conv.ID, "user", "查一下 /login", []string{"exec-1", "exec-2"})
+	message, err := NewConversations(db).AddMessage(conv.ID, "user", "查一下 /login", []string{"exec-1", "exec-2"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestAddMessageWritesEveryColumnTheRowContractPromises(t *testing.T) {
 	}
 
 	// An empty id list is stored as an empty string, not "null": readers treat "" as "no ids".
-	bare, err := db.AddMessage(conv.ID, "assistant", "在跑", nil)
+	bare, err := NewConversations(db).AddMessage(conv.ID, "assistant", "在跑", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,14 +84,14 @@ func TestAddMessageWritesEveryColumnTheRowContractPromises(t *testing.T) {
 func TestUpdateAssistantMessageFinalizeKeepsCreatedAndReasoning(t *testing.T) {
 	db := openSessionWritesDB(t, "session-finalize.db")
 	conv := newConversation(t, db, "finalize")
-	message, err := db.AddMessage(conv.ID, "assistant", "处理中...", nil)
+	message, err := NewConversations(db).AddMessage(conv.ID, "assistant", "处理中...", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, _, _, _, createdBefore, updatedBefore := readMessageRow(t, db, message.ID)
 
 	time.Sleep(1200 * time.Millisecond)
-	if err := db.UpdateAssistantMessageFinalize(message.ID, "结论正文", []string{"exec-9"}, "  思考链  "); err != nil {
+	if err := NewConversations(db).UpdateAssistantMessageFinalize(message.ID, "结论正文", []string{"exec-9"}, "  思考链  "); err != nil {
 		t.Fatal(err)
 	}
 	_, content, reasoning, mcpIDs, createdAfter, updatedAfter := readMessageRow(t, db, message.ID)
@@ -113,7 +113,7 @@ func TestUpdateAssistantMessageFinalizeKeepsCreatedAndReasoning(t *testing.T) {
 
 	// Trimming happens before the write, so a whitespace-only chain clears the column rather than
 	// storing spaces - the replay path checks for empty.
-	if err := db.UpdateAssistantMessageFinalize(message.ID, "再答一次", nil, "   "); err != nil {
+	if err := NewConversations(db).UpdateAssistantMessageFinalize(message.ID, "再答一次", nil, "   "); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, reasoning, mcpIDs, _, _ := readMessageRow(t, db, message.ID); reasoning != "" || mcpIDs != "" {
@@ -124,14 +124,14 @@ func TestUpdateAssistantMessageFinalizeKeepsCreatedAndReasoning(t *testing.T) {
 func TestProcessDetailWritesAndUpdateTheSameRowInPlace(t *testing.T) {
 	db := openSessionWritesDB(t, "session-process-detail.db")
 	conv := newConversation(t, db, "detail")
-	message, err := db.AddMessage(conv.ID, "assistant", "规划", nil)
+	message, err := NewConversations(db).AddMessage(conv.ID, "assistant", "规划", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// 名字里的 WithID 指的是"返回可用 id"，id 本身由这一对语句生成：调用方要把这条记录原地续写，
 	// 拿到的就是后续 Update / Delete 的键。
-	id, err := db.AddProcessDetailWithID(message.ID, conv.ID, "planning", "第一步", map[string]any{"tokens": 3})
+	id, err := NewConversations(db).AddProcessDetailWithID(message.ID, conv.ID, "planning", "第一步", map[string]any{"tokens": 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestProcessDetailWritesAndUpdateTheSameRowInPlace(t *testing.T) {
 		t.Fatalf("payload not stored: %q", data)
 	}
 
-	if err := db.UpdateProcessDetailContent(id, "第一步（续）", map[string]any{"tokens": 7}); err != nil {
+	if err := NewConversations(db).UpdateProcessDetailContent(id, "第一步（续）", map[string]any{"tokens": 7}); err != nil {
 		t.Fatal(err)
 	}
 	var rows int
@@ -162,13 +162,13 @@ func TestProcessDetailWritesAndUpdateTheSameRowInPlace(t *testing.T) {
 	}
 
 	// A missing row is an error: the caller is mid-stream and already showed this id to the page.
-	if err := db.UpdateProcessDetailContent("never-existed", "x", nil); err == nil || !strings.Contains(err.Error(), "过程详情不存在") {
+	if err := NewConversations(db).UpdateProcessDetailContent("never-existed", "x", nil); err == nil || !strings.Contains(err.Error(), "过程详情不存在") {
 		t.Fatalf("update of a missing row answered %v, want the 过程详情不存在 refusal", err)
 	}
-	if err := db.DeleteProcessDetail(id); err != nil {
+	if err := NewConversations(db).DeleteProcessDetail(id); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.DeleteProcessDetail(id); err != nil {
+	if err := NewConversations(db).DeleteProcessDetail(id); err != nil {
 		t.Fatalf("deleting an already-gone detail answered %v, want the original silent no-op", err)
 	}
 }
@@ -178,19 +178,19 @@ func TestDeleteConversationTurnRemovesOnlyThatTurnAndCountsIt(t *testing.T) {
 	keep := newConversation(t, db, "keep")
 	target := newConversation(t, db, "target")
 
-	anchor, err := db.AddMessage(target.ID, "user", "问题", nil)
+	anchor, err := NewConversations(db).AddMessage(target.ID, "user", "问题", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = db.AddMessage(target.ID, "assistant", "回答", nil); err != nil {
+	if _, err = NewConversations(db).AddMessage(target.ID, "assistant", "回答", nil); err != nil {
 		t.Fatal(err)
 	}
-	other, err := db.AddMessage(keep.ID, "user", "别碰我", nil)
+	other, err := NewConversations(db).AddMessage(keep.ID, "user", "别碰我", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	deletedIDs, err := db.DeleteConversationTurn(target.ID, anchor.ID)
+	deletedIDs, err := NewConversations(db).DeleteConversationTurn(target.ID, anchor.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestStartupBackfillGivesOldRowsTheirCreatedTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	conv := newConversation(t, db, "backfill")
-	message, err := db.AddMessage(conv.ID, "assistant", "正文", nil)
+	message, err := NewConversations(db).AddMessage(conv.ID, "assistant", "正文", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

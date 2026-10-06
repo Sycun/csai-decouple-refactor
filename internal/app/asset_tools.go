@@ -444,7 +444,7 @@ func agentAssetProjectScope(db *database.DB, ctx context.Context) (projectID str
 	if conversationID == "" {
 		return "", false, nil
 	}
-	projectID, err = db.GetConversationProjectID(conversationID)
+	projectID, err = database.NewConversations(db).GetConversationProjectID(conversationID)
 	if err != nil {
 		return "", false, fmt.Errorf("无法确定当前对话的项目范围")
 	}

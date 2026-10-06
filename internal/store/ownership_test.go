@@ -193,6 +193,7 @@ var writeLedger = map[string][]string{
 	"audit_logs":                        {"audit_logs.go"},
 	"capability_unit_switches":          {"capability_switches.go"},
 	"chat_upload_artifacts":             {"chat_upload.go"},
+	"conversations":                     {"conversations.go"},
 	"c2_events":                         {"c2.go"},
 	"c2_files":                          {"c2.go"},
 	"c2_listeners":                      {"c2.go"},
@@ -302,10 +303,10 @@ func TestStoreWritesOnlyTablesItOwns(t *testing.T) {
 	// The ledger size is exact while the scan's coverage is a floor: this package grows as domains are
 	// extracted, but every added table has to be an intentional edit with a file behind it. A floor on
 	// the ledger would let a failing offender be silenced by listing the table it names.
-	if len(writeLedger) != 49 {
+	if len(writeLedger) != 50 {
 		t.Fatalf("the write ledger lists %d tables, want exactly 43 - 35 measured 2026-10-06 when the blackboard "+
-			"arrived, 41 after the C2 ledger of six tables joined on 2026-10-07, 43 after tool_executions / "+
-			"tool_stats and 49 after the six rbac_* tables joined the same night: %d statements over %d tables "+
+			"arrived, 41 after the C2 ledger, 43 after tool_executions / tool_stats, 49 after the six "+
+			"rbac_* tables and 50 after the conversations table on 2026-10-07: %d statements over %d tables "+
 			"from %d files",
 			len(writeLedger), statements, distinct, len(writes))
 	}

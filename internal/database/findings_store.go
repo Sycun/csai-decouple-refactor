@@ -21,7 +21,7 @@ func NewFindings(db *DB) *store.Vulnerabilities {
 type findingEffects struct{ db *DB }
 
 func (e findingEffects) ConversationProjectID(conversationID string) (string, error) {
-	return e.db.GetConversationProjectID(conversationID)
+	return store.NewConversations(e.db.DB).GetConversationProjectID(conversationID)
 }
 
 // UnlinkFactReferences hands the project domain's own write to it. The findings store cannot do this

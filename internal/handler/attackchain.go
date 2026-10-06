@@ -35,8 +35,9 @@ func newAttackChainStore(db *database.DB) *store.AttackChain {
 
 // AttackChainHandler 攻击链处理器
 type AttackChainHandler struct {
-	db    database.AttackChainStore
-	chain *store.AttackChain // 攻击链的两张表：节点、边，以及"重建前先清空"那一步
+	db            database.AttackChainStore
+	conversations *store.Conversations
+	chain         *store.AttackChain // 攻击链的两张表：节点、边，以及"重建前先清空"那一步
 	// facts 是黑板两张表的账本：把链沉淀成项目事实与边时走它，不再经过连接包装。
 	facts        *store.Facts
 	logger       *zap.Logger
@@ -49,11 +50,12 @@ type AttackChainHandler struct {
 // NewAttackChainHandler 创建新的攻击链处理器
 func NewAttackChainHandler(db *database.DB, openAIConfig *config.OpenAIConfig, logger *zap.Logger) *AttackChainHandler {
 	return &AttackChainHandler{
-		db:           database.Narrow[database.AttackChainStore](db),
-		chain:        newAttackChainStore(db),
-		facts:        database.NewFacts(db),
-		logger:       logger,
-		openAIConfig: openAIConfig,
+		db:            database.Narrow[database.AttackChainStore](db),
+		conversations: database.NewConversations(db),
+		chain:         newAttackChainStore(db),
+		facts:         database.NewFacts(db),
+		logger:        logger,
+		openAIConfig:  openAIConfig,
 	}
 }
 
@@ -85,7 +87,7 @@ func (h *AttackChainHandler) GetAttackChain(c *gin.Context) {
 	}
 
 	// 检查对话是否存在
-	_, err := h.db.GetConversation(conversationID)
+	_, err := h.conversations.GetConversation(conversationID)
 	if err != nil {
 		h.logger.Warn("对话不存在", zap.String("conversationId", conversationID), zap.Error(err))
 		c.JSON(http.StatusNotFound, gin.H{"error": "对话不存在"})
@@ -94,7 +96,7 @@ func (h *AttackChainHandler) GetAttackChain(c *gin.Context) {
 
 	// 先尝试从数据库加载（如果已生成过）
 	openAIConfig := h.getOpenAIConfig()
-	builder := attackchain.NewBuilder(h.db, h.chain, h.facts, openAIConfig, h.logger)
+	builder := attackchain.NewBuilder(h.db, h.conversations, h.chain, h.facts, openAIConfig, h.logger)
 	chain, err := builder.LoadChainFromDatabase(conversationID)
 	if err == nil && len(chain.Nodes) > 0 {
 		// 如果已存在，直接返回
@@ -153,7 +155,7 @@ func (h *AttackChainHandler) RegenerateAttackChain(c *gin.Context) {
 	}
 
 	// 检查对话是否存在
-	_, err := h.db.GetConversation(conversationID)
+	_, err := h.conversations.GetConversation(conversationID)
 	if err != nil {
 		h.logger.Warn("对话不存在", zap.String("conversationId", conversationID), zap.Error(err))
 		c.JSON(http.StatusNotFound, gin.H{"error": "对话不存在"})
@@ -184,7 +186,7 @@ func (h *AttackChainHandler) RegenerateAttackChain(c *gin.Context) {
 	defer cancel()
 
 	openAIConfig := h.getOpenAIConfig()
-	builder := attackchain.NewBuilder(h.db, h.chain, h.facts, openAIConfig, h.logger)
+	builder := attackchain.NewBuilder(h.db, h.conversations, h.chain, h.facts, openAIConfig, h.logger)
 	chain, err := builder.BuildChainFromConversation(ctx, conversationID)
 	if err != nil {
 		h.logger.Error("生成攻击链失败", zap.String("conversationId", conversationID), zap.Error(err))

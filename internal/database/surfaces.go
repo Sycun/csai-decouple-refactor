@@ -50,13 +50,10 @@ var (
 // AttackChainLedger is what the attack-chain builder and the "promote to project" path need: the
 // conversation evidence the chain is reconstructed from and the project rows it writes into.
 // The facts and edges promoting writes belong to store.Facts and arrive as their own argument.
+// 会话证据的问句（GetConversation/GetMessages/GetAgentTrace/过程详情/工具详情存在性）已随
+// store.Conversations 交走；builder 现在同时持有它，这个接口只剩项目行与项目行本身的读。
 type AttackChainLedger interface {
 	ProjectRowStore
-	ConversationHasToolProcessDetails(conversationID string) (bool, error)
-	GetAgentTrace(conversationID string) (traceInputJSON, assistantOutput string, err error)
-	GetConversation(id string) (*Conversation, error)
-	GetMessages(conversationID string) ([]Message, error)
-	GetProcessDetailsByConversation(conversationID string) (map[string][]ProcessDetail, error)
 	GetProject(id string) (*Project, error)
 }
 

@@ -324,12 +324,13 @@ func (e simpleError) Error() string { return string(e) }
 
 // WebShellHandler 代理执行 WebShell 命令（类似冰蝎/蚁剑），避免前端跨域并统一构建请求
 type WebShellHandler struct {
-	logger *zap.Logger
-	client *http.Client
-	db     database.WebShellStore
-	rbac   *store.RBAC
-	conns  *store.Webshell // webshell_connections + 状态表：这个页面唯一的写来源
-	audit  *audit.Service
+	logger        *zap.Logger
+	client        *http.Client
+	db            database.WebShellStore
+	rbac          *store.RBAC
+	conversations *store.Conversations
+	conns         *store.Webshell // webshell_connections + 状态表：这个页面唯一的写来源
+	audit         *audit.Service
 }
 
 // SetAudit wires platform audit logging.
@@ -350,8 +351,9 @@ func NewWebShellHandler(logger *zap.Logger, db *database.DB) *WebShellHandler {
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // intentional for webshell proxy
 			},
 		},
-		db:   database.Narrow[database.WebShellStore](db),
-		rbac: database.NewRBAC(db),
+		db:            database.Narrow[database.WebShellStore](db),
+		rbac:          database.NewRBAC(db),
+		conversations: database.NewConversations(db),
 	}
 }
 
@@ -646,7 +648,7 @@ func (h *WebShellHandler) GetAIHistory(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
 		return
 	}
-	conv, err := h.db.GetConversationByWebshellConnectionID(id)
+	conv, err := h.conversations.GetConversationByWebshellConnectionID(id)
 	if err != nil {
 		h.logger.Warn("获取 WebShell AI 对话失败", zap.String("connectionId", id), zap.Error(err))
 		c.JSON(http.StatusOK, gin.H{"conversationId": nil, "messages": []database.Message{}})
@@ -670,7 +672,7 @@ func (h *WebShellHandler) ListAIConversations(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
 		return
 	}
-	list, err := h.db.ListConversationsByWebshellConnectionID(id)
+	list, err := h.conversations.ListConversationsByWebshellConnectionID(id)
 	if err != nil {
 		h.logger.Warn("列出 WebShell AI 对话失败", zap.String("connectionId", id), zap.Error(err))
 		c.JSON(http.StatusOK, []database.WebShellConversationItem{})

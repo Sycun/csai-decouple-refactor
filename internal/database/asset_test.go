@@ -244,7 +244,7 @@ func TestAssetAdvancedFiltersAndBulkMetadata(t *testing.T) {
 	if result, err := NewAssets(db).UpsertAssets(input, "", true); err != nil || result.Created != 2 {
 		t.Fatalf("create assets: result=%#v err=%v", result, err)
 	}
-	conversation, err := db.CreateConversation("critical scan", ConversationCreateMeta{})
+	conversation, err := NewConversations(db).CreateConversation("critical scan", ConversationCreateMeta{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +367,7 @@ func TestAssetScanLinkReturnsTimeAndRelatedVulnerabilities(t *testing.T) {
 	if err != nil || len(assets) != 1 {
 		t.Fatalf("list assets: len=%d err=%v", len(assets), err)
 	}
-	conv, err := db.CreateConversation("asset scan", ConversationCreateMeta{})
+	conv, err := NewConversations(db).CreateConversation("asset scan", ConversationCreateMeta{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -185,7 +185,9 @@ func discardPlanningIfEchoesToolResult(respPlan *responsePlanAgg, toolData inter
 type AgentHandler struct {
 	agent *agent.Agent
 	db    database.AgentStore
-	rbac  *store.RBAC
+
+	conversations *store.Conversations
+	rbac          *store.RBAC
 	// runs 是 workflow 五张表的主人：绑角色的工作流从这里落运行与节点状态
 	runs *store.Workflows
 	// facts 是黑板两张表的账本：会话里生成的项目事实与边从这里读写，不再经过连接包装。
@@ -339,9 +341,10 @@ func NewAgentHandler(agent *agent.Agent, db *database.DB, cfg *config.Config, lo
 	// through it: it is a constructor argument, not something wired after the fact.
 	hitlManager := NewHITLManager(db, logger)
 	handler := &AgentHandler{
-		agent:            agent,
-		db:               database.Narrow[database.AgentStore](db),
-		rbac:             database.NewRBAC(db),
+		agent: agent,
+		db:    database.Narrow[database.AgentStore](db),
+
+		conversations: database.NewConversations(db), rbac: database.NewRBAC(db),
 		stats:            newSkillStatsStore(db),
 		hitlStore:        newHITLStore(db),
 		runs:             newWorkflowStore(db),
@@ -748,7 +751,7 @@ func (h *AgentHandler) finalizeRobotAgentError(ctx context.Context, assistantMes
 	errMsg := "执行失败: " + multiagent.EinoClientRunErrorMessage(errMA)
 	if assistantMessageID != "" {
 		_ = h.setMessageContent(assistantMessageID, errMsg)
-		_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "error", errMsg, nil)
+		_ = h.conversations.AddProcessDetail(assistantMessageID, conversationID, "error", errMsg, nil)
 	}
 	return "", conversationID, errMA
 }
@@ -765,12 +768,12 @@ func (h *AgentHandler) finalizeRobotAgentSuccess(taskCtx context.Context, assist
 		responseText = finalizationBlockedMessage(decision)
 	}
 	if assistantMessageID == "" {
-		if _, err := h.db.AddMessage(conversationID, "assistant", responseText, resultMA.MCPExecutionIDs); err != nil {
+		if _, err := h.conversations.AddMessage(conversationID, "assistant", responseText, resultMA.MCPExecutionIDs); err != nil {
 			h.logger.Warn("机器人：保存助手消息失败", zap.Error(err))
 		}
 	}
 	if resultMA.LastAgentTraceInput != "" || resultMA.LastAgentTraceOutput != "" {
-		_ = h.db.SaveAgentTrace(conversationID, resultMA.LastAgentTraceInput, resultMA.LastAgentTraceOutput)
+		_ = h.conversations.SaveAgentTrace(conversationID, resultMA.LastAgentTraceInput, resultMA.LastAgentTraceOutput)
 	}
 	return responseText, conversationID, nil
 }
@@ -839,21 +842,21 @@ func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, platform stri
 		if meta.ProjectID != "" && (!principal.HasPermission("project:read") || !h.rbac.UserCanAccessResource(ownerUserID, principal.ScopeFor("project:read"), "project", meta.ProjectID)) {
 			meta.ProjectID = ""
 		}
-		conv, createErr := h.db.CreateConversation(title, meta)
+		conv, createErr := h.conversations.CreateConversation(title, meta)
 		if createErr != nil {
 			return "", "", fmt.Errorf("创建对话失败: %w", createErr)
 		}
 		conversationID = conv.ID
 		_ = h.rbac.SetResourceOwner("conversation", conversationID, ownerUserID)
 	} else {
-		if _, getErr := h.db.GetConversation(conversationID); getErr != nil || !h.rbac.UserCanAccessResource(ownerUserID, principal.ScopeFor("chat:write"), "conversation", conversationID) {
+		if _, getErr := h.conversations.GetConversation(conversationID); getErr != nil || !h.rbac.UserCanAccessResource(ownerUserID, principal.ScopeFor("chat:write"), "conversation", conversationID) {
 			return "", "", fmt.Errorf("对话不存在")
 		}
 	}
 
 	agentHistoryMessages, err := h.loadHistoryFromAgentTrace(conversationID)
 	if err != nil {
-		historyMessages, getErr := h.db.GetMessages(conversationID)
+		historyMessages, getErr := h.conversations.GetMessages(conversationID)
 		if getErr != nil {
 			agentHistoryMessages = []agent.ChatMessage{}
 		} else {
@@ -875,12 +878,12 @@ func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, platform stri
 		}
 	}
 
-	if _, err = h.db.AddMessage(conversationID, "user", message, nil); err != nil {
+	if _, err = h.conversations.AddMessage(conversationID, "user", message, nil); err != nil {
 		return "", "", fmt.Errorf("保存用户消息失败: %w", err)
 	}
 
 	// 与 Eino 流式对话一致：先创建助手消息占位，用 progressCallback 写过程详情（不发送 SSE）
-	assistantMsg, err := h.db.AddMessage(conversationID, "assistant", "处理中...", nil)
+	assistantMsg, err := h.conversations.AddMessage(conversationID, "assistant", "处理中...", nil)
 	if err != nil {
 		h.logger.Warn("机器人：创建助手消息占位失败", zap.Error(err))
 	}
@@ -914,7 +917,7 @@ func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, platform stri
 	progressCallback := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, nil)
 
 	robotMode := config.NormalizeAgentMode(agentMode)
-	if err := h.db.SetConversationAgentMode(conversationID, robotMode); err != nil {
+	if err := h.conversations.SetConversationAgentMode(conversationID, robotMode); err != nil {
 		h.logger.Warn("机器人：更新对话模式失败", zap.String("conversationId", conversationID), zap.String("agentMode", robotMode), zap.Error(err))
 	}
 	switch robotMode {
@@ -1084,11 +1087,11 @@ func (h *AgentHandler) createProgressCallback(runCtx context.Context, cancelRun 
 		}
 		var err error
 		if respPlan.detailID == "" {
-			respPlan.detailID, err = h.db.AddProcessDetailWithID(
+			respPlan.detailID, err = h.conversations.AddProcessDetailWithID(
 				assistantMessageID, conversationID, "planning", content, data,
 			)
 		} else {
-			err = h.db.UpdateProcessDetailContent(respPlan.detailID, content, data)
+			err = h.conversations.UpdateProcessDetailContent(respPlan.detailID, content, data)
 		}
 		if err != nil {
 			h.logger.Warn("保存过程详情失败", zap.Error(err), zap.String("eventType", "planning"))
@@ -1130,7 +1133,7 @@ func (h *AgentHandler) createProgressCallback(runCtx context.Context, cancelRun 
 			if persist != "reasoning_chain" {
 				persist = "thinking"
 			}
-			if err := h.db.AddProcessDetail(assistantMessageID, conversationID, persist, content, data); err != nil {
+			if err := h.conversations.AddProcessDetail(assistantMessageID, conversationID, persist, content, data); err != nil {
 				h.logger.Warn("保存过程详情失败", zap.Error(err), zap.String("eventType", persist))
 			}
 			flushedThinking[sid] = true
@@ -1331,7 +1334,7 @@ func (h *AgentHandler) createProgressCallback(runCtx context.Context, cancelRun 
 							"riskType": riskType,
 							"toolName": toolName,
 						}
-						if err := h.db.AddProcessDetail(assistantMessageID, conversationID, "knowledge_retrieval", fmt.Sprintf("检索知识: %s", query), retrievalData); err != nil {
+						if err := h.conversations.AddProcessDetail(assistantMessageID, conversationID, "knowledge_retrieval", fmt.Sprintf("检索知识: %s", query), retrievalData); err != nil {
 							h.logger.Warn("保存知识检索详情失败", zap.Error(err))
 						}
 					}
@@ -1383,7 +1386,7 @@ func (h *AgentHandler) createProgressCallback(runCtx context.Context, cancelRun 
 			flushResponsePlan()
 			// 确保思考流在子代理回复前能持久化（刷新后可读）
 			flushThinkingStreams()
-			if err := h.db.AddProcessDetail(assistantMessageID, conversationID, "eino_agent_reply", message, data); err != nil {
+			if err := h.conversations.AddProcessDetail(assistantMessageID, conversationID, "eino_agent_reply", message, data); err != nil {
 				h.logger.Warn("保存过程详情失败", zap.Error(err), zap.String("eventType", eventType))
 			}
 			return
@@ -1555,7 +1558,7 @@ func (h *AgentHandler) createProgressCallback(runCtx context.Context, cancelRun 
 			eventType != "eino_agent_reply_stream_end" {
 			if eventType == "tool_result" {
 				if detailID := discardPlanningIfEchoesToolResult(&respPlan, data); detailID != "" {
-					if err := h.db.DeleteProcessDetail(detailID); err != nil {
+					if err := h.conversations.DeleteProcessDetail(detailID); err != nil {
 						h.logger.Warn("删除工具结果回显规划失败", zap.Error(err), zap.String("processDetailId", detailID))
 					}
 				}
@@ -1563,7 +1566,7 @@ func (h *AgentHandler) createProgressCallback(runCtx context.Context, cancelRun 
 			// 在关键过程事件落库前，先把「规划中」与聚合中的 thinking / reasoning_chain 流落库
 			flushResponsePlan()
 			flushThinkingStreams()
-			processDetailID, err := h.db.AddProcessDetailWithID(assistantMessageID, conversationID, eventType, message, data)
+			processDetailID, err := h.conversations.AddProcessDetailWithID(assistantMessageID, conversationID, eventType, message, data)
 			if err != nil {
 				h.logger.Warn("保存过程详情失败", zap.Error(err), zap.String("eventType", eventType))
 			}
@@ -1791,7 +1794,7 @@ func (h *AgentHandler) enrichAgentTasksWithConversationTitles(tasks []*AgentTask
 		if task == nil || strings.TrimSpace(task.ConversationID) == "" {
 			continue
 		}
-		if title, err := h.db.GetConversationTitle(task.ConversationID); err == nil {
+		if title, err := h.conversations.GetConversationTitle(task.ConversationID); err == nil {
 			task.Title = strings.TrimSpace(title)
 		}
 	}
@@ -1806,7 +1809,7 @@ func (h *AgentHandler) enrichCompletedTasksWithConversationTitles(tasks []*Compl
 		if task == nil || strings.TrimSpace(task.ConversationID) == "" {
 			continue
 		}
-		if title, err := h.db.GetConversationTitle(task.ConversationID); err == nil {
+		if title, err := h.conversations.GetConversationTitle(task.ConversationID); err == nil {
 			task.Title = strings.TrimSpace(title)
 		}
 	}
@@ -2481,7 +2484,7 @@ func (h *AgentHandler) batchQueueSchedulerLoop() {
 // loadHistoryFromAgentTrace 从库中保存的代理消息轨迹恢复历史（列 last_react_*；含单代理与 Eino）。
 // 逻辑与攻击链一致：优先用已保存的 JSON 消息带 + 最后一轮助手摘要，否则回退消息表。
 func (h *AgentHandler) loadHistoryFromAgentTrace(conversationID string) ([]agent.ChatMessage, error) {
-	traceInputJSON, assistantOut, err := h.db.GetAgentTrace(conversationID)
+	traceInputJSON, assistantOut, err := h.conversations.GetAgentTrace(conversationID)
 	if err != nil {
 		return nil, fmt.Errorf("获取代理轨迹失败: %w", err)
 	}

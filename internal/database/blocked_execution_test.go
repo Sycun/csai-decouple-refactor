@@ -114,7 +114,7 @@ func TestToolResultStatusFromPayloadDistinguishesBlocked(t *testing.T) {
 		{map[string]interface{}{"success": false, "isError": true, "result": "工具调用已被安全规则拦截"}, "failed"},
 		{map[string]interface{}{"success": true}, "completed"},
 	} {
-		if got := toolResultStatusFromPayload(tc.payload, "tool_result"); got != tc.want {
+		if got := store.ToolResultStatusFromPayload(tc.payload, "tool_result"); got != tc.want {
 			t.Fatalf("payload=%#v status=%s want=%s", tc.payload, got, tc.want)
 		}
 	}

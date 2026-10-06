@@ -69,9 +69,9 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 		if webshellID != "" {
 			meta.Source = source + "_webshell"
 			meta.WebShellConnectionID = webshellID
-			conv, err = h.db.CreateConversationWithWebshell(meta.WebShellConnectionID, title, meta)
+			conv, err = h.conversations.CreateConversationWithWebshell(meta.WebShellConnectionID, title, meta)
 		} else {
-			conv, err = h.db.CreateConversation(title, meta)
+			conv, err = h.conversations.CreateConversation(title, meta)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("创建对话失败: %w", err)
@@ -83,23 +83,23 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 			_ = h.rbac.AssignResourceToUser(session.UserID, "conversation", conversationID)
 		}
 	} else {
-		if _, err := h.db.GetConversation(conversationID); err != nil {
+		if _, err := h.conversations.GetConversation(conversationID); err != nil {
 			return nil, fmt.Errorf("对话不存在")
 		}
 		if !canAccess("conversation", conversationID) {
 			return nil, fmt.Errorf("无权访问该对话")
 		}
 	}
-	if err := h.db.SetConversationRoleName(conversationID, req.Role); err != nil {
+	if err := h.conversations.SetConversationRoleName(conversationID, req.Role); err != nil {
 		h.logger.Warn("更新对话角色失败", zap.String("conversationId", conversationID), zap.String("role", req.Role), zap.Error(err))
 	}
-	if err := h.db.SetConversationAgentMode(conversationID, chatRequestAgentMode(req, source)); err != nil {
+	if err := h.conversations.SetConversationAgentMode(conversationID, chatRequestAgentMode(req, source)); err != nil {
 		h.logger.Warn("更新对话模式失败", zap.String("conversationId", conversationID), zap.String("source", source), zap.String("orchestration", req.Orchestration), zap.Error(err))
 	}
 
 	agentHistoryMessages, err := h.loadHistoryFromAgentTrace(conversationID)
 	if err != nil {
-		historyMessages, getErr := h.db.GetMessages(conversationID)
+		historyMessages, getErr := h.conversations.GetMessages(conversationID)
 		if getErr != nil {
 			agentHistoryMessages = []agent.ChatMessage{}
 		} else {
@@ -164,7 +164,7 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 	finalMessage = appendAttachmentsToMessage(finalMessage, req.Attachments, savedPaths)
 
 	userContent := userMessageContentForStorage(req.Message, req.Attachments, savedPaths)
-	userMsgRow, uerr := h.db.AddMessage(conversationID, "user", userContent, nil)
+	userMsgRow, uerr := h.conversations.AddMessage(conversationID, "user", userContent, nil)
 	if uerr != nil {
 		h.logger.Error("保存用户消息失败", zap.Error(uerr))
 		return nil, fmt.Errorf("保存用户消息失败: %w", uerr)
@@ -174,7 +174,7 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 		userMessageID = userMsgRow.ID
 	}
 
-	assistantMsg, aerr := h.db.AddMessage(conversationID, "assistant", "处理中...", nil)
+	assistantMsg, aerr := h.conversations.AddMessage(conversationID, "assistant", "处理中...", nil)
 	var assistantMessageID string
 	if aerr != nil {
 		h.logger.Warn("创建助手消息占位失败", zap.Error(aerr))

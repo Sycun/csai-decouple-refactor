@@ -19,22 +19,22 @@ func TestEnrichHitlApprovalPayload(t *testing.T) {
 	defer db.Close() // 临时目录里的 WAL 文件要能先落下，否则 TempDir 回收会撞见"目录非空"
 	defer os.RemoveAll(tmp)
 
-	conv, err := db.CreateConversation("hitl ctx", database.ConversationCreateMeta{})
+	conv, err := database.NewConversations(db).CreateConversation("hitl ctx", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("conv: %v", err)
 	}
-	if _, err := db.AddMessage(conv.ID, "user", "scan 10.0.0.1 please", nil); err != nil {
+	if _, err := database.NewConversations(db).AddMessage(conv.ID, "user", "scan 10.0.0.1 please", nil); err != nil {
 		t.Fatalf("user msg: %v", err)
 	}
-	asst, err := db.AddMessage(conv.ID, "assistant", "", nil)
+	asst, err := database.NewConversations(db).AddMessage(conv.ID, "assistant", "", nil)
 	if err != nil {
 		t.Fatalf("asst msg: %v", err)
 	}
-	if err := db.AddProcessDetail(asst.ID, conv.ID, "thinking", "need port scan first", nil); err != nil {
+	if err := database.NewConversations(db).AddProcessDetail(asst.ID, conv.ID, "thinking", "need port scan first", nil); err != nil {
 		t.Fatalf("detail: %v", err)
 	}
 
-	h := &AgentHandler{db: database.Narrow[database.AgentStore](db), rbac: database.NewRBAC(db), tasks: NewAgentTaskManager()}
+	h := &AgentHandler{db: database.Narrow[database.AgentStore](db), rbac: database.NewRBAC(db), tasks: NewAgentTaskManager(), conversations: database.NewConversations(db)}
 	payload := map[string]interface{}{"toolName": "nmap", "arguments": "{}"}
 	h.enrichHitlApprovalPayload(conv.ID, asst.ID, payload)
 

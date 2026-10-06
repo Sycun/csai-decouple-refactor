@@ -22,36 +22,36 @@ func TestConversationProjectFilter(t *testing.T) {
 		t.Fatalf("CreateProject: %v", err)
 	}
 
-	convNone, err := db.CreateConversation("unbound", ConversationCreateMeta{})
+	convNone, err := NewConversations(db).CreateConversation("unbound", ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation unbound: %v", err)
 	}
-	convBound, err := db.CreateConversation("bound", ConversationCreateMeta{ProjectID: p.ID})
+	convBound, err := NewConversations(db).CreateConversation("bound", ConversationCreateMeta{ProjectID: p.ID})
 	if err != nil {
 		t.Fatalf("CreateConversation bound: %v", err)
 	}
 
-	totalAll, err := db.CountConversations("", "")
+	totalAll, err := NewConversations(db).CountConversationsForAccess("", "", "", "")
 	if err != nil || totalAll < 2 {
 		t.Fatalf("CountConversations all: total=%d err=%v", totalAll, err)
 	}
 
-	totalBound, err := db.CountConversations("", p.ID)
+	totalBound, err := NewConversations(db).CountConversationsForAccess("", p.ID, "", "")
 	if err != nil || totalBound != 1 {
 		t.Fatalf("CountConversations project: total=%d err=%v", totalBound, err)
 	}
 
-	totalUnbound, err := db.CountConversations("", store.ProjectUnbound)
+	totalUnbound, err := NewConversations(db).CountConversationsForAccess("", store.ProjectUnbound, "", "")
 	if err != nil || totalUnbound != 1 {
 		t.Fatalf("CountConversations unbound: total=%d err=%v", totalUnbound, err)
 	}
 
-	listBound, err := db.ListConversations(10, 0, "", "", p.ID)
+	listBound, err := NewConversations(db).ListConversations(10, 0, "", "", p.ID)
 	if err != nil || len(listBound) != 1 || listBound[0].ID != convBound.ID {
 		t.Fatalf("ListConversations project: %+v err=%v", listBound, err)
 	}
 
-	listUnbound, err := db.ListConversations(10, 0, "", "", store.ProjectUnbound)
+	listUnbound, err := NewConversations(db).ListConversations(10, 0, "", "", store.ProjectUnbound)
 	if err != nil || len(listUnbound) != 1 || listUnbound[0].ID != convNone.ID {
 		t.Fatalf("ListConversations unbound: %+v err=%v", listUnbound, err)
 	}

@@ -28,16 +28,17 @@ func clampProjectDescription(s string) string {
 
 // ProjectHandler 项目管理处理器。
 type ProjectHandler struct {
-	db     database.ProjectStore
-	rbac   *store.RBAC
-	facts  *store.Facts       // 黑板两张表的账本：事实与边都从它读写，不再经过连接包装
-	chain  *store.AttackChain // 把对话攻击链沉淀成项目事实时，节点与边从这张表读
-	logger *zap.Logger
+	db            database.ProjectStore
+	conversations *store.Conversations
+	rbac          *store.RBAC
+	facts         *store.Facts       // 黑板两张表的账本：事实与边都从它读写，不再经过连接包装
+	chain         *store.AttackChain // 把对话攻击链沉淀成项目事实时，节点与边从这张表读
+	logger        *zap.Logger
 }
 
 // NewProjectHandler 创建项目管理处理器。
 func NewProjectHandler(db *database.DB, logger *zap.Logger) *ProjectHandler {
-	return &ProjectHandler{db: database.Narrow[database.ProjectStore](db), rbac: database.NewRBAC(db), facts: database.NewFacts(db), chain: newAttackChainStore(db), logger: logger}
+	return &ProjectHandler{db: database.Narrow[database.ProjectStore](db), rbac: database.NewRBAC(db), conversations: database.NewConversations(db), facts: database.NewFacts(db), chain: newAttackChainStore(db), logger: logger}
 }
 
 type createProjectRequest struct {
@@ -652,7 +653,7 @@ func (h *ProjectHandler) PromoteAttackChain(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问目标项目或来源对话"})
 		return
 	}
-	result, err := attackchain.PromoteToProject(h.db, h.chain, h.facts, projectID, conversationID)
+	result, err := attackchain.PromoteToProject(h.db, h.conversations, h.chain, h.facts, projectID, conversationID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

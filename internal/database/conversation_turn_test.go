@@ -1,6 +1,7 @@
 package database
 
 import (
+	"cyberstrike-ai/internal/store"
 	"testing"
 )
 
@@ -25,7 +26,7 @@ func TestTurnSliceRange(t *testing.T) {
 		{"a2", 2, 4},
 	}
 	for _, tc := range cases {
-		s, e, err := turnSliceRange(msgs, tc.anchor)
+		s, e, err := store.TurnSliceRange(msgs, tc.anchor)
 		if err != nil {
 			t.Fatalf("anchor %s: %v", tc.anchor, err)
 		}
@@ -33,7 +34,7 @@ func TestTurnSliceRange(t *testing.T) {
 			t.Fatalf("anchor %s: got [%d,%d) want [%d,%d)", tc.anchor, s, e, tc.start, tc.end)
 		}
 	}
-	if _, _, err := turnSliceRange(msgs, "nope"); err == nil {
+	if _, _, err := store.TurnSliceRange(msgs, "nope"); err == nil {
 		t.Fatal("expected error for missing id")
 	}
 }

@@ -73,7 +73,7 @@ func TestRobotUsersAreResourceIsolated(t *testing.T) {
 	if got := h.cmdDelete("wecom", "bob", conversationID); !strings.Contains(got, "无权访问") {
 		t.Fatalf("bob deleted alice conversation: %s", got)
 	}
-	if _, err := db.GetConversation(conversationID); err != nil {
+	if _, err := database.NewConversations(db).GetConversation(conversationID); err != nil {
 		t.Fatalf("alice conversation was deleted: %v", err)
 	}
 

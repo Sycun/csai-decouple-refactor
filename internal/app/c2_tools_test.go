@@ -32,7 +32,7 @@ func TestC2ListenerCreateInheritsConversationProject(t *testing.T) {
 	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "project", project.ID); err != nil {
 		t.Fatal(err)
 	}
-	conversation, err := db.CreateConversation("project chat", database.ConversationCreateMeta{ProjectID: project.ID})
+	conversation, err := database.NewConversations(db).CreateConversation("project chat", database.ConversationCreateMeta{ProjectID: project.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -168,8 +168,8 @@ func TestRBACProjectAndConversationListAccess(t *testing.T) {
 	if err := NewRBAC(db).SetResourceOwner("project", p1.ID, "u1"); err != nil {
 		t.Fatal(err)
 	}
-	c1, _ := db.CreateConversation("visible conv", ConversationCreateMeta{ProjectID: p1.ID})
-	c2, _ := db.CreateConversation("hidden conv", ConversationCreateMeta{ProjectID: p2.ID})
+	c1, _ := NewConversations(db).CreateConversation("visible conv", ConversationCreateMeta{ProjectID: p1.ID})
+	c2, _ := NewConversations(db).CreateConversation("hidden conv", ConversationCreateMeta{ProjectID: p2.ID})
 	_ = NewRBAC(db).SetResourceOwner("conversation", c1.ID, "u1")
 	_ = NewRBAC(db).SetResourceOwner("conversation", c2.ID, "u2")
 
@@ -181,7 +181,7 @@ func TestRBACProjectAndConversationListAccess(t *testing.T) {
 		t.Fatalf("projects = %#v, want only %s", projects, p1.ID)
 	}
 
-	convs, err := db.ListConversationsForAccess(50, 0, "", "", "", "u1", store.ScopeOwn)
+	convs, err := NewConversations(db).ListConversationsForAccess(50, 0, "", "", "", "u1", store.ScopeOwn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestRBACConversationAccessInheritsProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conversation, err := db.CreateConversation("project conversation", ConversationCreateMeta{ProjectID: project.ID})
+	conversation, err := NewConversations(db).CreateConversation("project conversation", ConversationCreateMeta{ProjectID: project.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestRBACConversationAccessInheritsProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, err := db.ListConversationsForAccess(50, 0, "", "", "", user.ID, RBACScopeAssigned)
+	rows, err := NewConversations(db).ListConversationsForAccess(50, 0, "", "", "", user.ID, RBACScopeAssigned)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -617,7 +617,7 @@ func TestRBACAssignmentLabelsAndWeakTitles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	conversation, err := db.CreateConversation("1", ConversationCreateMeta{})
+	conversation, err := NewConversations(db).CreateConversation("1", ConversationCreateMeta{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -24,7 +24,7 @@ type PromoteToProjectResult struct {
 }
 
 // PromoteToProject 将对话攻击链沉淀为项目事实与边。
-func PromoteToProject(db Store, chain ChainStore, facts database.BlackboardLedger, projectID, conversationID string) (*PromoteToProjectResult, error) {
+func PromoteToProject(db Store, conversations *store.Conversations, chain ChainStore, facts database.BlackboardLedger, projectID, conversationID string) (*PromoteToProjectResult, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database 未初始化")
 	}
@@ -36,7 +36,7 @@ func PromoteToProject(db Store, chain ChainStore, facts database.BlackboardLedge
 	if _, err := db.GetProject(projectID); err != nil {
 		return nil, fmt.Errorf("项目不存在")
 	}
-	conv, err := db.GetConversation(conversationID)
+	conv, err := conversations.GetConversation(conversationID)
 	if err != nil {
 		return nil, fmt.Errorf("对话不存在")
 	}

@@ -80,14 +80,14 @@ func newFindingParityBase(t *testing.T) (*database.DB, map[string]string) {
 	if err := database.NewRBAC(db).AssignResourceToUser(users["project-assigned"], "project", projectAssigned.ID); err != nil {
 		t.Fatal(err)
 	}
-	convOwned, err := db.CreateConversation("owned conversation", database.ConversationCreateMeta{})
+	convOwned, err := database.NewConversations(db).CreateConversation("owned conversation", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := database.NewRBAC(db).SetResourceOwner("conversation", convOwned.ID, users["conv-owner"]); err != nil {
 		t.Fatal(err)
 	}
-	convAssigned, err := db.CreateConversation("assigned conversation", database.ConversationCreateMeta{})
+	convAssigned, err := database.NewConversations(db).CreateConversation("assigned conversation", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatal(err)
 	}

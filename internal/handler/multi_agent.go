@@ -315,7 +315,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 				if err := h.appendAssistantMessageNotice(assistantMessageID, cancelMsg); err != nil {
 					h.logger.Warn("更新取消后的助手消息失败", zap.Error(err))
 				}
-				_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "cancelled", cancelMsg, nil)
+				_ = h.conversations.AddProcessDetail(assistantMessageID, conversationID, "cancelled", cancelMsg, nil)
 			}
 			sendEvent("cancelled", cancelMsg, map[string]interface{}{
 				"conversationId": conversationID,
@@ -332,7 +332,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 			timeoutMsg := "任务执行超时，已自动终止。"
 			if assistantMessageID != "" {
 				_ = h.setMessageContent(assistantMessageID, timeoutMsg)
-				_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "timeout", timeoutMsg, nil)
+				_ = h.conversations.AddProcessDetail(assistantMessageID, conversationID, "timeout", timeoutMsg, nil)
 			}
 			sendEvent("error", timeoutMsg, map[string]interface{}{
 				"conversationId": conversationID,
@@ -351,7 +351,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 		errMsg := "执行失败: " + clientErr
 		if assistantMessageID != "" {
 			_ = h.setMessageContent(assistantMessageID, errMsg)
-			_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "error", errMsg, nil)
+			_ = h.conversations.AddProcessDetail(assistantMessageID, conversationID, "error", errMsg, nil)
 		}
 		errData := multiagent.EinoClientRunErrorFields(runErr)
 		errData["conversationId"] = conversationID
@@ -375,7 +375,7 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 	h.finalizer.persistFinalizationDecision(conversationID, assistantMessageID, agentMode, cumulativeMCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput), decision)
 
 	if result.LastAgentTraceInput != "" || result.LastAgentTraceOutput != "" {
-		if err := h.db.SaveAgentTrace(conversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput); err != nil {
+		if err := h.conversations.SaveAgentTrace(conversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput); err != nil {
 			h.logger.Warn("保存代理轨迹失败", zap.Error(err))
 		}
 	}
@@ -518,7 +518,7 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 	h.finalizer.persistFinalizationDecision(prep.ConversationID, prep.AssistantMessageID, agentMode, result.MCPExecutionIDs, multiagent.AggregatedReasoningFromTraceJSON(result.LastAgentTraceInput), decision)
 
 	if result.LastAgentTraceInput != "" || result.LastAgentTraceOutput != "" {
-		if err := h.db.SaveAgentTrace(prep.ConversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput); err != nil {
+		if err := h.conversations.SaveAgentTrace(prep.ConversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput); err != nil {
 			h.logger.Warn("保存代理轨迹失败", zap.Error(err))
 		}
 	}
@@ -557,7 +557,7 @@ func (h *AgentHandler) persistEinoAgentTraceForResume(conversationID string, res
 	if result.LastAgentTraceInput == "" && result.LastAgentTraceOutput == "" {
 		return
 	}
-	if err := h.db.SaveAgentTrace(conversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput); err != nil {
+	if err := h.conversations.SaveAgentTrace(conversationID, result.LastAgentTraceInput, result.LastAgentTraceOutput); err != nil {
 		h.logger.Warn("保存 Eino 续跑上下文失败", zap.String("conversationId", conversationID), zap.Error(err))
 	}
 }

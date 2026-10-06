@@ -89,7 +89,7 @@ tcp_reverse 默认仅接受 CSB1 加密 Beacon（AES-GCM + ImplantToken）才登
 
 		switch action {
 		case "list":
-			listeners, err := m.C2().ListC2ListenersForAccess(c2ToolAccess(ctx), mcpEffectiveProjectFilter(ctx, m.DB()))
+			listeners, err := m.C2().ListC2ListenersForAccess(c2ToolAccess(ctx), mcpEffectiveProjectFilter(ctx, m.Conversations()))
 			if err != nil {
 				return makeC2Result(nil, err)
 			}
@@ -120,7 +120,7 @@ tcp_reverse 默认仅接受 CSB1 加密 Beacon（AES-GCM + ImplantToken）才登
 			}
 			projectID := strings.TrimSpace(getString(params, "project_id"))
 			if projectID == "" {
-				projectID = mcpEffectiveProjectFilter(ctx, m.DB())
+				projectID = mcpEffectiveProjectFilter(ctx, m.Conversations())
 				if projectID == store.ProjectUnbound {
 					projectID = ""
 				}
@@ -270,7 +270,7 @@ func registerC2SessionTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 		case "list":
 			filter := store.ListC2SessionsFilter{
 				ListenerID: getString(params, "listener_id"),
-				ProjectID:  mcpEffectiveProjectFilter(ctx, m.DB()),
+				ProjectID:  mcpEffectiveProjectFilter(ctx, m.Conversations()),
 				Status:     getString(params, "status"),
 				OS:         getString(params, "os"),
 				Search:     getString(params, "search"),
@@ -506,7 +506,7 @@ func registerC2TaskManageTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 		case "list":
 			filter := store.ListC2TasksFilter{
 				SessionID: getString(params, "session_id"),
-				ProjectID: mcpEffectiveProjectFilter(ctx, m.DB()),
+				ProjectID: mcpEffectiveProjectFilter(ctx, m.Conversations()),
 				Status:    getString(params, "status"),
 			}
 			if limit := int(getFloat64(params, "limit")); limit > 0 {
@@ -657,7 +657,7 @@ func registerC2EventTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 		filter := store.ListC2EventsFilter{
 			Level:     getString(params, "level"),
 			Category:  getString(params, "category"),
-			ProjectID: mcpEffectiveProjectFilter(ctx, m.DB()),
+			ProjectID: mcpEffectiveProjectFilter(ctx, m.Conversations()),
 			SessionID: getString(params, "session_id"),
 			TaskID:    getString(params, "task_id"),
 			Limit:     int(getFloat64(params, "limit")),

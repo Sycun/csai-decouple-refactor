@@ -463,7 +463,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		Paths: storage.Paths{
 			Workspace:            workspaceRootDir,
 			Reduction:            reductionRootDir,
-			ConversationArtifact: db.ConversationArtifactsBaseDir(),
+			ConversationArtifact: database.NewConversations(db).ConversationArtifactsBaseDir(),
 			Plantask:             plantaskBase,
 			C2:                   c2Root,
 			ChatUploads:          chatUploadsRoot,
@@ -1459,7 +1459,7 @@ func registerWebshellManagementTools(mcpServer *mcp.Server, db *database.DB, web
 		if principal, ok := authctx.PrincipalFromContext(ctx); ok {
 			projectID := explicitProjectIDFromToolArgs(args)
 			if projectID == "" {
-				projectID = mcpEffectiveProjectFilter(ctx, db)
+				projectID = mcpEffectiveProjectFilter(ctx, database.NewConversations(db))
 			}
 			if result := authorizeWebshellToolProject(principal, "webshell:read", projectID); result != nil {
 				return result, nil

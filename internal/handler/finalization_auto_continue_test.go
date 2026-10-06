@@ -82,7 +82,7 @@ func TestCleanupPendingToolExecutionsAfterIterationAllowsFinalization(t *testing
 		return nil, ctx.Err()
 	})
 	ag := agentpkg.NewAgent(&config.OpenAIConfig{}, &config.AgentConfig{}, server, nil, logger, 10)
-	h := &AgentHandler{agent: ag, db: db, logger: logger}
+	h := &AgentHandler{agent: ag, db: db, logger: logger, conversations: database.NewConversations(db)}
 	// Same wiring as NewAgentHandler: the finalizer is its own collaborator now, so a hand-built
 	// handler has to build it the way production does rather than lean on a lazy accessor.
 	h.finalizer = newRunFinalizer(db, logger, ag, h)

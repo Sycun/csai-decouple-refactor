@@ -581,7 +581,7 @@ func (h *AgentHandler) waitHITLApproval(runCtx context.Context, cancelRun contex
 			sendEventFunc(eventType, message, clientData)
 		}
 		if strings.TrimSpace(assistantMessageID) != "" && h.db != nil {
-			if err := h.db.AddProcessDetail(assistantMessageID, conversationID, eventType, message, clientData); err != nil {
+			if err := h.conversations.AddProcessDetail(assistantMessageID, conversationID, eventType, message, clientData); err != nil {
 				h.logger.Warn("保存 HITL 过程详情失败", zap.Error(err), zap.String("eventType", eventType))
 			}
 		}

@@ -1,6 +1,7 @@
 package database
 
 import (
+	"cyberstrike-ai/internal/store"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -74,7 +75,7 @@ func (db *DB) ListConversationsByProjectID(projectID string, limit, offset int) 
 			conv.ProjectID = strings.TrimSpace(pid.String)
 		}
 		if roleName.Valid {
-			conv.RoleName = normalizeConversationRoleName(roleName.String)
+			conv.RoleName = store.NormalizeConversationRoleName(roleName.String)
 		}
 		conv.CreatedAt = parseDBTime(createdAt)
 		conv.UpdatedAt = parseDBTime(updatedAt)

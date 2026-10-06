@@ -22,17 +22,17 @@ func TestProcessDetailsPageIncludesTerminalToolStatusAcrossPageBoundary(t *testi
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	conversation, err := db.CreateConversation("page boundary", database.ConversationCreateMeta{})
+	conversation, err := database.NewConversations(db).CreateConversation("page boundary", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	message, err := db.AddMessage(conversation.ID, "assistant", "done", nil)
+	message, err := database.NewConversations(db).AddMessage(conversation.ID, "assistant", "done", nil)
 	if err != nil {
 		t.Fatalf("AddMessage: %v", err)
 	}
 	for i := 1; i <= 4; i++ {
 		id := fmt.Sprintf("call-%d", i)
-		if err := db.AddProcessDetail(message.ID, conversation.ID, "tool_call", "call", map[string]interface{}{
+		if err := database.NewConversations(db).AddProcessDetail(message.ID, conversation.ID, "tool_call", "call", map[string]interface{}{
 			"toolName": "http-framework-test", "toolCallId": id, "index": i, "total": 4,
 		}); err != nil {
 			t.Fatalf("AddProcessDetail(tool_call): %v", err)
@@ -40,7 +40,7 @@ func TestProcessDetailsPageIncludesTerminalToolStatusAcrossPageBoundary(t *testi
 	}
 	for i := 1; i <= 4; i++ {
 		id := fmt.Sprintf("call-%d", i)
-		if err := db.AddProcessDetail(message.ID, conversation.ID, "tool_result", "result", map[string]interface{}{
+		if err := database.NewConversations(db).AddProcessDetail(message.ID, conversation.ID, "tool_result", "result", map[string]interface{}{
 			"toolName": "http-framework-test", "toolCallId": id, "success": true,
 		}); err != nil {
 			t.Fatalf("AddProcessDetail(tool_result): %v", err)
@@ -83,21 +83,21 @@ func TestProcessDetailsPageUsesPersistedExecutionStatusAfterBackgroundCancel(t *
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	conversation, err := db.CreateConversation("cancelled background", database.ConversationCreateMeta{})
+	conversation, err := database.NewConversations(db).CreateConversation("cancelled background", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	message, err := db.AddMessage(conversation.ID, "assistant", "done", nil)
+	message, err := database.NewConversations(db).AddMessage(conversation.ID, "assistant", "done", nil)
 	if err != nil {
 		t.Fatalf("AddMessage: %v", err)
 	}
 	execID := "exec-cancelled-after-background"
-	if err := db.AddProcessDetail(message.ID, conversation.ID, "tool_call", "call", map[string]interface{}{
+	if err := database.NewConversations(db).AddProcessDetail(message.ID, conversation.ID, "tool_call", "call", map[string]interface{}{
 		"toolName": "exec", "toolCallId": "call-cancelled", "index": 1, "total": 1,
 	}); err != nil {
 		t.Fatalf("AddProcessDetail(tool_call): %v", err)
 	}
-	if err := db.AddProcessDetail(message.ID, conversation.ID, "tool_result", "background", map[string]interface{}{
+	if err := database.NewConversations(db).AddProcessDetail(message.ID, conversation.ID, "tool_result", "background", map[string]interface{}{
 		"toolName": "exec", "toolCallId": "call-cancelled", "executionId": execID, "status": "background_running", "success": true,
 	}); err != nil {
 		t.Fatalf("AddProcessDetail(tool_result): %v", err)
@@ -142,15 +142,15 @@ func TestProcessDetailsFullBackfillsEmptyToolCallArgumentsFromExecution(t *testi
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	conversation, err := db.CreateConversation("empty args", database.ConversationCreateMeta{})
+	conversation, err := database.NewConversations(db).CreateConversation("empty args", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	message, err := db.AddMessage(conversation.ID, "assistant", "done", nil)
+	message, err := database.NewConversations(db).AddMessage(conversation.ID, "assistant", "done", nil)
 	if err != nil {
 		t.Fatalf("AddMessage: %v", err)
 	}
-	if err := db.AddProcessDetail(message.ID, conversation.ID, "tool_call", "calling exec", map[string]interface{}{
+	if err := database.NewConversations(db).AddProcessDetail(message.ID, conversation.ID, "tool_call", "calling exec", map[string]interface{}{
 		"toolName": "exec", "toolCallId": "call-empty", "arguments": "", "argumentsObj": nil,
 	}); err != nil {
 		t.Fatalf("AddProcessDetail(tool_call): %v", err)
@@ -206,15 +206,15 @@ func TestProcessDetailsPageBackfillsEinoFilesystemArgumentsFromPrefixedExecution
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	conversation, err := db.CreateConversation("eino fs args", database.ConversationCreateMeta{})
+	conversation, err := database.NewConversations(db).CreateConversation("eino fs args", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	message, err := db.AddMessage(conversation.ID, "assistant", "done", nil)
+	message, err := database.NewConversations(db).AddMessage(conversation.ID, "assistant", "done", nil)
 	if err != nil {
 		t.Fatalf("AddMessage: %v", err)
 	}
-	if err := db.AddProcessDetail(message.ID, conversation.ID, "tool_call", "calling read_file", map[string]interface{}{
+	if err := database.NewConversations(db).AddProcessDetail(message.ID, conversation.ID, "tool_call", "calling read_file", map[string]interface{}{
 		"toolName": "read_file", "toolCallId": "call-read", "arguments": "", "argumentsObj": nil,
 	}); err != nil {
 		t.Fatalf("AddProcessDetail(tool_call): %v", err)

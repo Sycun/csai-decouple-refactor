@@ -42,11 +42,12 @@ const (
 
 // ChatUploadsHandler 对话中上传附件（chat_uploads 目录）的管理 API
 type ChatUploadsHandler struct {
-	logger  *zap.Logger
-	audit   *audit.Service
-	db      database.ChatUploadsStore
-	rbac    *store.RBAC
-	uploads *store.ChatUploads // chat_upload_artifacts: one row per uploaded path
+	logger        *zap.Logger
+	audit         *audit.Service
+	db            database.ChatUploadsStore
+	conversations *store.Conversations
+	rbac          *store.RBAC
+	uploads       *store.ChatUploads // chat_upload_artifacts: one row per uploaded path
 }
 
 // SetAudit wires platform audit logging.
@@ -59,6 +60,7 @@ func NewChatUploadsHandler(logger *zap.Logger, databases ...*database.DB) *ChatU
 	h := &ChatUploadsHandler{logger: logger}
 	if len(databases) > 0 {
 		h.db = database.Narrow[database.ChatUploadsStore](databases[0])
+		h.conversations = database.NewConversations(databases[0])
 		h.rbac = database.NewRBAC(databases[0])
 		// A nil *database.DB stays a nil store: OwnerOf then answers "not an artifact" rather than
 		// panicking, which is what the path-authorization helper below assumes.
@@ -180,7 +182,7 @@ func (h *ChatUploadsHandler) absRoot() (string, error) {
 
 func (h *ChatUploadsHandler) absReductionRoot() (string, error) {
 	if h.db != nil {
-		if base := strings.TrimSpace(h.db.EinoReductionBaseDir()); base != "" {
+		if base := strings.TrimSpace(h.conversations.EinoReductionBaseDir()); base != "" {
 			if filepath.IsAbs(base) {
 				return filepath.Abs(base)
 			}
@@ -200,7 +202,7 @@ func (h *ChatUploadsHandler) absReductionRoot() (string, error) {
 
 func (h *ChatUploadsHandler) absWorkspaceRoot() (string, error) {
 	if h.db != nil {
-		if base := strings.TrimSpace(h.db.EinoWorkspaceBaseDir()); base != "" {
+		if base := strings.TrimSpace(h.conversations.EinoWorkspaceBaseDir()); base != "" {
 			if filepath.IsAbs(base) {
 				return filepath.Abs(base)
 			}
@@ -220,7 +222,7 @@ func (h *ChatUploadsHandler) absWorkspaceRoot() (string, error) {
 
 func (h *ChatUploadsHandler) absConversationArtifactsRoot() (string, error) {
 	if h.db != nil {
-		if base := strings.TrimSpace(h.db.ConversationArtifactsBaseDir()); base != "" {
+		if base := strings.TrimSpace(h.conversations.ConversationArtifactsBaseDir()); base != "" {
 			if filepath.IsAbs(base) {
 				return filepath.Abs(base)
 			}
@@ -289,7 +291,7 @@ func (h *ChatUploadsHandler) conversationProjectID(conversationID string, cache 
 	if v, ok := cache[conversationID]; ok {
 		return v
 	}
-	projectID, err := h.db.GetConversationProjectID(conversationID)
+	projectID, err := h.conversations.GetConversationProjectID(conversationID)
 	if err != nil {
 		projectID = ""
 	}
@@ -305,7 +307,7 @@ func (h *ChatUploadsHandler) conversationTitle(conversationID string, cache map[
 	if v, ok := cache[conversationID]; ok {
 		return v
 	}
-	title, err := h.db.GetConversationTitle(conversationID)
+	title, err := h.conversations.GetConversationTitle(conversationID)
 	if err != nil {
 		title = ""
 	}

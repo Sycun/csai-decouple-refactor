@@ -1,4 +1,4 @@
-package database
+package store
 
 // ConversationCreateMeta describes how a conversation was created (for audit hooks).
 type ConversationCreateMeta struct {

@@ -41,6 +41,8 @@ type depsAdapter struct {
 	executions *store.Monitor
 	// rbac answers the resource-visibility question; the SQL lives in store.RBAC.
 	rbac *store.RBAC
+	// conversations answers the project-scope lookups; the SQL lives in store.Conversations.
+	conversations *store.Conversations
 }
 
 func (d depsAdapter) CanAccessResource(userID string, scope capability.Scope, resourceType, id string) bool {
@@ -62,7 +64,7 @@ func (d depsAdapter) ConversationID(ctx context.Context) string {
 }
 
 func (d depsAdapter) ProjectFilter(ctx context.Context) string {
-	filter := mcpEffectiveProjectFilter(ctx, d.db)
+	filter := mcpEffectiveProjectFilter(ctx, d.conversations)
 	if filter == store.ProjectUnbound {
 		return capability.ProjectFilterUnbound
 	}
@@ -74,10 +76,10 @@ func (d depsAdapter) ResourceProjectID(resourceType, resourceID string) (string,
 }
 
 func (d depsAdapter) ConversationProjectID(conversationID string) (string, error) {
-	if d.db == nil {
+	if d.conversations == nil {
 		return "", fmt.Errorf("database is not available")
 	}
-	return d.db.GetConversationProjectID(conversationID)
+	return d.conversations.GetConversationProjectID(conversationID)
 }
 
 // capabilityRuntime owns the one registry and the one evaluator the whole
@@ -259,7 +261,7 @@ func authorizeWithCapability(ctx context.Context, db *database.DB, toolName stri
 	if p, ok := authctx.PrincipalFromContext(ctx); ok {
 		ctx = capability.WithPrincipal(ctx, principalAdapter{p: p})
 	}
-	ctx = capability.WithRequestDeps(ctx, depsAdapter{db: db, c2: database.NewC2(db), executions: database.NewMonitor(db), rbac: database.NewRBAC(db)})
+	ctx = capability.WithRequestDeps(ctx, depsAdapter{db: db, c2: database.NewC2(db), executions: database.NewMonitor(db), rbac: database.NewRBAC(db), conversations: database.NewConversations(db)})
 	decision := evaluatorFor().Decide(ctx, toolName, args)
 	switch decision.Outcome {
 	case capability.OutcomeAllow:

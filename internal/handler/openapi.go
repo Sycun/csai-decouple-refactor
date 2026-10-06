@@ -13,6 +13,7 @@ import (
 // OpenAPIHandler OpenAPI处理器
 type OpenAPIHandler struct {
 	db               database.OpenAPIStore
+	conversations    *store.Conversations
 	findings         *store.Vulnerabilities // the exported document reads the findings rows directly
 	logger           *zap.Logger
 	conversationHdlr *ConversationHandler
@@ -23,6 +24,7 @@ type OpenAPIHandler struct {
 func NewOpenAPIHandler(db *database.DB, logger *zap.Logger, conversationHdlr *ConversationHandler, agentHdlr *AgentHandler) *OpenAPIHandler {
 	return &OpenAPIHandler{
 		db:               database.Narrow[database.OpenAPIStore](db),
+		conversations:    database.NewConversations(db),
 		findings:         newFindingsStore(db),
 		logger:           logger,
 		conversationHdlr: conversationHdlr,
@@ -73,7 +75,7 @@ func (h *OpenAPIHandler) GetConversationResults(c *gin.Context) {
 	conversationID := c.Param("id")
 
 	// 验证对话是否存在
-	conv, err := h.db.GetConversation(conversationID)
+	conv, err := h.conversations.GetConversation(conversationID)
 	if err != nil {
 		h.logger.Error("获取对话失败", zap.Error(err))
 		c.JSON(http.StatusNotFound, gin.H{"error": "对话不存在"})
@@ -81,7 +83,7 @@ func (h *OpenAPIHandler) GetConversationResults(c *gin.Context) {
 	}
 
 	// 获取消息列表
-	messages, err := h.db.GetMessages(conversationID)
+	messages, err := h.conversations.GetMessages(conversationID)
 	if err != nil {
 		h.logger.Error("获取消息失败", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

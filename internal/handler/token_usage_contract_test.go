@@ -67,18 +67,18 @@ func usageContractUser(t *testing.T, db *database.DB, name string) *database.RBA
 // summary - so the rows the endpoints read came through the store's hook rather than a fixture.
 func recordUsage(t *testing.T, db *database.DB, conversationID, payload string) {
 	t.Helper()
-	message, err := db.AddMessage(conversationID, "assistant", "answer", nil)
+	message, err := database.NewConversations(db).AddMessage(conversationID, "assistant", "answer", nil)
 	if err != nil {
 		t.Fatalf("AddMessage: %v", err)
 	}
-	if err := db.AddProcessDetail(message.ID, conversationID, store.UsageEventType, "usage", payload); err != nil {
+	if err := database.NewConversations(db).AddProcessDetail(message.ID, conversationID, store.UsageEventType, "usage", payload); err != nil {
 		t.Fatalf("AddProcessDetail: %v", err)
 	}
 }
 
 func ownedConversation(t *testing.T, db *database.DB, user *database.RBACUser, title string) string {
 	t.Helper()
-	conv, err := db.CreateConversation(title, database.ConversationCreateMeta{})
+	conv, err := database.NewConversations(db).CreateConversation(title, database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestConversationTokenUsageEndpointAndQueryClamps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	if err := db.SetConversationProjectID(theirs, project.ID); err != nil {
+	if err := database.NewConversations(db).SetConversationProjectID(theirs, project.ID); err != nil {
 		t.Fatalf("SetConversationProjectID: %v", err)
 	}
 	recordUsage(t, db, theirs, `{"model":"gpt-c","totalTokens":4}`)

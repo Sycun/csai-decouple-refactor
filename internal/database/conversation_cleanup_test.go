@@ -25,7 +25,7 @@ func TestDeleteConversationRemovesEinoScopedDirs(t *testing.T) {
 	workspaceBase := filepath.Join(tmp, "workspace")
 	db.SetConversationDirs(plantaskBase, checkpointBase, reductionBase, workspaceBase, "")
 
-	conv, err := db.CreateConversation("cleanup test", ConversationCreateMeta{})
+	conv, err := NewConversations(db).CreateConversation("cleanup test", ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestDeleteConversationRemovesEinoScopedDirs(t *testing.T) {
 		}
 	}
 
-	if err := db.DeleteConversation(convID); err != nil {
+	if err := NewConversations(db).DeleteConversation(convID); err != nil {
 		t.Fatalf("DeleteConversation: %v", err)
 	}
 
@@ -76,11 +76,11 @@ func TestDeleteConversationRemovesChatUploads(t *testing.T) {
 	uploads := filepath.Join(tmp, "chat_uploads")
 	db.SetConversationDirs("", "", "", "", uploads)
 
-	target, err := db.CreateConversation("uploads cleanup", ConversationCreateMeta{})
+	target, err := NewConversations(db).CreateConversation("uploads cleanup", ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	sibling, err := db.CreateConversation("sibling", ConversationCreateMeta{})
+	sibling, err := NewConversations(db).CreateConversation("sibling", ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestDeleteConversationRemovesChatUploads(t *testing.T) {
 		}
 	}
 
-	if err := db.DeleteConversation(target.ID); err != nil {
+	if err := NewConversations(db).DeleteConversation(target.ID); err != nil {
 		t.Fatalf("DeleteConversation: %v", err)
 	}
 

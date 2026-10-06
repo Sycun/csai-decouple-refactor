@@ -51,7 +51,7 @@ func newHITLEndpointHandler(t *testing.T) (*AgentHandler, *database.DB) {
 // be made reachable by naming a conversation that was never created.
 func hitlTestConversation(t *testing.T, db *database.DB, title string) string {
 	t.Helper()
-	conv, err := db.CreateConversation(title, database.ConversationCreateMeta{})
+	conv, err := database.NewConversations(db).CreateConversation(title, database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("create conversation %q: %v", title, err)
 	}

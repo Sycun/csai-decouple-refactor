@@ -20,18 +20,8 @@ var auditActionsResourceRemoved = map[string]bool{
 	"markdown_delete":        true,
 }
 
-// ResourceExistenceSource is the read surface this check needs for the resources whose queries are
-// still on the connection wrapper: given the resource an audit row points at, does that row still
-// exist? Declared here because internal/audit is the consumer, and listing the lookups is cheaper
-// than handing the audit log reader the whole connection wrapper.
-//
-// The handlers' own store interfaces must be a superset of this one, since they pass their storage
-// in - internal/database/stores.go keeps ResourceExistence aligned with it. The C2 lookups and the
-// tool-execution lookup are not part of it any more: the caller passes store.C2 / store.Monitor
-// themselves (see ApplyResourceAvailability).
-type ResourceExistenceSource interface {
-	ConversationExists(id string) (bool, error)
-}
+// ResourceExistenceSource 已随最后一条问句（ConversationExists）交回会话 store 而消失：每一种
+// 资源的存在性现在都由它自己的 store 回答，这个检查只做组合。
 
 // BatchQueueLookup is the batch queue answer split out for the same reason as the two below: that
 // read is store.BatchTasks.GetBatchQueue now, not a method on the connection wrapper.
@@ -58,7 +48,7 @@ type WebshellLookup interface {
 // in an interface is not nil, and the guard below would then fall through into method calls on a nil
 // receiver instead of reporting "availability unknown". c2 and executions are concrete pointers,
 // so a plain nil check is exact there and those branches answer "unknown" without a database.
-func ApplyResourceAvailability(db ResourceExistenceSource, c2 *store.C2, executions *store.Monitor, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, log *store.AuditLog) {
+func ApplyResourceAvailability(conversations *store.Conversations, c2 *store.C2, executions *store.Monitor, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, log *store.AuditLog) {
 	if log == nil || strings.TrimSpace(log.ResourceID) == "" {
 		return
 	}
@@ -67,16 +57,16 @@ func ApplyResourceAvailability(db ResourceExistenceSource, c2 *store.C2, executi
 		log.ResourceAvailable = &f
 		return
 	}
-	if db == nil {
+	if conversations == nil && c2 == nil && executions == nil && findings == nil && webshells == nil && batches == nil {
 		return
 	}
-	available, known := resourceStillExists(db, c2, executions, findings, webshells, batches, log.ResourceType, log.ResourceID)
+	available, known := resourceStillExists(conversations, c2, executions, findings, webshells, batches, log.ResourceType, log.ResourceID)
 	if known {
 		log.ResourceAvailable = &available
 	}
 }
 
-func resourceStillExists(db ResourceExistenceSource, c2 *store.C2, executions *store.Monitor, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, resourceType, resourceID string) (bool, bool) {
+func resourceStillExists(conversations *store.Conversations, c2 *store.C2, executions *store.Monitor, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, resourceType, resourceID string) (bool, bool) {
 	resourceID = strings.TrimSpace(resourceID)
 	if resourceID == "" {
 		return false, false
@@ -91,7 +81,10 @@ func resourceStillExists(db ResourceExistenceSource, c2 *store.C2, executions *s
 	}
 	switch t {
 	case "conversation":
-		ok, err := db.ConversationExists(resourceID)
+		if conversations == nil {
+			return false, false
+		}
+		ok, err := conversations.ConversationExists(resourceID)
 		return ok, err == nil
 	case "vulnerability":
 		if findings == nil {

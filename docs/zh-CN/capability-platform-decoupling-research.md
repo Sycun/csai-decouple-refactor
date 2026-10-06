@@ -3249,6 +3249,59 @@ WebShellStore / WorkflowStore` 各摘掉自己的 RBAC 成员，对应 handler �
 project 10 / project_stats 3 / plantask 2 / storage_activity 2 / project_dashboard 1。
 `internal/database` 23 文件 84 条 SQL、`internal/store` 36 文件 542 条。
 
+### P6 第四十三刀 —— 会话域整片进 `store.Conversations`：42 个方法、一次协作者注入、一个搬动照出来的可见性缺陷
+
+**这一刀搬了什么**：`internal/database/conversation.go`（1,611 行）+ `conversation_create_meta.go`
+（创建钩子）+ `process_detail_dedupe.go`（相邻去重，跟着 `ProcessDetail` 走）进 `internal/store` ——
+`conversations` 表的全部 CRUD（含 webshell 侧边栏两种读形）、`messages` 的读侧与终态写回、
+`process_details` 的 CRUD/摘要/分页/锚点、`last_react_*` 代理轨迹、访问过滤列表与计数、
+`Get/SetConversationProjectID`（project.go 一直替这张表拿着的两条，按"以表定主人"归位）。
+`store.Session` 继续拥有 messages / process_details 的写 SQL（本片经 `NewSession(c.db)` 调用它），
+`Conversations` 只写 `conversations` 一张表。
+
+**水位**：`*database.DB` **71 → 27**（−42 会话方法、−2 projectID 方法）。**死方法**：
+`CountConversations`（白名单里"被带访问计数的版本取代"的那条）删除，`conversation_project_filter_test`
+的三处调用改钉活着的 `CountConversationsForAccess(search, projectID, "", "")`（空 userID 不过滤，
+与原语义等价）。
+
+**协作者注入（延续 monitor 的手势，两处）**：① 删除会话前的**漏洞来源标签补全**是漏洞域的写入，
+经 `SetSourceTagBackfill` 注入（`database.NewConversations` 桥接上 `NewFindings(db)`），nil 时跳过
+（原实现失败也只记 warn）；② 目录清理收 `storage.ConversationDirs` 快照（桥里带上
+`conversationArtifactsDir` 兜底），`*DB` 上同名字段留给 project.go 直到它的刀。项目存在性检查
+（Create / SetConversationProjectID 各自一处）内联成只读 `SELECT COUNT(*) FROM projects`，
+错误文案与原 `GetProject` 一致（"项目不存在"）。Token 用量记账保留"尽力而为"（原实现 warn-only）。
+
+**一次类型别名网**：`Conversation / Message / ProcessDetail / ConversationCreateMeta` 等八个行类型
+在 database 侧留别名——handler / agent / mcp / finalizer 的类型签名一处未动。**13 个窄接口收口**：
+`ConversationStore`、`OpenAPIStore`、`AttackChainStore/Ledger`、`ChatUploadsStore`、`WebShellStore`、
+`RobotStore`、`AgentStore`、`WorkflowStore` 各摘自己的会话成员，`ResourceExistence`（会话那条是
+最后一条问句）据此整体删除；对应 handler 与 `runFinalizer`、`attackchain.Builder`、
+`c2.Manager`（新 `Conversations()` 访问器）、`internal/app` 的 depsAdapter / project filter /
+vulnerability tools 各换 `store.Conversations` 句柄。audit 的存在性检查最后一个参数位也交给它，
+`ApplyResourceAvailability` 从此收六个 store、自己不再收窄接口。
+
+**搬动照出来的存量缺陷（当场修掉并留测试钉住）**：`appendConversationAccessFilter` 的无别名分支把
+外层列名写成裸 `${prefix}id`，在 `ra` 子查询里被解析成 **`rbac_resource_assignments.id`**——
+**带搜索词的列表路径（别名 "c"）一直是对的，无搜索路径的"被指配"可见性整条失效**（生产里表现为
+"分到我的会话在不搜索时看不见"）。修法是两条路径同一份拼写（无别名时限定 `conversations.`），
+新用例 `TestConversationsAccessFiltersRespectAssignments` 钉住修复后的行为；把 `prefix` 还原成空串，
+该用例立刻红（探针已验）。
+
+**证明（都能复跑）**：字符串字面量双向差分（全部 SQL 与报错串逐字节保留，消失的只有 13 条日志、
+死方法的片段与两个 import 名）；`store/conversations_test.go` 四条真库用例（CRUD+轨迹+项目绑定、
+消息与整轮删除+轨迹清空、过程详情摘要/分页/锚点/按会话分组、访问过滤与指配）；既有 24 个测试文件
+跟随句柄迁移（含 `conversation_cleanup`、`process_details_summary`、`session_writes_parity` 的
+原断言）；四道门禁注入探针（水面、写账本注入一句 `UPDATE conversations`、scan 硬零、可见性修复）
+全部"注入即红、撤销即绿"。**门禁数字（实测）**：`dbMethodCeiling` 71 → **27**；死方法地板 61 → **18**；
+consumer-surface 地板 95 → **34**；窄接口地板 15 → **14**、赋值计数地板 13 → **12**；
+写账本 49 → **50 张表**（212 条写语句 / 31 文件）；`narrow_db_test` 的 AuditHandler 从"窄接口组"
+移入"store 自持组"（`conversations` 字段）。**全仓**：48 包 `go test` 全绿；gofmt 硬零；
+SSE golden 两份生成物随刀重生成。`internal/store` 39 个生产文件 / 235 条包内测试；全仓测试函数 1,614。
+
+**留下的账**：`*DB` 上只剩 **27** 个方法：project 8 / database.go 11（开机接线 + 两个 owner 补列辅助）
+/ project_stats 3 / plantask 2 / storage_activity 2 / project_dashboard 1。会话域的 DDL（conversations
+表的 CREATE 与四条索引、`migrate` 系列）仍在本文件，随最后一块（project + boot 骨架）一起收。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
@@ -3298,7 +3351,7 @@ project 10 / project_stats 3 / plantask 2 / storage_activity 2 / project_dashboa
 | P3 契约与前端 | **部分：三套事件名契约已完成并双侧比对**；逐文件 ES 模块未做 | `go test -count=1 -run 'TestSSEPage|TestPersistedDetail|TestGeneratedSSEEnum|TestPageLoads' ./internal/handler/`；手拼帧基线 0 |
 | P4 进程外插件宿主 | **部分：进程外 ABI + 软出网已落**；netns/seccomp 硬边界与内嵌 CPython **未做** | `ls internal/pluginhost`；`grep -rl 'seccomp\|CLONE_NEWNET' internal/` → **无匹配**（这就是"未做"的证据） |
 | P5 审核流水线/商店 | **部分：客户端强制 + 制品签名/撤销已落**；registry 服务端、气隙离线包、沙箱引爆自动化 **未做** | `ls internal/artifact`；`ls internal/registry` → **不存在** |
-| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、**数据层按域切出 25 个 store / `internal/store` 36 个生产文件、包内 231 条测试**（`*database.DB` 361 → **71**，只降门禁；C2、监控、RBAC 三域整片交回 `store.C2` / `store.Monitor` / `store.RBAC`，见 §11 第四十至四十二刀；漏洞域两片 + 攻击链一片 + workflow 一片已交，`internal/database/vulnerability.go`、`vulnerability_alert.go`、`attackchain.go`、`workflow.go` + `workflow_package.go`、`project_fact_edges.go` 六个文件删除）、**分层裸 SQL 归零**（两个自有层之外 0 条）、DATETIME 读法 24 处 → 1 处、应用回调不再挂在连接包装上、**handler 层不持有任何数据库句柄**、`vulnerabilities` 表按"唯一写入者"认领（`TestFindingsTableHasOneWriter`），告警两张表、`robot_user_bindings` 与攻击链两张表进归属清单；**黑板两张表（`project_facts` / `project_fact_edges`）的 SQL 与 DDL 整体进 `store.Facts`**，`TestProjectFactsHasOneWriter` 按写入者认领（事实 6 条写、边 9 条写，各自只有一个主人文件），store 的写面由 `TestStoreWritesOnlyTablesItOwns` 双向核对（账本 49 张表）+ `TestWriteLedgerTablesHaveOneWriterEach` 全仓反第二写者（含只降的债务台账）；黑板账本已彻底离开连接包装（`ProjectFactStore` 劈成 `ProjectRowStore` + `BlackboardLedger`，18 个转发删掉）；搬走的 DDL 由 `TestSchemaEnsuresAreWiredAtBoot` 逐条盯开机接线、外键顺序与"老家不许再提这张表"、Eino 6 包（适配外 3 包）、`AgentHandler` 六刀至 **88 方法 / 20 文件**、审计注入门禁、手写 OpenAPI 文档按域拆成 5 个分组文件 + golden（157 操作逐字节等值） | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `transport layer: 0 structs hold *database.DB, 18 fields hold a narrowed database interface, 28 hold their own table store, 1160 struct fields scanned (started 19/0)`；`go test -count=1 -v -run TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt ./internal/layering/` 报 `0 statements in 0 files, over 511 production files scanned`；`go test -count=1 -run 'TestFindingContract' ./internal/handler/` 9 条契约用例；`go test -count=1 -run 'TestOpenAPI' ./internal/handler/` |
+| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、**数据层按域切出 26 个 store / `internal/store` 39 个生产文件、包内 235 条测试**（`*database.DB` 361 → **27**，只降门禁；C2、监控、RBAC、会话四域整片交回各自 store，见 §11 第四十至四十三刀；漏洞域两片 + 攻击链一片 + workflow 一片已交，`internal/database/vulnerability.go`、`vulnerability_alert.go`、`attackchain.go`、`workflow.go` + `workflow_package.go`、`project_fact_edges.go` 六个文件删除）、**分层裸 SQL 归零**（两个自有层之外 0 条）、DATETIME 读法 24 处 → 1 处、应用回调不再挂在连接包装上、**handler 层不持有任何数据库句柄**、`vulnerabilities` 表按"唯一写入者"认领（`TestFindingsTableHasOneWriter`），告警两张表、`robot_user_bindings` 与攻击链两张表进归属清单；**黑板两张表（`project_facts` / `project_fact_edges`）的 SQL 与 DDL 整体进 `store.Facts`**，`TestProjectFactsHasOneWriter` 按写入者认领（事实 6 条写、边 9 条写，各自只有一个主人文件），store 的写面由 `TestStoreWritesOnlyTablesItOwns` 双向核对（账本 50 张表）+ `TestWriteLedgerTablesHaveOneWriterEach` 全仓反第二写者（含只降的债务台账）；黑板账本已彻底离开连接包装（`ProjectFactStore` 劈成 `ProjectRowStore` + `BlackboardLedger`，18 个转发删掉）；搬走的 DDL 由 `TestSchemaEnsuresAreWiredAtBoot` 逐条盯开机接线、外键顺序与"老家不许再提这张表"、Eino 6 包（适配外 3 包）、`AgentHandler` 六刀至 **88 方法 / 20 文件**、审计注入门禁、手写 OpenAPI 文档按域拆成 5 个分组文件 + golden（157 操作逐字节等值） | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `transport layer: 0 structs hold *database.DB, 18 fields hold a narrowed database interface, 28 hold their own table store, 1160 struct fields scanned (started 19/0)`；`go test -count=1 -v -run TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt ./internal/layering/` 报 `0 statements in 0 files, over 511 production files scanned`；`go test -count=1 -run 'TestFindingContract' ./internal/handler/` 9 条契约用例；`go test -count=1 -run 'TestOpenAPI' ./internal/handler/` |
 | §6.1 社区知识控制 | **代码层已落**（围栏 + 入库拒绝 + 装配点守卫）；是否按运行期不可信处理仍待裁决（决策项 4） | `go test -count=1 ./internal/contentpolicy/` |
 
 **没有做成的事**（不假装完成）：`AgentHandler` 分解本体（88 方法 / 20 文件，仍是全仓最大的类型；
@@ -3307,10 +3360,10 @@ project 10 / project_stats 3 / plantask 2 / storage_activity 2 / project_dashboa
 ~~剩余 3 个域的窄接口~~（**已在第五片做完**：阻塞点是 `h.db` 逃逸进别包签名，解法是给那些函数
 声明消费者接口——`project.Store`/`agentfinalizer.Store`/`attackchain.Store`/`workflow.Store`，
 19 → 0）、Eino 收到 ≤1 包、
-session 事件溯源、逐文件 ES 模块、`internal/database` 剩下的 **71** 个方法继续按域切
-（漏洞、攻击链、告警、workflow、黑板、资产、批量任务、WebShell、C2、监控、RBAC 等片已交完；
-实测族大小 conversation 42 / database.go 11 / project 10 / project_stats 3 / plantask 2 /
-storage_activity 2 / project_dashboard 1，合计 **71**；细节见 §11 第二十一至四十二刀）、
+session 事件溯源、逐文件 ES 模块、`internal/database` 剩下的 **27** 个方法继续按域切
+（漏洞、攻击链、告警、workflow、黑板、资产、批量任务、WebShell、C2、监控、RBAC、会话等片已交完；
+实测族大小 project 8 / database.go 11（开机接线）/ project_stats 3 / plantask 2 /
+storage_activity 2 / project_dashboard 1，合计 **27**；细节见 §11 第二十一至四十三刀）、
 P4 硬网络边界、P4 内嵌 CPython、P5 registry / 气隙包 / 引爆自动化、
 以及 **§10 的 9 个决策项一个都没有被裁决**（其中 1、4、5、6 直接决定 P4/P5 的形态）。
 因此**目标未达成**，本表就是"还差什么"的清单。
@@ -3404,16 +3457,16 @@ origin    https://github.com/AIPentest/CyberStrikeAI.git       # 上游父仓库
    后端 API 错误串未 i18n——口径与数字都要可复验：
    `grep -rhoE '"(error|message)": "[^"]*"' internal/handler/*.go | grep -c '[一-龥]'` = **391 条中文**
    （同一条命令去掉 `grep -c` 换 `-vc` = 132 条 ASCII）。属契约变更，要连同前端字典一起动。
-   再往后才是 `internal/database` 那 **71** 个方法（**分层裸 SQL 已归零**：`internal/knowledge` 是
+   再往后才是 `internal/database` 那 **27** 个方法（**分层裸 SQL 已归零**：`internal/knowledge` 是
    `internal/handler` 之后最后一个在两个自有层之外写 SQL 的包，见 §11「P6 数据层第十一片」；
    剩下的 SQL 全在主人手里——复现：
    `for d in internal/database internal/store; do echo -n "$d "; ls $d/*.go | grep -v _test | wc -l | tr -d ' '; grep -rhoE '\b(SELECT|INSERT INTO|UPDATE|DELETE FROM)\b' $(ls $d/*.go | grep -v _test) | wc -l | tr -d ' '; done`
-   → 实测 **database 84 处 / 23 文件、store 542 处 / 36 文件**；store 那一侧的 199 条**写**语句
-   全部落在 `writeLedger` 登记的 49 张表上，`go test -count=1 -v -run TestStoreWritesOnlyTablesItOwns ./internal/store/`
-   会把三个数打印出来）：按 `*DB` 接收者当场数的**大水面（第四十二刀后复测）**是
-   **`conversation.go 42 / database.go 11 / project.go 10 / project_stats.go 3 / plantask.go 2 / storage_activity.go 2 / project_dashboard.go 1`**，
+   → 实测 **database 28 处 / 22 文件、store 599 处 / 39 文件**；store 那一侧的 212 条**写**语句
+   全部落在 `writeLedger` 登记的 50 张表上，`go test -count=1 -v -run TestStoreWritesOnlyTablesItOwns ./internal/store/`
+   会把三个数打印出来）：按 `*DB` 接收者当场数的**大水面（第四十三刀后复测）**是
+   **`database.go 11 / project.go 8 / project_stats.go 3 / plantask.go 2 / storage_activity.go 2 / project_dashboard.go 1`**，
    复现命令：`for f in internal/database/*.go; do case "$f" in *_test.go) continue;; esac; n=$(grep -cE '^func \([a-zA-Z_]+ \*DB\)' "$f"); [ "$n" -gt 0 ] && printf "%4d %s\n" "$n" "$f"; done | sort -rn`，
-   **合计 71**（`TestDatabaseSurfaceOnlyShrinks` 的上限就是它，只降不升）。
+   **合计 27**（`TestDatabaseSurfaceOnlyShrinks` 的上限就是它，只降不升）。
    **黑板这一族已经彻底交完（第二十七刀（一）～（四））**：SQL 与两张表的 DDL 在 `store.Facts` 里，
    `ProjectFactStore` 已劈成 `ProjectRowStore`（`*DB` 答）与 `BlackboardLedger`（`*store.Facts` 答），
    `facts_store.go` 那 18 个一行式转发全部删除，水位 259 → **241**。

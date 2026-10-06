@@ -51,7 +51,7 @@ func TestSetConversationProjectRequiresProjectAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	conv, err := db.CreateConversation("owned", database.ConversationCreateMeta{})
+	conv, err := database.NewConversations(db).CreateConversation("owned", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}

@@ -119,7 +119,7 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	principal := authctx.NewPrincipalWithScopes(access.User.ID, access.User.Username, access.Scope, access.Permissions, access.PermissionScopes)
 	title := safeTruncateString(task.Message, 50)
 	batchMeta := batchSubTaskConversationMeta(h.config, queue)
-	conv, err := h.db.CreateConversation(title, batchMeta)
+	conv, err := h.conversations.CreateConversation(title, batchMeta)
 	if err != nil {
 		h.logger.Error("创建对话失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(err))
 		h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, BatchTaskStatusFailed, "", "创建对话失败: "+err.Error())
@@ -146,11 +146,11 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		}
 	}
 
-	if _, err = h.db.AddMessage(conversationID, "user", task.Message, nil); err != nil {
+	if _, err = h.conversations.AddMessage(conversationID, "user", task.Message, nil); err != nil {
 		h.logger.Error("保存用户消息失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID), zap.Error(err))
 	}
 
-	assistantMsg, err := h.db.AddMessage(conversationID, "assistant", "处理中...", nil)
+	assistantMsg, err := h.conversations.AddMessage(conversationID, "assistant", "处理中...", nil)
 	if err != nil {
 		h.logger.Error("创建助手消息失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.String("conversationId", conversationID), zap.Error(err))
 		assistantMsg = nil
@@ -252,9 +252,9 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		batchOrch = "deep"
 	}
 	if useBatchMulti {
-		_ = h.db.SetConversationAgentMode(conversationID, batchOrch)
+		_ = h.conversations.SetConversationAgentMode(conversationID, batchOrch)
 	} else {
-		_ = h.db.SetConversationAgentMode(conversationID, "eino_single")
+		_ = h.conversations.SetConversationAgentMode(conversationID, "eino_single")
 	}
 
 	var resultMA *multiagent.RunResult
@@ -320,7 +320,7 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	}))
 
 	if assistantMessageID == "" {
-		_, err = h.db.AddMessage(conversationID, "assistant", resText, mcpIDs)
+		_, err = h.conversations.AddMessage(conversationID, "assistant", resText, mcpIDs)
 	} else if !decision.Finalizable {
 		err = nil
 	}
@@ -329,7 +329,7 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	}
 
 	if lastIn != "" || lastOut != "" {
-		if err := h.db.SaveAgentTrace(conversationID, lastIn, lastOut); err != nil {
+		if err := h.conversations.SaveAgentTrace(conversationID, lastIn, lastOut); err != nil {
 			h.logger.Warn("保存代理轨迹失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(err))
 		}
 	}
@@ -398,10 +398,10 @@ func (h *AgentHandler) handleBatchSubTaskRunError(
 			if updateErr := h.appendAssistantMessageNotice(assistantMessageID, cancelMsg); updateErr != nil {
 				h.logger.Warn("更新取消后的助手消息失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(updateErr))
 			}
-			if err := h.db.AddProcessDetail(assistantMessageID, conversationID, "cancelled", cancelMsg, nil); err != nil {
+			if err := h.conversations.AddProcessDetail(assistantMessageID, conversationID, "cancelled", cancelMsg, nil); err != nil {
 				h.logger.Warn("保存取消详情失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(err))
 			}
-		} else if _, errMsg := h.db.AddMessage(conversationID, "assistant", cancelMsg, nil); errMsg != nil {
+		} else if _, errMsg := h.conversations.AddMessage(conversationID, "assistant", cancelMsg, nil); errMsg != nil {
 			h.logger.Warn("保存取消消息失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(errMsg))
 		}
 		h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, BatchTaskStatusCancelled, cancelMsg, "", conversationID)
@@ -415,7 +415,7 @@ func (h *AgentHandler) handleBatchSubTaskRunError(
 		// setMessageContent 已经把 messageId 与错误记进日志；这里的上下文（queueId/taskId）
 		// 就在上一条 Error 里。
 		_ = h.setMessageContent(assistantMessageID, errorMsg)
-		if err := h.db.AddProcessDetail(assistantMessageID, conversationID, "error", errorMsg, nil); err != nil {
+		if err := h.conversations.AddProcessDetail(assistantMessageID, conversationID, "error", errorMsg, nil); err != nil {
 			h.logger.Warn("保存错误详情失败", zap.String("queueId", queueID), zap.String("taskId", task.ID), zap.Error(err))
 		}
 	}

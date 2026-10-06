@@ -96,7 +96,7 @@ func TestAssetToolsCRUDQueryAndPageLimit(t *testing.T) {
 		t.Fatalf("oversized page was accepted: result=%#v err=%v", result, err)
 	}
 
-	conversation, err := db.CreateConversation("asset scan", database.ConversationCreateMeta{})
+	conversation, err := database.NewConversations(db).CreateConversation("asset scan", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,11 +160,11 @@ func TestAssetReadToolsRespectConversationProjectScope(t *testing.T) {
 		t.Fatalf("seed assets result=%#v err=%v", result, err)
 	}
 
-	bound, err := db.CreateConversation("bound", database.ConversationCreateMeta{ProjectID: projectA.ID})
+	bound, err := database.NewConversations(db).CreateConversation("bound", database.ConversationCreateMeta{ProjectID: projectA.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	unbound, err := db.CreateConversation("unbound", database.ConversationCreateMeta{})
+	unbound, err := database.NewConversations(db).CreateConversation("unbound", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,12 +4,11 @@ import (
 	"context"
 	"strings"
 
-	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/store"
 )
 
-func mcpEffectiveProjectFilter(ctx context.Context, db *database.DB) string {
+func mcpEffectiveProjectFilter(ctx context.Context, db *store.Conversations) string {
 	if projectID := strings.TrimSpace(mcp.MCPProjectIDFromContext(ctx)); projectID != "" {
 		return projectID
 	}

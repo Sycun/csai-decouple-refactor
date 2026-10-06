@@ -15,15 +15,15 @@ import (
 
 // AuditHandler serves platform audit log APIs.
 type AuditHandler struct {
-	logs       *store.AuditLogs           // audit_logs: 这个页面唯一的读来源
-	db         database.ResourceExistence // 只剩"被审计的资源还在不在"里还没轮到搬迁的两条（会话与工具执行）
-	findings   audit.FindingLookup        // 漏洞那条存在性检查在 store.Vulnerabilities 里，不在这几条里
-	webshells  audit.WebshellLookup       // WebShell 那条存在性检查在 store.Webshell 里，同理
-	batches    *store.BatchTasks          // 批量队列那条同理：读的是 store.BatchTasks，不是连接包装
-	c2         *store.C2                  // C2 的 listener/session/task 三条同理：读的是 store.C2
-	executions *store.Monitor             // 工具执行那条同理：读的是 store.Monitor
-	audit      *audit.Service
-	logger     *zap.Logger
+	logs          *store.AuditLogs     // audit_logs: 这个页面唯一的读来源
+	conversations *store.Conversations // 会话那条存在性检查（原来经 db 窄接口）
+	findings      audit.FindingLookup  // 漏洞那条存在性检查在 store.Vulnerabilities 里，不在这几条里
+	webshells     audit.WebshellLookup // WebShell 那条存在性检查在 store.Webshell 里，同理
+	batches       *store.BatchTasks    // 批量队列那条同理：读的是 store.BatchTasks，不是连接包装
+	c2            *store.C2            // C2 的 listener/session/task 三条同理：读的是 store.C2
+	executions    *store.Monitor       // 工具执行那条同理：读的是 store.Monitor
+	audit         *audit.Service
+	logger        *zap.Logger
 }
 
 // NewAuditHandler creates an audit log handler.
@@ -31,15 +31,15 @@ func NewAuditHandler(db *database.DB, auditSvc *audit.Service, logger *zap.Logge
 	return &AuditHandler{
 		// Narrow, not a plain assignment: a nil *database.DB has to stay a nil interface, or every
 		// guard below takes the wrong branch.
-		logs:       newAuditLogsStore(db),
-		db:         database.Narrow[database.ResourceExistence](db),
-		findings:   newFindingLookup(db),
-		webshells:  database.NewWebshell(db),
-		batches:    database.NewBatchTasks(db),
-		c2:         database.NewC2(db),
-		executions: database.NewMonitor(db),
-		audit:      auditSvc,
-		logger:     logger,
+		logs:          newAuditLogsStore(db),
+		conversations: database.NewConversations(db),
+		findings:      newFindingLookup(db),
+		webshells:     database.NewWebshell(db),
+		batches:       database.NewBatchTasks(db),
+		c2:            database.NewC2(db),
+		executions:    database.NewMonitor(db),
+		audit:         auditSvc,
+		logger:        logger,
 	}
 }
 
@@ -140,7 +140,7 @@ func (h *AuditHandler) GetLog(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
 		return
 	}
-	audit.ApplyResourceAvailability(h.db, h.c2, h.executions, h.findings, h.webshells, h.batches, row)
+	audit.ApplyResourceAvailability(h.conversations, h.c2, h.executions, h.findings, h.webshells, h.batches, row)
 	c.JSON(http.StatusOK, gin.H{"log": row})
 }
 

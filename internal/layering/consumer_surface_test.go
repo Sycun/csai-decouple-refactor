@@ -36,7 +36,11 @@ var consumerSurfaceFiles = []string{
 // 95 measured after the RBAC domain left: thirteen interfaces dropped their RBAC members
 // (RBACStore / VulnerabilityStore / ConfigStore / MonitorContextStore vanished whole), and the
 // remaining members live on store.RBAC handles in the handlers instead.
-const consumerSurfaceMemberFloor = 95
+// 34 measured after the conversation domain left: ConversationStore / OpenAPIStore /
+// AttackChainStore / ChatUploadsStore / WebShellStore / RobotStore / AgentStore / WorkflowStore
+// each dropped their conversation members (most now hold store.Conversations instead), and
+// ResourceExistence vanished whole.
+const consumerSurfaceMemberFloor = 34
 
 func TestConsumerSurfacesDeclareOnlyCalledMethods(t *testing.T) {
 	root := moduleRoot(t)

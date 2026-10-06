@@ -11,7 +11,7 @@ import (
 func TestProcessDetailsSummaryDoesNotGuessIDLessResultsOntoDifferentTool(t *testing.T) {
 	db, conversationID, messageID := setupProcessDetailsSummaryTest(t)
 	for _, id := range []string{"call-1", "call-2", "call-3", "call-4"} {
-		if err := db.AddProcessDetail(messageID, conversationID, "tool_call", "call", map[string]interface{}{
+		if err := NewConversations(db).AddProcessDetail(messageID, conversationID, "tool_call", "call", map[string]interface{}{
 			"toolName": "http-framework-test", "toolCallId": id,
 		}); err != nil {
 			t.Fatalf("AddProcessDetail(tool_call): %v", err)
@@ -25,14 +25,14 @@ func TestProcessDetailsSummaryDoesNotGuessIDLessResultsOntoDifferentTool(t *test
 	}
 	var resultIDs []string
 	for _, result := range results {
-		resultID, err := db.AddProcessDetailWithID(messageID, conversationID, "tool_result", "result", result)
+		resultID, err := NewConversations(db).AddProcessDetailWithID(messageID, conversationID, "tool_result", "result", result)
 		if err != nil {
 			t.Fatalf("AddProcessDetail(tool_result): %v", err)
 		}
 		resultIDs = append(resultIDs, resultID)
 	}
 
-	summary, err := db.GetProcessDetailsSummary(messageID)
+	summary, err := NewConversations(db).GetProcessDetailsSummary(messageID)
 	if err != nil {
 		t.Fatalf("GetProcessDetailsSummary: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestProcessDetailsSummaryDoesNotGuessIDLessResultsOntoDifferentTool(t *test
 func TestProcessDetailsSummaryPairsIDLessResultsWithSameToolName(t *testing.T) {
 	db, conversationID, messageID := setupProcessDetailsSummaryTest(t)
 	for i, id := range []string{"call-1", "call-2"} {
-		if err := db.AddProcessDetail(messageID, conversationID, "tool_call", "call", map[string]interface{}{
+		if err := NewConversations(db).AddProcessDetail(messageID, conversationID, "tool_call", "call", map[string]interface{}{
 			"toolName": "nmap", "toolCallId": id, "index": i + 1, "total": 2,
 		}); err != nil {
 			t.Fatalf("AddProcessDetail(tool_call): %v", err)
@@ -70,7 +70,7 @@ func TestProcessDetailsSummaryPairsIDLessResultsWithSameToolName(t *testing.T) {
 	}
 	var resultIDs []string
 	for i := 0; i < 2; i++ {
-		resultID, err := db.AddProcessDetailWithID(messageID, conversationID, "tool_result", "result", map[string]interface{}{
+		resultID, err := NewConversations(db).AddProcessDetailWithID(messageID, conversationID, "tool_result", "result", map[string]interface{}{
 			"toolName": "nmap", "success": true,
 		})
 		if err != nil {
@@ -79,7 +79,7 @@ func TestProcessDetailsSummaryPairsIDLessResultsWithSameToolName(t *testing.T) {
 		resultIDs = append(resultIDs, resultID)
 	}
 
-	summary, err := db.GetProcessDetailsSummary(messageID)
+	summary, err := NewConversations(db).GetProcessDetailsSummary(messageID)
 	if err != nil {
 		t.Fatalf("GetProcessDetailsSummary: %v", err)
 	}
@@ -98,18 +98,18 @@ func TestProcessDetailsSummaryPairsIDLessResultsWithSameToolName(t *testing.T) {
 
 func TestProcessDetailsSummaryPairedResultWithoutSuccessIsCompleted(t *testing.T) {
 	db, conversationID, messageID := setupProcessDetailsSummaryTest(t)
-	if err := db.AddProcessDetail(messageID, conversationID, "tool_call", "call", map[string]interface{}{
+	if err := NewConversations(db).AddProcessDetail(messageID, conversationID, "tool_call", "call", map[string]interface{}{
 		"toolName": "nmap", "toolCallId": "call-1",
 	}); err != nil {
 		t.Fatalf("AddProcessDetail(tool_call): %v", err)
 	}
-	if err := db.AddProcessDetail(messageID, conversationID, "tool_result", "result", map[string]interface{}{
+	if err := NewConversations(db).AddProcessDetail(messageID, conversationID, "tool_result", "result", map[string]interface{}{
 		"toolName": "nmap", "toolCallId": "call-1", "resultPreview": "open 22",
 	}); err != nil {
 		t.Fatalf("AddProcessDetail(tool_result): %v", err)
 	}
 
-	summary, err := db.GetProcessDetailsSummary(messageID)
+	summary, err := NewConversations(db).GetProcessDetailsSummary(messageID)
 	if err != nil {
 		t.Fatalf("GetProcessDetailsSummary: %v", err)
 	}
@@ -121,21 +121,21 @@ func TestProcessDetailsSummaryPairedResultWithoutSuccessIsCompleted(t *testing.T
 func TestProcessDetailsSummaryPairsRepeatedToolCallIDsFIFO(t *testing.T) {
 	db, conversationID, messageID := setupProcessDetailsSummaryTest(t)
 	for i := 0; i < 2; i++ {
-		if err := db.AddProcessDetail(messageID, conversationID, "tool_call", "call", map[string]interface{}{
+		if err := NewConversations(db).AddProcessDetail(messageID, conversationID, "tool_call", "call", map[string]interface{}{
 			"toolName": "execute", "toolCallId": "legacy-reused-id",
 		}); err != nil {
 			t.Fatalf("AddProcessDetail(tool_call): %v", err)
 		}
 	}
 	for i := 0; i < 2; i++ {
-		if err := db.AddProcessDetail(messageID, conversationID, "tool_result", "result", map[string]interface{}{
+		if err := NewConversations(db).AddProcessDetail(messageID, conversationID, "tool_result", "result", map[string]interface{}{
 			"toolName": "execute", "toolCallId": "legacy-reused-id", "success": true,
 		}); err != nil {
 			t.Fatalf("AddProcessDetail(tool_result): %v", err)
 		}
 	}
 
-	summary, err := db.GetProcessDetailsSummary(messageID)
+	summary, err := NewConversations(db).GetProcessDetailsSummary(messageID)
 	if err != nil {
 		t.Fatalf("GetProcessDetailsSummary: %v", err)
 	}
@@ -151,12 +151,12 @@ func TestProcessDetailsSummaryPairsRepeatedToolCallIDsFIFO(t *testing.T) {
 
 func TestProcessDetailsSummaryDoesNotReportPersistedOrphanAsRunning(t *testing.T) {
 	db, conversationID, messageID := setupProcessDetailsSummaryTest(t)
-	if err := db.AddProcessDetail(messageID, conversationID, "tool_call", "call", map[string]interface{}{
+	if err := NewConversations(db).AddProcessDetail(messageID, conversationID, "tool_call", "call", map[string]interface{}{
 		"toolName": "execute", "toolCallId": "orphan",
 	}); err != nil {
 		t.Fatalf("AddProcessDetail(tool_call): %v", err)
 	}
-	summary, err := db.GetProcessDetailsSummary(messageID)
+	summary, err := NewConversations(db).GetProcessDetailsSummary(messageID)
 	if err != nil {
 		t.Fatalf("GetProcessDetailsSummary: %v", err)
 	}
@@ -173,13 +173,13 @@ func TestProcessDetailsSummaryReportsUnmatchedToolCallAsRunningForActiveTurn(t *
 	); err != nil {
 		t.Fatalf("update running message: %v", err)
 	}
-	if err := db.AddProcessDetail(messageID, conversationID, "tool_call", "call", map[string]interface{}{
+	if err := NewConversations(db).AddProcessDetail(messageID, conversationID, "tool_call", "call", map[string]interface{}{
 		"toolName": "execute", "toolCallId": "pending",
 	}); err != nil {
 		t.Fatalf("AddProcessDetail(tool_call): %v", err)
 	}
 
-	summary, err := db.GetProcessDetailsSummary(messageID)
+	summary, err := NewConversations(db).GetProcessDetailsSummary(messageID)
 	if err != nil {
 		t.Fatalf("GetProcessDetailsSummary: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestProcessDetailsSummaryIncludesPersistedTurnTiming(t *testing.T) {
 		t.Fatalf("update message timing: %v", err)
 	}
 
-	summary, err := db.GetProcessDetailsSummary(messageID)
+	summary, err := NewConversations(db).GetProcessDetailsSummary(messageID)
 	if err != nil {
 		t.Fatalf("GetProcessDetailsSummary: %v", err)
 	}
@@ -233,7 +233,7 @@ VALUES ('cancelled-detail', ?, ?, 'cancelled', 'interrupted', '{}', '2026-08-10T
 		t.Fatalf("insert cancelled detail: %v", err)
 	}
 
-	summary, err := db.GetProcessDetailsSummary(messageID)
+	summary, err := NewConversations(db).GetProcessDetailsSummary(messageID)
 	if err != nil {
 		t.Fatalf("GetProcessDetailsSummary: %v", err)
 	}
@@ -255,11 +255,11 @@ func setupProcessDetailsSummaryTest(t *testing.T) (*DB, string, string) {
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	conversation, err := db.CreateConversation("process details", ConversationCreateMeta{})
+	conversation, err := NewConversations(db).CreateConversation("process details", ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	message, err := db.AddMessage(conversation.ID, "assistant", "done", nil)
+	message, err := NewConversations(db).AddMessage(conversation.ID, "assistant", "done", nil)
 	if err != nil {
 		t.Fatalf("AddMessage: %v", err)
 	}

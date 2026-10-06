@@ -77,6 +77,7 @@ type robotPendingConfirmation struct {
 type RobotHandler struct {
 	config               *config.Config
 	db                   database.RobotStore
+	conversations        *store.Conversations
 	rbac                 *store.RBAC
 	alerts               *store.VulnerabilityAlerts // 提醒订阅与待投递队列都在这张表的主人手里
 	agentHandler         *AgentHandler
@@ -101,6 +102,7 @@ func NewRobotHandler(cfg *config.Config, db *database.DB, agentHandler *AgentHan
 	handler := &RobotHandler{
 		config:               cfg,
 		db:                   database.Narrow[database.RobotStore](db),
+		conversations:        database.NewConversations(db),
 		rbac:                 database.NewRBAC(db),
 		alerts:               newVulnerabilityAlerts(db),
 		threadBindings:       newRobotSessionsStore(db),
@@ -294,7 +296,7 @@ func (h *RobotHandler) getOrCreateConversation(platform, userID, title string, a
 	if meta.ProjectID != "" && (!access.Permissions["project:read"] || !h.rbac.UserCanAccessResource(ownerID, robotPrincipal(access).ScopeFor("project:read"), "project", meta.ProjectID)) {
 		meta.ProjectID = ""
 	}
-	conv, err := h.db.CreateConversation(t, meta)
+	conv, err := h.conversations.CreateConversation(t, meta)
 	if err != nil {
 		h.logger.Warn("创建机器人会话失败", zap.Error(err))
 		return "", false
@@ -391,7 +393,7 @@ func (h *RobotHandler) clearConversation(platform, userID string, access *databa
 	if meta.ProjectID != "" && (!access.Permissions["project:read"] || !h.rbac.UserCanAccessResource(ownerID, robotPrincipal(access).ScopeFor("project:read"), "project", meta.ProjectID)) {
 		meta.ProjectID = ""
 	}
-	conv, err := h.db.CreateConversation(title, meta)
+	conv, err := h.conversations.CreateConversation(title, meta)
 	if err != nil {
 		h.logger.Warn("创建新对话失败", zap.Error(err))
 		return ""
@@ -443,10 +445,10 @@ func (h *RobotHandler) HandleMessage(platform, userID, text string) (reply strin
 		return "无法创建或获取对话，请稍后再试。"
 	}
 	// 若对话标题为「新对话 xx:xx」格式（由「新对话」命令创建），将标题更新为首条消息内容，与 Web 端体验一致
-	if conv, err := h.db.GetConversation(convID); err == nil && strings.HasPrefix(conv.Title, "新对话 ") {
+	if conv, err := h.conversations.GetConversation(convID); err == nil && strings.HasPrefix(conv.Title, "新对话 ") {
 		newTitle := safeTruncateString(text, 50)
 		if newTitle != "" {
-			_ = h.db.UpdateConversationTitle(convID, newTitle)
+			_ = h.conversations.UpdateConversationTitle(convID, newTitle)
 		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), h.robotMessageTimeout())
@@ -637,7 +639,7 @@ func (h *RobotHandler) cmdBindProject(platform, userID, idOrName string) string 
 	if convID == "" {
 		return "无法获取当前对话，请稍后再试。"
 	}
-	if err := h.db.SetConversationProjectID(convID, p.ID); err != nil {
+	if err := h.conversations.SetConversationProjectID(convID, p.ID); err != nil {
 		return "绑定失败: " + err.Error()
 	}
 	return fmt.Sprintf("已将当前对话绑定到项目：「%s」\nID: %s", p.Name, p.ID)
@@ -665,7 +667,7 @@ func (h *RobotHandler) cmdNewProject(platform, userID, name string) string {
 	if convID == "" {
 		return fmt.Sprintf("项目已创建：「%s」\nID: %s\n（绑定当前对话失败，请手动发送「绑定项目 %s」）", created.Name, created.ID, created.ID)
 	}
-	if err := h.db.SetConversationProjectID(convID, created.ID); err != nil {
+	if err := h.conversations.SetConversationProjectID(convID, created.ID); err != nil {
 		return fmt.Sprintf("项目已创建：「%s」\nID: %s\n绑定失败: %s", created.Name, created.ID, err.Error())
 	}
 	return fmt.Sprintf("已创建项目并绑定当前对话：「%s」\nID: %s", created.Name, created.ID)
@@ -694,14 +696,14 @@ func (h *RobotHandler) cmdUnbindProject(platform, userID string) string {
 	if convID == "" {
 		return "当前没有进行中的对话，无需解除绑定。"
 	}
-	projectID, err := h.db.GetConversationProjectID(convID)
+	projectID, err := h.conversations.GetConversationProjectID(convID)
 	if err != nil {
 		return "获取对话项目失败: " + err.Error()
 	}
 	if strings.TrimSpace(projectID) == "" {
 		return "当前对话未绑定项目。"
 	}
-	if err := h.db.SetConversationProjectID(convID, ""); err != nil {
+	if err := h.conversations.SetConversationProjectID(convID, ""); err != nil {
 		return "解除绑定失败: " + err.Error()
 	}
 	return "已解除当前对话的项目绑定。"
@@ -712,7 +714,7 @@ func (h *RobotHandler) cmdList(platform, userID string) string {
 	if err != nil {
 		return "当前平台账号尚未绑定。"
 	}
-	convs, err := h.db.ListConversationsForAccess(50, 0, "", "", "", access.User.ID, robotPrincipal(access).ScopeFor("chat:read"))
+	convs, err := h.conversations.ListConversationsForAccess(50, 0, "", "", "", access.User.ID, robotPrincipal(access).ScopeFor("chat:read"))
 	if err != nil {
 		return "获取对话列表失败: " + err.Error()
 	}
@@ -739,7 +741,7 @@ func (h *RobotHandler) cmdSwitch(platform, userID, convID string) string {
 	if accessErr != nil {
 		return "当前平台账号尚未绑定。"
 	}
-	conv, err := h.db.GetConversation(convID)
+	conv, err := h.conversations.GetConversation(convID)
 	if err != nil || !h.rbac.UserCanAccessResource(access.User.ID, robotPrincipal(access).ScopeFor("chat:read"), "conversation", convID) {
 		return "对话不存在或 ID 错误。"
 	}
@@ -790,14 +792,14 @@ func (h *RobotHandler) cmdStatus(platform, userID string) string {
 	if !h.rbac.UserCanAccessResource(access.User.ID, robotPrincipal(access).ScopeFor("chat:read"), "conversation", convID) {
 		return "当前对话不存在或无权访问。"
 	}
-	conv, err := h.db.GetConversation(convID)
+	conv, err := h.conversations.GetConversation(convID)
 	if err != nil {
 		return "当前对话 ID: " + convID + "（获取标题失败）"
 	}
 	role := h.getRole(platform, userID)
 	reply := fmt.Sprintf("【当前状态】\n当前对话: %s\n对话 ID: %s\n当前模式: %s\n当前角色: %s", conv.Title, conv.ID, robotAgentModeLabel(h.getAgentMode(platform, userID)), role)
 	if h.projectsEnabled() {
-		projectID, _ := h.db.GetConversationProjectID(conv.ID)
+		projectID, _ := h.conversations.GetConversationProjectID(conv.ID)
 		reply += "\n当前项目: " + h.formatProjectLabel(projectID)
 	} else {
 		reply += "\n当前项目: 未启用"
@@ -855,7 +857,7 @@ func (h *RobotHandler) cmdRename(platform, userID, title string) string {
 	if err != nil || !h.rbac.UserCanAccessResource(access.User.ID, robotPrincipal(access).ScopeFor("chat:write"), "conversation", convID) {
 		return "当前对话不存在或无权修改。"
 	}
-	if err := h.db.UpdateConversationTitle(convID, title); err != nil {
+	if err := h.conversations.UpdateConversationTitle(convID, title); err != nil {
 		return "重命名失败: " + err.Error()
 	}
 	h.recordRobotCommandAudit(access, platform, "conversation_rename", "conversation", convID, "机器人重命名当前对话")
@@ -1051,7 +1053,7 @@ func (h *RobotHandler) executeDelete(platform, userID, convID string) string {
 	if h.agentHandler != nil {
 		h.agentHandler.CancelRunningTaskForConversation(convID)
 	}
-	if err := h.db.DeleteConversation(convID); err != nil {
+	if err := h.conversations.DeleteConversation(convID); err != nil {
 		return "删除失败: " + err.Error()
 	}
 	h.recordRobotCommandAudit(access, platform, "conversation_delete", "conversation", convID, "机器人删除对话")

@@ -74,11 +74,11 @@ func TestMCPToolAuthorizerEnforcesConversationProjectBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectConv, err := db.CreateConversation("project conversation", database.ConversationCreateMeta{ProjectID: project.ID})
+	projectConv, err := database.NewConversations(db).CreateConversation("project conversation", database.ConversationCreateMeta{ProjectID: project.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	unboundConv, err := db.CreateConversation("unbound conversation", database.ConversationCreateMeta{})
+	unboundConv, err := database.NewConversations(db).CreateConversation("unbound conversation", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatal(err)
 	}

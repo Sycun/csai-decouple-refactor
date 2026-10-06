@@ -87,16 +87,16 @@ func TestCreateProgressCallback_HidesInternalEinoDiagnostics(t *testing.T) {
 		t.Fatalf("NewDB: %v", err)
 	}
 	defer db.Close() // 临时目录里的 WAL 文件要能先落下，否则 TempDir 回收会撞见"目录非空"
-	conv, err := db.CreateConversation("diag-hidden", database.ConversationCreateMeta{})
+	conv, err := database.NewConversations(db).CreateConversation("diag-hidden", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	asst, err := db.AddMessage(conv.ID, "assistant", "处理中...", nil)
+	asst, err := database.NewConversations(db).AddMessage(conv.ID, "assistant", "处理中...", nil)
 	if err != nil {
 		t.Fatalf("AddMessage: %v", err)
 	}
 	bus := NewTaskEventBus()
-	h := &AgentHandler{logger: zap.NewNop(), db: db, taskEventBus: bus}
+	h := &AgentHandler{logger: zap.NewNop(), db: db, taskEventBus: bus, conversations: database.NewConversations(db)}
 	_, events := bus.Subscribe(conv.ID)
 	primaryCalls := 0
 	cb := h.createProgressCallback(
@@ -119,7 +119,7 @@ func TestCreateProgressCallback_HidesInternalEinoDiagnostics(t *testing.T) {
 		t.Fatalf("unexpected mirrored diagnostic event: %s", string(payload))
 	default:
 	}
-	details, err := db.GetProcessDetails(asst.ID)
+	details, err := database.NewConversations(db).GetProcessDetails(asst.ID)
 	if err != nil {
 		t.Fatalf("GetProcessDetails: %v", err)
 	}
@@ -135,16 +135,16 @@ func TestCreateProgressCallback_PersistsRunningResponseBeforeDone(t *testing.T) 
 		t.Fatalf("NewDB: %v", err)
 	}
 	defer db.Close() // 临时目录里的 WAL 文件要能先落下，否则 TempDir 回收会撞见"目录非空"
-	conv, err := db.CreateConversation("refresh-running", database.ConversationCreateMeta{})
+	conv, err := database.NewConversations(db).CreateConversation("refresh-running", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	asst, err := db.AddMessage(conv.ID, "assistant", "处理中...", nil)
+	asst, err := database.NewConversations(db).AddMessage(conv.ID, "assistant", "处理中...", nil)
 	if err != nil {
 		t.Fatalf("AddMessage: %v", err)
 	}
 
-	h := &AgentHandler{logger: zap.NewNop(), db: db}
+	h := &AgentHandler{logger: zap.NewNop(), db: db, conversations: database.NewConversations(db)}
 	cb := h.createProgressCallback(context.Background(), nil, conv.ID, asst.ID, nil)
 	meta := map[string]interface{}{
 		"streamId":      "response-refresh-1",
@@ -154,7 +154,7 @@ func TestCreateProgressCallback_PersistsRunningResponseBeforeDone(t *testing.T) 
 	cb("response_start", "", meta)
 	cb("response_delta", "刷新前已生成的第一部分", openai.WithSSEAccumulated(meta, "刷新前已生成的第一部分"))
 
-	details, err := db.GetProcessDetails(asst.ID)
+	details, err := database.NewConversations(db).GetProcessDetails(asst.ID)
 	if err != nil {
 		t.Fatalf("GetProcessDetails: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestCreateProgressCallback_PersistsRunningResponseBeforeDone(t *testing.T) 
 
 	longer := "刷新前已生成的第一部分" + strings.Repeat("继续迭代", 300)
 	cb("response_delta", "继续迭代", openai.WithSSEAccumulated(meta, longer))
-	details, err = db.GetProcessDetails(asst.ID)
+	details, err = database.NewConversations(db).GetProcessDetails(asst.ID)
 	if err != nil {
 		t.Fatalf("GetProcessDetails after update: %v", err)
 	}
@@ -183,16 +183,16 @@ func TestCreateProgressCallback_FlushesReasoningOnDone(t *testing.T) {
 	defer db.Close() // 临时目录里的 WAL 文件要能先落下，否则 TempDir 回收会撞见"目录非空"
 	defer os.RemoveAll(tmp)
 
-	conv, err := db.CreateConversation("test", database.ConversationCreateMeta{})
+	conv, err := database.NewConversations(db).CreateConversation("test", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	asst, err := db.AddMessage(conv.ID, "assistant", "处理中...", nil)
+	asst, err := database.NewConversations(db).AddMessage(conv.ID, "assistant", "处理中...", nil)
 	if err != nil {
 		t.Fatalf("AddMessage: %v", err)
 	}
 
-	h := &AgentHandler{logger: zap.NewNop(), db: db}
+	h := &AgentHandler{logger: zap.NewNop(), db: db, conversations: database.NewConversations(db)}
 	cb := h.createProgressCallback(context.Background(), nil, conv.ID, asst.ID, nil)
 
 	streamID := "eino-reasoning-test-1"
@@ -205,7 +205,7 @@ func TestCreateProgressCallback_FlushesReasoningOnDone(t *testing.T) {
 	}, "step one"))
 	cb("done", "", map[string]interface{}{"conversationId": conv.ID})
 
-	details, err := db.GetProcessDetails(asst.ID)
+	details, err := database.NewConversations(db).GetProcessDetails(asst.ID)
 	if err != nil {
 		t.Fatalf("GetProcessDetails: %v", err)
 	}

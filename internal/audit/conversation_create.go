@@ -5,6 +5,7 @@ import (
 
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 )
@@ -14,7 +15,7 @@ func RegisterConversationCreateHook(s *Service) {
 	if s == nil {
 		return
 	}
-	database.SetConversationCreateHook(func(conv *database.Conversation, meta database.ConversationCreateMeta) {
+	store.SetConversationCreateHook(func(conv *store.Conversation, meta store.ConversationCreateMeta) {
 		detail := map[string]interface{}{
 			"title":  conv.Title,
 			"source": meta.Source,

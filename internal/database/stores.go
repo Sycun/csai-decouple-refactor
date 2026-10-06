@@ -21,24 +21,6 @@ import (
 // AgentStore is the persistence surface required by AgentHandler.
 type AgentStore interface {
 	ProjectRowStore
-	AddMessage(conversationID, role, content string, mcpExecutionIDs []string) (*Message, error)
-	AddProcessDetail(messageID, conversationID, eventType, message string, data interface{}) error
-	AddProcessDetailWithID(messageID, conversationID, eventType, message string, data interface{}) (string, error)
-	CreateConversation(title string, meta ConversationCreateMeta) (*Conversation, error)
-	CreateConversationWithWebshell(webshellConnectionID, title string, meta ConversationCreateMeta) (*Conversation, error)
-	DeleteProcessDetail(id string) error
-	GetAgentTrace(conversationID string) (traceInputJSON, assistantOutput string, err error)
-	GetAssistantCognitionTexts(assistantMessageID string) (AssistantCognitionTexts, error)
-	GetConversation(id string) (*Conversation, error)
-	GetConversationProjectID(conversationID string) (string, error)
-	GetConversationTitle(id string) (string, error)
-	GetMessages(conversationID string) ([]Message, error)
-	GetTurnUserMessage(conversationID, anchorMessageID string) (string, error)
-	SaveAgentTrace(conversationID, traceInputJSON, assistantOutput string) error
-	SetConversationAgentMode(id, agentMode string) error
-	SetConversationRoleName(id, roleName string) error
-	UpdateAssistantMessageFinalize(messageID, content string, mcpExecutionIDs []string, reasoningContent string) error
-	UpdateProcessDetailContent(id, message string, data interface{}) error
 	Exec(query string, args ...any) (sql.Result, error)
 	Query(query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
@@ -59,14 +41,9 @@ var _ AssetContextStore = (*DB)(nil)
 // AttackChainStore is the persistence surface required by AttackChainHandler.
 type AttackChainStore interface {
 	AttackChainLedger
-	GetConversation(id string) (*Conversation, error)
 	// The rest reaches this surface through attackchain.NewBuilder, which declares its own Store
 	// (a fourth case of the generation blind spot: interfaces built from direct h.db.X calls miss
 	// anything the handler hands to a helper as an argument). Keep it aligned with attackchain.Store.
-	ConversationHasToolProcessDetails(conversationID string) (bool, error)
-	GetAgentTrace(conversationID string) (traceInputJSON, assistantOutput string, err error)
-	GetMessages(conversationID string) ([]Message, error)
-	GetProcessDetailsByConversation(conversationID string) (map[string][]ProcessDetail, error)
 }
 
 var _ AttackChainStore = (*DB)(nil)
@@ -79,22 +56,12 @@ var _ AttackChainStore = (*DB)(nil)
 // audit_logs' own queries are deliberately absent: they live in store.AuditLogs now, and an interface
 // that mixes a table's reads with other tables' existence checks is how a surface stops describing
 // one thing. The findings lookup is absent for the same reason - it is store.Vulnerabilities.Get.
-type ResourceExistence interface {
-	ConversationExists(id string) (bool, error)
-}
-
-var _ ResourceExistence = (*DB)(nil)
 
 // BatchTaskStore 已删除：批量任务两张表的 22 个方法全部由 store.BatchTasks 亲自答，
 // 消费者（BatchTaskManager）现在直接持有那个 store。
 
 // ChatUploadsStore is the persistence surface required by ChatUploadsHandler.
 type ChatUploadsStore interface {
-	ConversationArtifactsBaseDir() string
-	EinoReductionBaseDir() string
-	EinoWorkspaceBaseDir() string
-	GetConversationProjectID(conversationID string) (string, error)
-	GetConversationTitle(id string) (string, error)
 	GetProjectName(id string) (string, error)
 }
 
@@ -104,22 +71,7 @@ var _ ChatUploadsStore = (*DB)(nil)
 
 // ConversationStore is the persistence surface required by ConversationHandler.
 type ConversationStore interface {
-	CountConversationsForAccess(search, projectID, userID, scope string) (int, error)
-	CreateConversation(title string, meta ConversationCreateMeta) (*Conversation, error)
-	DeleteConversation(id string) error
-	DeleteConversationTurn(conversationID, anchorMessageID string) (deletedIDs []string, err error)
-	GetConversation(id string) (*Conversation, error)
-	GetConversationLite(id string) (*Conversation, error)
-	GetProcessDetailByID(id string) (*ProcessDetail, error)
-	GetProcessDetailOffset(messageID, detailID string) (int, error)
-	GetProcessDetails(messageID string) ([]ProcessDetail, error)
-	GetProcessDetailsPage(messageID string, limit, offset int) ([]ProcessDetail, int, error)
-	GetProcessDetailsSummary(messageID string) (*ProcessDetailsSummary, error)
 	ListConversationPlanTasksSince(conversationID string, since time.Time) ([]ConversationPlanTask, error)
-	ListConversationsForAccess(limit, offset int, search, sortBy, projectID, userID, scope string) ([]*Conversation, error)
-	SetConversationProjectID(conversationID, projectID string) error
-	UpdateConversationPinned(id string, pinned bool) error
-	UpdateConversationTitle(id, title string) error
 }
 
 var _ ConversationStore = (*DB)(nil)
@@ -138,8 +90,6 @@ var _ NotificationStore = (*DB)(nil)
 
 // OpenAPIStore is the persistence surface required by OpenAPIHandler.
 type OpenAPIStore interface {
-	GetConversation(id string) (*Conversation, error)
-	GetMessages(conversationID string) ([]Message, error)
 }
 
 var _ OpenAPIStore = (*DB)(nil)
@@ -167,16 +117,9 @@ var _ ProjectStore = (*DB)(nil)
 // durable outbox are not in it any more - they are store.VulnerabilityAlerts, and the robot handler
 // holds that store directly (its worker only needs the queue, its commands only need the subscription).
 type RobotStore interface {
-	CreateConversation(title string, meta ConversationCreateMeta) (*Conversation, error)
 	CreateProject(p *Project) (*Project, error)
-	DeleteConversation(id string) error
-	GetConversation(id string) (*Conversation, error)
-	GetConversationProjectID(conversationID string) (string, error)
 	GetProject(id string) (*Project, error)
-	ListConversationsForAccess(limit, offset int, search, sortBy, projectID, userID, scope string) ([]*Conversation, error)
 	ListProjectsForAccess(status, search string, limit, offset int, userID, scope string) ([]*Project, error)
-	SetConversationProjectID(conversationID, projectID string) error
-	UpdateConversationTitle(id, title string) error
 }
 
 var _ RobotStore = (*DB)(nil)
@@ -188,8 +131,6 @@ var _ RobotStore = (*DB)(nil)
 
 // WebShellStore is the persistence surface required by WebShellHandler.
 type WebShellStore interface {
-	GetConversationByWebshellConnectionID(connectionID string) (*Conversation, error)
-	ListConversationsByWebshellConnectionID(connectionID string) ([]WebShellConversationItem, error)
 }
 
 var _ WebShellStore = (*DB)(nil)
@@ -200,7 +141,6 @@ var _ WebShellStore = (*DB)(nil)
 // here - h.runs answers those.
 type WorkflowStore interface {
 	ProjectRowStore
-	AddProcessDetail(conversationID, messageID, id, eventType string, data interface{}) error
 }
 
 var _ WorkflowStore = (*DB)(nil)

@@ -22,11 +22,12 @@ import (
 // content is the AgentHandler that owns the messages store, taken through the one method this
 // needs rather than as the whole handler.
 type runFinalizer struct {
-	db         database.AgentStore
-	executions *store.Monitor
-	logger     *zap.Logger
-	agent      cancellableToolExecution
-	content    messageContentWriter
+	db            database.AgentStore
+	executions    *store.Monitor
+	conversations *store.Conversations
+	logger        *zap.Logger
+	agent         cancellableToolExecution
+	content       messageContentWriter
 }
 
 type cancellableToolExecution interface {
@@ -42,11 +43,12 @@ type messageContentWriter interface {
 // the field into a non-nil interface wrapping nil.
 func newRunFinalizer(db *database.DB, logger *zap.Logger, agent cancellableToolExecution, content messageContentWriter) *runFinalizer {
 	return &runFinalizer{
-		db:         database.Narrow[database.AgentStore](db),
-		executions: database.NewMonitor(db),
-		logger:     logger,
-		agent:      agent,
-		content:    content,
+		db:            database.Narrow[database.AgentStore](db),
+		executions:    database.NewMonitor(db),
+		conversations: database.NewConversations(db),
+		logger:        logger,
+		agent:         agent,
+		content:       content,
 	}
 }
 
@@ -134,9 +136,9 @@ func (f *runFinalizer) persistFinalizationDecision(
 	if assistantMessageID == "" || f.db == nil {
 		return
 	}
-	_ = f.db.AddProcessDetail(assistantMessageID, conversationID, "finalization_check", finalizationCheckMessage(decision), decision)
+	_ = f.conversations.AddProcessDetail(assistantMessageID, conversationID, "finalization_check", finalizationCheckMessage(decision), decision)
 	if decision.Finalizable {
-		if err := f.db.UpdateAssistantMessageFinalize(assistantMessageID, decision.FinalText, mcpExecutionIDs, reasoningContent); err != nil && f.logger != nil {
+		if err := f.conversations.UpdateAssistantMessageFinalize(assistantMessageID, decision.FinalText, mcpExecutionIDs, reasoningContent); err != nil && f.logger != nil {
 			f.logger.Warn("更新最终助手消息失败", zap.Error(err), zap.String("conversationId", conversationID), zap.String("agentMode", agentMode))
 		}
 		return
@@ -178,9 +180,9 @@ func (f *runFinalizer) finalizeCandidateForDeliveryWithPolicy(
 	if assistantMessageID == "" || f.db == nil {
 		return decision
 	}
-	_ = f.db.AddProcessDetail(assistantMessageID, conversationID, "finalization_check", finalizationCheckMessage(decision), decision)
+	_ = f.conversations.AddProcessDetail(assistantMessageID, conversationID, "finalization_check", finalizationCheckMessage(decision), decision)
 	if decision.Finalizable {
-		if err := f.db.UpdateAssistantMessageFinalize(assistantMessageID, decision.FinalText, mcpExecutionIDs, reasoningContent); err != nil && f.logger != nil {
+		if err := f.conversations.UpdateAssistantMessageFinalize(assistantMessageID, decision.FinalText, mcpExecutionIDs, reasoningContent); err != nil && f.logger != nil {
 			f.logger.Warn("更新最终助手消息失败", zap.Error(err), zap.String("conversationId", conversationID), zap.String("agentMode", agentMode))
 		}
 		return decision

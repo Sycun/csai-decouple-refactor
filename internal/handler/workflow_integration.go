@@ -122,7 +122,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 				if err := h.appendAssistantMessageNotice(assistantMessageID, cancelMsg); err != nil {
 					h.logger.Warn("更新取消后的助手消息失败", zap.Error(err))
 				}
-				_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "cancelled", cancelMsg, nil)
+				_ = h.conversations.AddProcessDetail(assistantMessageID, conversationID, "cancelled", cancelMsg, nil)
 			}
 			sendEvent("cancelled", cancelMsg, map[string]interface{}{
 				"conversationId": conversationID,
@@ -137,7 +137,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 			timeoutMsg := "任务执行超时，已自动终止。"
 			if assistantMessageID != "" {
 				_ = h.setMessageContent(assistantMessageID, timeoutMsg)
-				_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "timeout", timeoutMsg, nil)
+				_ = h.conversations.AddProcessDetail(assistantMessageID, conversationID, "timeout", timeoutMsg, nil)
 			}
 			sendEvent("error", timeoutMsg, map[string]interface{}{
 				"conversationId": conversationID,
@@ -152,7 +152,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 		h.tasks.UpdateTaskStatus(conversationID, taskStatus)
 		if assistantMessageID != "" {
 			_ = h.setMessageContent(assistantMessageID, errMsg)
-			_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "error", errMsg, nil)
+			_ = h.conversations.AddProcessDetail(assistantMessageID, conversationID, "error", errMsg, nil)
 		}
 		sendEvent("error", errMsg, map[string]interface{}{"conversationId": conversationID})
 		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
@@ -263,7 +263,7 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 			cancelMsg := "任务已被用户取消，后续操作已停止。"
 			if assistantMessageID != "" {
 				_ = h.appendAssistantMessageNotice(assistantMessageID, cancelMsg)
-				_ = h.db.AddProcessDetail(assistantMessageID, conversationID, "cancelled", cancelMsg, nil)
+				_ = h.conversations.AddProcessDetail(assistantMessageID, conversationID, "cancelled", cancelMsg, nil)
 			}
 			respond(http.StatusOK, gin.H{
 				"status":         "cancelled",

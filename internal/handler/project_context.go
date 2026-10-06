@@ -56,7 +56,7 @@ func (h *AgentHandler) projectBlackboardBlock(conversationID string) string {
 	if conversationID == "" {
 		return ""
 	}
-	projectID, err := h.db.GetConversationProjectID(conversationID)
+	projectID, err := h.conversations.GetConversationProjectID(conversationID)
 	if err != nil || projectID == "" {
 		return ""
 	}
@@ -77,7 +77,7 @@ func (h *AgentHandler) conversationProjectID(conversationID string) string {
 	if conversationID == "" {
 		return ""
 	}
-	projectID, err := h.db.GetConversationProjectID(conversationID)
+	projectID, err := h.conversations.GetConversationProjectID(conversationID)
 	if err != nil {
 		return ""
 	}

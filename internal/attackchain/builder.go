@@ -42,14 +42,15 @@ type ChainStore interface {
 }
 
 type Builder struct {
-	db           Store
-	chain        ChainStore
-	facts        database.BlackboardLedger
-	logger       *zap.Logger
-	openAIClient *openai.Client
-	openAIConfig *config.OpenAIConfig
-	tokenCounter agent.TokenCounter
-	maxTokens    int // 最大tokens限制，默认100000
+	db            Store
+	conversations *store.Conversations
+	chain         ChainStore
+	facts         database.BlackboardLedger
+	logger        *zap.Logger
+	openAIClient  *openai.Client
+	openAIConfig  *config.OpenAIConfig
+	tokenCounter  agent.TokenCounter
+	maxTokens     int // 最大tokens限制，默认100000
 }
 
 // Node and Edge are the chain rows themselves; the type declarations live with the table's store
@@ -66,7 +67,7 @@ type Chain struct {
 }
 
 // NewBuilder 创建新的攻击链构建器
-func NewBuilder(db Store, chain ChainStore, facts database.BlackboardLedger, openAIConfig *config.OpenAIConfig, logger *zap.Logger) *Builder {
+func NewBuilder(db Store, conversations *store.Conversations, chain ChainStore, facts database.BlackboardLedger, openAIConfig *config.OpenAIConfig, logger *zap.Logger) *Builder {
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 10,
@@ -96,14 +97,15 @@ func NewBuilder(db Store, chain ChainStore, facts database.BlackboardLedger, ope
 	}
 
 	return &Builder{
-		db:           db,
-		chain:        chain,
-		facts:        facts,
-		logger:       logger,
-		openAIClient: openai.NewClient(openAIConfig, httpClient, logger),
-		openAIConfig: openAIConfig,
-		tokenCounter: agent.NewTikTokenCounter(),
-		maxTokens:    maxTokens,
+		db:            db,
+		conversations: conversations,
+		chain:         chain,
+		facts:         facts,
+		logger:        logger,
+		openAIClient:  openai.NewClient(openAIConfig, httpClient, logger),
+		openAIConfig:  openAIConfig,
+		tokenCounter:  agent.NewTikTokenCounter(),
+		maxTokens:     maxTokens,
 	}
 }
 
@@ -112,7 +114,7 @@ func (b *Builder) BuildChainFromConversation(ctx context.Context, conversationID
 	b.logger.Info("开始构建攻击链（简化版本）", zap.String("conversationId", conversationID))
 
 	// 0. 首先检查是否有实际的工具执行记录
-	messages, err := b.db.GetMessages(conversationID)
+	messages, err := b.conversations.GetMessages(conversationID)
 	if err != nil {
 		return nil, fmt.Errorf("获取对话消息失败: %w", err)
 	}
@@ -134,7 +136,7 @@ func (b *Builder) BuildChainFromConversation(ctx context.Context, conversationID
 		}
 	}
 	if !hasToolExecutions {
-		if pdOK, err := b.db.ConversationHasToolProcessDetails(conversationID); err != nil {
+		if pdOK, err := b.conversations.ConversationHasToolProcessDetails(conversationID); err != nil {
 			b.logger.Warn("查询过程详情判定工具执行失败", zap.Error(err))
 		} else if pdOK {
 			hasToolExecutions = true
@@ -170,7 +172,7 @@ func (b *Builder) BuildChainFromConversation(ctx context.Context, conversationID
 	}
 
 	// 1. 优先尝试从数据库获取保存的最后一轮ReAct输入和输出
-	reactInputJSON, modelOutput, err := b.db.GetAgentTrace(conversationID)
+	reactInputJSON, modelOutput, err := b.conversations.GetAgentTrace(conversationID)
 	if err != nil {
 		b.logger.Warn("获取保存的ReAct数据失败，将使用消息历史构建", zap.Error(err))
 		// 继续使用原来的逻辑
@@ -251,9 +253,9 @@ func (b *Builder) BuildChainFromConversation(ctx context.Context, conversationID
 		}
 	}
 	if lastAssistantID != "" {
-		pdHasTools, _ := b.db.ConversationHasToolProcessDetails(conversationID)
+		pdHasTools, _ := b.conversations.ConversationHasToolProcessDetails(conversationID)
 		if pdHasTools && !(hasMCPOnAssistant && reactInputContainsToolTrace(reactInputJSON)) {
-			detailsMap, err := b.db.GetProcessDetailsByConversation(conversationID)
+			detailsMap, err := b.conversations.GetProcessDetailsByConversation(conversationID)
 			if err != nil {
 				b.logger.Warn("加载过程详情用于攻击链失败", zap.Error(err))
 			} else if dets := detailsMap[lastAssistantID]; len(dets) > 0 {

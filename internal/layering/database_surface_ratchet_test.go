@@ -109,7 +109,11 @@ import (
 // way, which is why the drop is 40 rather than 41: migrateLegacyOwnerColumns (the projects /
 // conversations backfills whose DDL still boots from this file) and addColumnIfMissing.
 // 68 -> 71 re-measured after those two were re-added.
-const dbMethodCeiling = 71
+// 68 -> 27: the conversation domain moved whole - the forty-two methods over the conversations
+// table, the read side of messages / process_details, the agent trace columns and the create hook
+// - plus the two project-binding methods project.go had been holding for the same table. What
+// remains on the wrapper is the boot skeleton and the project domain (next cut).
+const dbMethodCeiling = 27
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

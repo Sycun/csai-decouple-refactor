@@ -244,43 +244,6 @@ func (db *DB) DeleteProject(id string) error {
 	return nil
 }
 
-// GetConversationProjectID 返回对话绑定的项目 ID。
-func (db *DB) GetConversationProjectID(conversationID string) (string, error) {
-	var pid sql.NullString
-	err := db.QueryRow(`SELECT project_id FROM conversations WHERE id = ?`, conversationID).Scan(&pid)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return "", fmt.Errorf("对话不存在")
-		}
-		return "", err
-	}
-	if pid.Valid {
-		return strings.TrimSpace(pid.String), nil
-	}
-	return "", nil
-}
-
-// SetConversationProjectID 设置对话所属项目（空字符串表示解除绑定）。
-func (db *DB) SetConversationProjectID(conversationID, projectID string) error {
-	projectID = strings.TrimSpace(projectID)
-	if projectID != "" {
-		if _, err := db.GetProject(projectID); err != nil {
-			return err
-		}
-	}
-	var val interface{}
-	if projectID == "" {
-		val = nil
-	} else {
-		val = projectID
-	}
-	_, err := db.Exec(`UPDATE conversations SET project_id = ?, updated_at = ? WHERE id = ?`, val, time.Now(), conversationID)
-	if err != nil {
-		return fmt.Errorf("设置对话项目失败: %w", err)
-	}
-	return nil
-}
-
 func boolToInt(b bool) int {
 	if b {
 		return 1

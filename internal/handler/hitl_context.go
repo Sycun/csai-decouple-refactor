@@ -43,12 +43,12 @@ func (h *AgentHandler) collectHitlCognition(conversationID, assistantMessageID s
 		out = h.tasks.GetHitlCognition(conversationID)
 	}
 	if strings.TrimSpace(out.UserMessage) == "" && h.db != nil {
-		if msg, err := h.db.GetTurnUserMessage(conversationID, assistantMessageID); err == nil {
+		if msg, err := h.conversations.GetTurnUserMessage(conversationID, assistantMessageID); err == nil {
 			out.UserMessage = msg
 		}
 	}
 	if h.db != nil && assistantMessageID != "" {
-		dbCog, err := h.db.GetAssistantCognitionTexts(assistantMessageID)
+		dbCog, err := h.conversations.GetAssistantCognitionTexts(assistantMessageID)
 		if err == nil {
 			if strings.TrimSpace(out.Thinking) == "" {
 				out.Thinking = dbCog.Thinking

@@ -21,11 +21,11 @@ func TestEnsureSchemaCancelsPendingInterruptsAfterRestart(t *testing.T) {
 	if err := manager.EnsureSchema(); err != nil {
 		t.Fatalf("ensure schema: %v", err)
 	}
-	conversation, err := db.CreateConversation("restart interrupted", database.ConversationCreateMeta{})
+	conversation, err := database.NewConversations(db).CreateConversation("restart interrupted", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("create conversation: %v", err)
 	}
-	message, err := db.AddMessage(conversation.ID, "assistant", "处理中...", nil)
+	message, err := database.NewConversations(db).AddMessage(conversation.ID, "assistant", "处理中...", nil)
 	if err != nil {
 		t.Fatalf("create assistant placeholder: %v", err)
 	}
@@ -90,23 +90,23 @@ func TestEnsureSchemaFinalizesOnlyHistoricalPlaceholdersWithTerminalEvidence(t *
 		t.Fatalf("ensure schema: %v", err)
 	}
 
-	supersededConversation, err := db.CreateConversation("superseded placeholder", database.ConversationCreateMeta{})
+	supersededConversation, err := database.NewConversations(db).CreateConversation("superseded placeholder", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("create superseded conversation: %v", err)
 	}
-	superseded, err := db.AddMessage(supersededConversation.ID, "assistant", "处理中...", nil)
+	superseded, err := database.NewConversations(db).AddMessage(supersededConversation.ID, "assistant", "处理中...", nil)
 	if err != nil {
 		t.Fatalf("create superseded placeholder: %v", err)
 	}
-	if _, err := db.AddMessage(supersededConversation.ID, "user", "继续", nil); err != nil {
+	if _, err := database.NewConversations(db).AddMessage(supersededConversation.ID, "user", "继续", nil); err != nil {
 		t.Fatalf("create later message: %v", err)
 	}
 
-	timeoutConversation, err := db.CreateConversation("timeout placeholder", database.ConversationCreateMeta{})
+	timeoutConversation, err := database.NewConversations(db).CreateConversation("timeout placeholder", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("create timeout conversation: %v", err)
 	}
-	timedOut, err := db.AddMessage(timeoutConversation.ID, "assistant", "处理中...", nil)
+	timedOut, err := database.NewConversations(db).AddMessage(timeoutConversation.ID, "assistant", "处理中...", nil)
 	if err != nil {
 		t.Fatalf("create timeout placeholder: %v", err)
 	}
@@ -117,11 +117,11 @@ func TestEnsureSchemaFinalizesOnlyHistoricalPlaceholdersWithTerminalEvidence(t *
 		t.Fatalf("insert timeout interrupt: %v", err)
 	}
 
-	rejectedConversation, err := db.CreateConversation("rejected placeholder", database.ConversationCreateMeta{})
+	rejectedConversation, err := database.NewConversations(db).CreateConversation("rejected placeholder", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("create rejected conversation: %v", err)
 	}
-	rejected, err := db.AddMessage(rejectedConversation.ID, "assistant", "处理中...", nil)
+	rejected, err := database.NewConversations(db).AddMessage(rejectedConversation.ID, "assistant", "处理中...", nil)
 	if err != nil {
 		t.Fatalf("create rejected placeholder: %v", err)
 	}
@@ -132,11 +132,11 @@ func TestEnsureSchemaFinalizesOnlyHistoricalPlaceholdersWithTerminalEvidence(t *
 		t.Fatalf("insert rejected interrupt: %v", err)
 	}
 
-	activeConversation, err := db.CreateConversation("potentially active placeholder", database.ConversationCreateMeta{})
+	activeConversation, err := database.NewConversations(db).CreateConversation("potentially active placeholder", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("create active conversation: %v", err)
 	}
-	potentiallyActive, err := db.AddMessage(activeConversation.ID, "assistant", "处理中...", nil)
+	potentiallyActive, err := database.NewConversations(db).AddMessage(activeConversation.ID, "assistant", "处理中...", nil)
 	if err != nil {
 		t.Fatalf("create potentially active placeholder: %v", err)
 	}

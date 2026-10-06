@@ -33,7 +33,7 @@ func TestGetConversationPlanTasksRequiresAccessAndReportsProgress(t *testing.T) 
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	conversation, err := db.CreateConversation("plan", database.ConversationCreateMeta{})
+	conversation, err := database.NewConversations(db).CreateConversation("plan", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestGetConversationPlanTasksReportsStoppedLiveTask(t *testing.T) {
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	conversation, err := db.CreateConversation("stopped plan", database.ConversationCreateMeta{})
+	conversation, err := database.NewConversations(db).CreateConversation("stopped plan", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
