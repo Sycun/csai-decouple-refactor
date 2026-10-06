@@ -2790,6 +2790,13 @@ C2 三张列表都认的哨兵，而 `assetWhere` 只是把它当成一个匹配
 `gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿；
 `internal/store` 生产文件 **27 → 28**、包内测试 **199 → 205**、全仓测试函数 **1568 → 1575**。
 
+**真机点验（测试树新二进制，两段启动）**：① 空目录起全新库——日志里 **0 条 error/warn**，
+`batch_task_queues` 20 列含 `title`，`idx_batch*` 三条齐全；② 拿同一个库**删掉三个后补列**
+（`role`/`schedule_mode`/`last_run_error`）再启一次——补列阶段把它们写回、三条索引仍在，
+日志里与 `batch_task` 相关的一行都没有（顺带证明那三条索引此刻是真实存在且可用的：
+SQLite 因为 `idx_batch_task_queues_title` 占用而**拒绝** DROP `title` 这一列，
+所以"title 缺列时先建索引会失败"这一支只能由存储层的真·老库夹具去证，两条互补）。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
