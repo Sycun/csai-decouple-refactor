@@ -82,7 +82,6 @@ var _ AssetStore = (*DB)(nil)
 // AttackChainStore is the persistence surface required by AttackChainHandler.
 type AttackChainStore interface {
 	AttackChainLedger
-	DeleteAttackChain(conversationID string) error
 	GetConversation(id string) (*Conversation, error)
 	// The rest reaches this surface through attackchain.NewBuilder, which declares its own Store
 	// (a fourth case of the generation blind spot: interfaces built from direct h.db.X calls miss
@@ -91,10 +90,6 @@ type AttackChainStore interface {
 	GetAgentTrace(conversationID string) (traceInputJSON, assistantOutput string, err error)
 	GetMessages(conversationID string) ([]Message, error)
 	GetProcessDetailsByConversation(conversationID string) (map[string][]ProcessDetail, error)
-	LoadAttackChainEdges(conversationID string) ([]AttackChainEdge, error)
-	LoadAttackChainNodes(conversationID string) ([]AttackChainNode, error)
-	SaveAttackChainEdge(conversationID, edgeID, sourceNodeID, targetNodeID, edgeType string, weight int) error
-	SaveAttackChainNode(conversationID, nodeID, nodeType, nodeName, toolExecutionID, metadata string, riskScore int) error
 }
 
 var _ AttackChainStore = (*DB)(nil)

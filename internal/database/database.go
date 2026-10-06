@@ -263,35 +263,7 @@ func (db *DB) initTables() error {
 		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);`
 
-	// 创建攻击链节点表
-	createAttackChainNodesTable := `
-	CREATE TABLE IF NOT EXISTS attack_chain_nodes (
-		id TEXT PRIMARY KEY,
-		conversation_id TEXT NOT NULL,
-		node_type TEXT NOT NULL,
-		node_name TEXT NOT NULL,
-		tool_execution_id TEXT,
-		metadata TEXT,
-		risk_score INTEGER DEFAULT 0,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-		FOREIGN KEY (tool_execution_id) REFERENCES tool_executions(id) ON DELETE SET NULL
-	);`
-
-	// 创建攻击链边表
-	createAttackChainEdgesTable := `
-	CREATE TABLE IF NOT EXISTS attack_chain_edges (
-		id TEXT PRIMARY KEY,
-		conversation_id TEXT NOT NULL,
-		source_node_id TEXT NOT NULL,
-		target_node_id TEXT NOT NULL,
-		edge_type TEXT NOT NULL,
-		weight INTEGER DEFAULT 1,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
-		FOREIGN KEY (source_node_id) REFERENCES attack_chain_nodes(id) ON DELETE CASCADE,
-		FOREIGN KEY (target_node_id) REFERENCES attack_chain_nodes(id) ON DELETE CASCADE
-	);`
+	// 攻击链两张表的 DDL 在 store.AttackChain 里（EnsureSchema 一并建两张表与两条会话索引）。
 
 	// 创建项目表
 	createProjectsTable := `
@@ -634,10 +606,6 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_tool_executions_tool_name ON tool_executions(tool_name);
 	CREATE INDEX IF NOT EXISTS idx_tool_executions_start_time ON tool_executions(start_time);
 	CREATE INDEX IF NOT EXISTS idx_tool_executions_status ON tool_executions(status);
-	CREATE INDEX IF NOT EXISTS idx_chain_nodes_conversation ON attack_chain_nodes(conversation_id);
-	CREATE INDEX IF NOT EXISTS idx_chain_edges_conversation ON attack_chain_edges(conversation_id);
-	CREATE INDEX IF NOT EXISTS idx_chain_edges_source ON attack_chain_edges(source_node_id);
-	CREATE INDEX IF NOT EXISTS idx_chain_edges_target ON attack_chain_edges(target_node_id);
 	CREATE INDEX IF NOT EXISTS idx_conversations_pinned ON conversations(pinned);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_conversation_id ON vulnerabilities(conversation_id);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_conversation_tag ON vulnerabilities(conversation_tag);
@@ -716,12 +684,9 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("创建tool_stats表失败: %w", err)
 	}
 
-	if _, err := db.Exec(createAttackChainNodesTable); err != nil {
-		return fmt.Errorf("创建attack_chain_nodes表失败: %w", err)
-	}
-
-	if _, err := db.Exec(createAttackChainEdgesTable); err != nil {
-		return fmt.Errorf("创建attack_chain_edges表失败: %w", err)
+	// 两张表都外键到 conversations，节点表还外键到 tool_executions，所以这一步只能在它们之后。
+	if err := store.NewAttackChain(db.DB).EnsureSchema(); err != nil {
+		return fmt.Errorf("创建攻击链表失败: %w", err)
 	}
 
 	// robot_user_sessions 的建表、索引与 agent_mode 补列归 store.RobotSessions，

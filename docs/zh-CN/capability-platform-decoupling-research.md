@@ -784,7 +784,7 @@ grep -rn go:embed --include='*.go' . | grep -v _test | wc -l       # 3（原 0�
 **21**——那是第五刀之后一次下降只进了 log、上限没人跟。已收紧为 20 并在常量旁写下原因；
 **同类漂移至今撞到两次**（`dbMethodCeiling` 328/327 与这里 21/20），所以本节的每个数字都只写当场命令的输出。
 
-第二十一、二十二刀落地后同形复测（2026-10-06 08:09 当场命令，全部为本段第一手读数）：测试函数 **1517**、`internal/store` 生产文件 **19** 个、包内测试 **152** 条、`*database.DB` 方法 **287**
+第二十一至二十三刀落地后同形复测（2026-10-06 08:28 当场命令，全部为本段第一手读数）：测试函数 **1523**、`internal/store` 生产文件 **20** 个、包内测试 **158** 条、`*database.DB` 方法 **282**
 （上一版此处为 1485，那是第十四片后的读数；第**二十一刀三个提交自己新增 21 条**：升级形状回归 2 条、
 9 条路由的契约用例 8 条、store 记录侧真库测试 10 条、归属门禁 1 条——**其余差额来自十五至二十刀**，
 本段不把别人加的测试记在自己头上）；`internal/store` 生产文件仍 **18** 个、包内测试 **145** 条（原 134）；
@@ -2055,6 +2055,67 @@ Update **不**移动 `conversation_id`（SET 列表里没有它，但缓存会�
 没有复测整树。修 `gofmt -w` 后全套 `gates` 才 exit 0。**记在这里是因为"我本地跑过了"从来不是证据**，
 整树那条命令才是。
 
+### P6 第二十三刀 —— 攻击链两张表整片进 `store.AttackChain`，开机接线门禁从"一条"长成"一张表"
+
+`internal/database/attackchain.go` **删除**。五个方法变成
+`SaveNode` / `SaveEdge` / `LoadNodes` / `LoadEdges` / `DeleteForConversation`，
+两张表的 `CREATE TABLE` 与**四条索引**一起进 `EnsureSchema`——其中
+`idx_chain_edges_source` / `idx_chain_edges_target` 原本不在建表旁边，
+而是躺在数据层那条给几十个建表补索引的大 `createIndexes` 里；
+把它们也搬过来的理由是**同一张表的形状不该有两个改动点**。
+搬完之后 `internal/database/database.go` 里 `attack_chain` 这个词**出现 0 次**。
+
+**调用方怎么拿到 store**：`attackchain.Builder` 与 `PromoteToProject` 原来通过
+`database.AttackChainLedger`（一份混着"链的行列 + 会话证据 + 项目事实账本"的接口）拿这五条调用。
+链的方法从那份账本里摘掉之后，两个入口都改为**显式接收一个 `ChainStore`**
+（在本包声明的五方法接口，由 `*store.AttackChain` 满足）：`NewBuilder(db, chain, openAIConfig, logger)`、
+`PromoteToProject(db, chain, projectID, conversationID)`。
+handler 侧 `AttackChainHandler` 与 `ProjectHandler` 各加一个 `chain *store.AttackChain` 字段，
+构造仍走同一条 nil 规矩（`newAttackChainStore(nil)` 回 nil，方法回错误）。
+**为什么不是把 `AttackChainLedger` 扩回去**：那等于把五张别的域的表重新摆到攻击链构建器手边，
+正是这次重构要取消的形状。
+
+**门禁从一条长成一张表**：第二十二刀那条 boot 接线测试改成
+`TestSchemaEnsuresAreWiredAtBoot`，用一张用例表覆盖两个 store，每条断言四件事——
+EnsureSchema 恰好一次、偏移晚于它的外键靶子、老家不许再留 `CREATE TABLE`，
+以及**更强的那条**：`mustNotMention` 要求 boot 文件里连表名字符串都不出现
+（留在索引扫描里的一条 `CREATE INDEX` 和留在建表处的一条 `CREATE TABLE` 一样是第二个主人）。
+**探针五个方向各验红**：删链的调用 → `called 0 times`；
+把链的 ensure 挪到 `createToolExecutionsTable` 之前 → `ensured at offset 26943, before the anchor ... at 27074`；
+删告警的调用 → `called 0 times`；复制告警的调用 → `called 2 times`；
+在 boot 文件里加一句提到 `attack_chain` 的注释 → `still mentions "attack_chain"`；恢复后全绿。
+**这条门禁在写的过程中就抓到我一次错误假设**：第一版把 `db.Exec(...)` 当成 `*ast.Ident` 形式的调用去匹配，
+锚点找不到时**测试如实红了**（"the ordering anchor was not found ... 是失败而不是通过"），
+而不是让顺序断言在空集上"通过"——这正是这条分支该起的作用。
+
+**搬过去的读做了同一类修补**：`risk_score` 与 `weight` 是**可空带默认值**的列，
+原样扫进 `int` 会在遇到显式 NULL 时失败，而旧代码的答复是 `logger.Warn` + `continue`——
+节点/边就此从链上消失。现在两条 SELECT 走 `COALESCE(risk_score,0)` / `COALESCE(weight,1)`
+（0 与 1 就是列自己的 DEFAULT），扫描失败改为返回错误并补 `rows.Err()`。
+**两处探针**：各摘掉一个 COALESCE，节点侧与边侧红话不同（`column index 5, name "risk_score"` /
+`column index 4, name "weight"`）。**`metadata` 不是 JSON 的那条回退照旧保留**（空 map 而不是报错），
+因为一张链页不该因为一个节点的 blob 坏了就空白；代价是那行 warning 没了——
+store 没有 logger，为一条日志引入一条依赖不值，这句写在代码里也写在这里。
+`Save*` 原来在数据层 `logger.Error` 后返回错误；现在错误文本原样保留
+（`保存攻击链节点失败: %w`），而**调用方本来就会 `logger.Warn` 同一条错误**，
+所以日志少了一行重复而不是少了信息。
+
+**测试**：`internal/store/attack_chain_test.go` **6 个用例**、真库、零 mock——
+建表与四条索引都由 `EnsureSchema` 造出且幂等、存读回环（metadata 解出 JSON、
+无工具执行时 `tool_execution_id` 走 NULL 再回空串、按会话隔离、空串会话读不到东西）、
+同 id 重存是**替换**不是追加（regenerate 的全部依据）、NULL 分数与 NULL 权重都读得回来且取列默认值、
+坏 JSON 只丢 metadata 不丢节点、`DeleteForConversation` 清两张表且不碰别的会话、
+无连接句柄六个方法逐个拒绝。
+
+**真机点验（两轮启动）**：全新库第一遍 `sqlite_master` 就列出两张表 + 四条索引（**全部由 store 建**），
+`GET /api/attack-chain/<新会话>` 回 `{"nodes":[],"edges":[]}`、对不存在的会话回 404 `对话不存在`；
+同一目录第二遍重启仍 0 error、对象数量不变（幂等）。两轮都按记录 PID 停止、沙箱删除。
+归属清单再加两张表（`attack_chain_nodes`、`attack_chain_edges`）。
+
+**这刀的失误也记下来**：两次用 python 按行切片改 `database.go`，**两次都把空白留坏了**，
+第二次是被 `make fmt-check`（硬零）当场抓住的——我当时只在改动的几个文件上单独跑过 `gofmt`。
+从现在起：任何行级脚本改写之后，`gofmt -l ./cmd ./internal` 立刻跑整树，不看局部。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
@@ -2104,7 +2165,7 @@ Update **不**移动 `conversation_id`（SET 列表里没有它，但缓存会�
 | P3 契约与前端 | **部分：三套事件名契约已完成并双侧比对**；逐文件 ES 模块未做 | `go test -count=1 -run 'TestSSEPage|TestPersistedDetail|TestGeneratedSSEEnum|TestPageLoads' ./internal/handler/`；手拼帧基线 0 |
 | P4 进程外插件宿主 | **部分：进程外 ABI + 软出网已落**；netns/seccomp 硬边界与内嵌 CPython **未做** | `ls internal/pluginhost`；`grep -rl 'seccomp\|CLONE_NEWNET' internal/` → **无匹配**（这就是"未做"的证据） |
 | P5 审核流水线/商店 | **部分：客户端强制 + 制品签名/撤销已落**；registry 服务端、气隙离线包、沙箱引爆自动化 **未做** | `ls internal/artifact`；`ls internal/registry` → **不存在** |
-| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、**数据层按域切出 17 个 store / `internal/store` 19 个生产文件、包内 152 条测试**（`*database.DB` 361 → **287**，只降门禁；漏洞域的记录与提醒两片都已交，`internal/database/vulnerability.go` 与 `vulnerability_alert.go` 两个文件删除）、**分层裸 SQL 归零**（两个自有层之外 0 条）、DATETIME 读法 24 处 → 1 处、应用回调不再挂在连接包装上、**handler 层不持有任何数据库句柄**、`vulnerabilities` 表按"唯一写入者"认领（`TestFindingsTableHasOneWriter`），告警两张表与 `robot_user_bindings` 进归属清单；搬走的 DDL 由 `TestVulnerabilityAlertSchemaIsEnsuredAtBoot` 盯开机接线与 FK 顺序、Eino 6 包（适配外 3 包）、`AgentHandler` 六刀至 **88 方法 / 20 文件**、审计注入门禁、手写 OpenAPI 文档按域拆成 5 个分组文件 + golden（157 操作逐字节等值） | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `transport layer: 0 structs hold *database.DB, 18 fields hold a narrowed database interface, 17 hold their own table store, 1148 struct fields scanned (started 19/0)`；`go test -count=1 -v -run TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt ./internal/layering/` 报 `0 statements in 0 files, over 511 production files scanned`；`go test -count=1 -run 'TestFindingContract' ./internal/handler/` 8 条契约用例；`go test -count=1 -run 'TestOpenAPI' ./internal/handler/` |
+| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、**数据层按域切出 18 个 store / `internal/store` 20 个生产文件、包内 158 条测试**（`*database.DB` 361 → **282**，只降门禁；漏洞域两片 + 攻击链一片已交，`internal/database/vulnerability.go`、`vulnerability_alert.go`、`attackchain.go` 三个文件删除）、**分层裸 SQL 归零**（两个自有层之外 0 条）、DATETIME 读法 24 处 → 1 处、应用回调不再挂在连接包装上、**handler 层不持有任何数据库句柄**、`vulnerabilities` 表按"唯一写入者"认领（`TestFindingsTableHasOneWriter`），告警两张表、`robot_user_bindings` 与攻击链两张表进归属清单；搬走的 DDL 由 `TestSchemaEnsuresAreWiredAtBoot` 逐条盯开机接线、外键顺序与"老家不许再提这张表"、Eino 6 包（适配外 3 包）、`AgentHandler` 六刀至 **88 方法 / 20 文件**、审计注入门禁、手写 OpenAPI 文档按域拆成 5 个分组文件 + golden（157 操作逐字节等值） | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `transport layer: 0 structs hold *database.DB, 18 fields hold a narrowed database interface, 19 hold their own table store, 1150 struct fields scanned (started 19/0)`；`go test -count=1 -v -run TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt ./internal/layering/` 报 `0 statements in 0 files, over 511 production files scanned`；`go test -count=1 -run 'TestFindingContract' ./internal/handler/` 8 条契约用例；`go test -count=1 -run 'TestOpenAPI' ./internal/handler/` |
 | §6.1 社区知识控制 | **代码层已落**（围栏 + 入库拒绝 + 装配点守卫）；是否按运行期不可信处理仍待裁决（决策项 4） | `go test -count=1 ./internal/contentpolicy/` |
 
 **没有做成的事**（不假装完成）：`AgentHandler` 分解本体（88 方法 / 20 文件，仍是全仓最大的类型；
@@ -2113,9 +2174,9 @@ Update **不**移动 `conversation_id`（SET 列表里没有它，但缓存会�
 ~~剩余 3 个域的窄接口~~（**已在第五片做完**：阻塞点是 `h.db` 逃逸进别包签名，解法是给那些函数
 声明消费者接口——`project.Store`/`agentfinalizer.Store`/`attackchain.Store`/`workflow.Store`，
 19 → 0）、Eino 收到 ≤1 包、
-session 事件溯源、逐文件 ES 模块、`internal/database` 剩下的 **287** 个方法继续按域切
-（漏洞域两片都交完了；剩下的族是 c2 47 / conversation 48 / rbac 40 / monitor 22 / batch_task 22 /
-project 18 / asset 18，以及同文件的 `vulnerability_alert.go` 已不存在；细节见 §11 第二十一、二十二刀）、
+session 事件溯源、逐文件 ES 模块、`internal/database` 剩下的 **282** 个方法继续按域切
+（漏洞域两片与攻击链一片已交完；剩下的族是 conversation 48 / c2 47 / rbac 40 / monitor 22 /
+batch_task 22 / workflow 20 / project 18 / asset 18，以及同文件的 `vulnerability_alert.go` 已不存在；细节见 §11 第二十一、二十二刀）、
 P4 硬网络边界、P4 内嵌 CPython、P5 registry / 气隙包 / 引爆自动化、
 以及 **§10 的 9 个决策项一个都没有被裁决**（其中 1、4、5、6 直接决定 P4/P5 的形态）。
 因此**目标未达成**，本表就是"还差什么"的清单。

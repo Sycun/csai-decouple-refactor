@@ -15,6 +15,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/openai"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -28,8 +29,21 @@ import (
 type Store = database.AttackChainLedger
 
 // Builder 攻击链构建器
+// ChainStore is the chain's own two tables. It arrives as a collaborator rather than as members of
+// Store because those five calls were methods on the connection wrapper only while the rows were
+// stored there; once store.AttackChain owned them, handing the ledger back would put the tables
+// within reach of everything the ledger can see.
+type ChainStore interface {
+	SaveNode(conversationID, nodeID, nodeType, nodeName, toolExecutionID, metadata string, riskScore int) error
+	SaveEdge(conversationID, edgeID, sourceNodeID, targetNodeID, edgeType string, weight int) error
+	LoadNodes(conversationID string) ([]store.AttackChainNode, error)
+	LoadEdges(conversationID string) ([]store.AttackChainEdge, error)
+	DeleteForConversation(conversationID string) error
+}
+
 type Builder struct {
 	db           Store
+	chain        ChainStore
 	logger       *zap.Logger
 	openAIClient *openai.Client
 	openAIConfig *config.OpenAIConfig
@@ -37,11 +51,12 @@ type Builder struct {
 	maxTokens    int // 最大tokens限制，默认100000
 }
 
-// Node 攻击链节点（使用database包的类型）
-type Node = database.AttackChainNode
+// Node and Edge are the chain rows themselves; the type declarations live with the table's store
+// since the second twenty-third slice moved them.
+type Node = store.AttackChainNode
 
-// Edge 攻击链边（使用database包的类型）
-type Edge = database.AttackChainEdge
+// Edge is one chain edge.
+type Edge = store.AttackChainEdge
 
 // Chain 完整的攻击链
 type Chain struct {
@@ -50,7 +65,7 @@ type Chain struct {
 }
 
 // NewBuilder 创建新的攻击链构建器
-func NewBuilder(db Store, openAIConfig *config.OpenAIConfig, logger *zap.Logger) *Builder {
+func NewBuilder(db Store, chain ChainStore, openAIConfig *config.OpenAIConfig, logger *zap.Logger) *Builder {
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 10,
@@ -81,6 +96,7 @@ func NewBuilder(db Store, openAIConfig *config.OpenAIConfig, logger *zap.Logger)
 
 	return &Builder{
 		db:           db,
+		chain:        chain,
 		logger:       logger,
 		openAIClient: openai.NewClient(openAIConfig, httpClient, logger),
 		openAIConfig: openAIConfig,
@@ -763,20 +779,20 @@ func assistantOutSection(modelOutput string) string {
 // saveChain 保存攻击链到数据库
 func (b *Builder) saveChain(conversationID string, nodes []Node, edges []Edge) error {
 	// 先删除旧的攻击链数据
-	if err := b.db.DeleteAttackChain(conversationID); err != nil {
+	if err := b.chain.DeleteForConversation(conversationID); err != nil {
 		b.logger.Warn("删除旧攻击链失败", zap.Error(err))
 	}
 
 	for _, node := range nodes {
 		metadataJSON, _ := json.Marshal(node.Metadata)
-		if err := b.db.SaveAttackChainNode(conversationID, node.ID, node.Type, node.Label, "", string(metadataJSON), node.RiskScore); err != nil {
+		if err := b.chain.SaveNode(conversationID, node.ID, node.Type, node.Label, "", string(metadataJSON), node.RiskScore); err != nil {
 			b.logger.Warn("保存攻击链节点失败", zap.String("nodeId", node.ID), zap.Error(err))
 		}
 	}
 
 	// 保存边
 	for _, edge := range edges {
-		if err := b.db.SaveAttackChainEdge(conversationID, edge.ID, edge.Source, edge.Target, edge.Type, edge.Weight); err != nil {
+		if err := b.chain.SaveEdge(conversationID, edge.ID, edge.Source, edge.Target, edge.Type, edge.Weight); err != nil {
 			b.logger.Warn("保存攻击链边失败", zap.String("edgeId", edge.ID), zap.Error(err))
 		}
 	}
@@ -786,12 +802,12 @@ func (b *Builder) saveChain(conversationID string, nodes []Node, edges []Edge) e
 
 // LoadChainFromDatabase 从数据库加载攻击链
 func (b *Builder) LoadChainFromDatabase(conversationID string) (*Chain, error) {
-	nodes, err := b.db.LoadAttackChainNodes(conversationID)
+	nodes, err := b.chain.LoadNodes(conversationID)
 	if err != nil {
 		return nil, fmt.Errorf("加载攻击链节点失败: %w", err)
 	}
 
-	edges, err := b.db.LoadAttackChainEdges(conversationID)
+	edges, err := b.chain.LoadEdges(conversationID)
 	if err != nil {
 		return nil, fmt.Errorf("加载攻击链边失败: %w", err)
 	}

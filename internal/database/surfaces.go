@@ -59,17 +59,12 @@ var _ WorkflowRunLedger = (*DB)(nil)
 type AttackChainLedger interface {
 	ProjectFactStore
 	ConversationHasToolProcessDetails(conversationID string) (bool, error)
-	DeleteAttackChain(conversationID string) error
 	GetAgentTrace(conversationID string) (traceInputJSON, assistantOutput string, err error)
 	GetConversation(id string) (*Conversation, error)
 	GetMessages(conversationID string) ([]Message, error)
 	GetProcessDetailsByConversation(conversationID string) (map[string][]ProcessDetail, error)
 	GetProject(id string) (*Project, error)
 	GetProjectFactByKey(projectID, factKey string) (*ProjectFact, error)
-	LoadAttackChainEdges(conversationID string) ([]AttackChainEdge, error)
-	LoadAttackChainNodes(conversationID string) ([]AttackChainNode, error)
-	SaveAttackChainEdge(conversationID, edgeID, sourceNodeID, targetNodeID, edgeType string, weight int) error
-	SaveAttackChainNode(conversationID, nodeID, nodeType, nodeName, toolExecutionID, metadata string, riskScore int) error
 }
 
 var _ AttackChainLedger = (*DB)(nil)

@@ -9,14 +9,24 @@ import (
 	"cyberstrike-ai/internal/attackchain"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
+// newAttackChainStore follows the same nil rule as the narrowed fields around it.
+func newAttackChainStore(db *database.DB) *store.AttackChain {
+	if db == nil {
+		return nil
+	}
+	return store.NewAttackChain(db.DB)
+}
+
 // AttackChainHandler 攻击链处理器
 type AttackChainHandler struct {
 	db           database.AttackChainStore
+	chain        *store.AttackChain // 攻击链的两张表：节点、边，以及"重建前先清空"那一步
 	logger       *zap.Logger
 	openAIConfig *config.OpenAIConfig
 	mu           sync.RWMutex // 保护 openAIConfig 的并发访问
@@ -28,6 +38,7 @@ type AttackChainHandler struct {
 func NewAttackChainHandler(db *database.DB, openAIConfig *config.OpenAIConfig, logger *zap.Logger) *AttackChainHandler {
 	return &AttackChainHandler{
 		db:           database.Narrow[database.AttackChainStore](db),
+		chain:        newAttackChainStore(db),
 		logger:       logger,
 		openAIConfig: openAIConfig,
 	}
@@ -70,7 +81,7 @@ func (h *AttackChainHandler) GetAttackChain(c *gin.Context) {
 
 	// 先尝试从数据库加载（如果已生成过）
 	openAIConfig := h.getOpenAIConfig()
-	builder := attackchain.NewBuilder(h.db, openAIConfig, h.logger)
+	builder := attackchain.NewBuilder(h.db, h.chain, openAIConfig, h.logger)
 	chain, err := builder.LoadChainFromDatabase(conversationID)
 	if err == nil && len(chain.Nodes) > 0 {
 		// 如果已存在，直接返回
@@ -137,7 +148,7 @@ func (h *AttackChainHandler) RegenerateAttackChain(c *gin.Context) {
 	}
 
 	// 删除旧的攻击链
-	if err := h.db.DeleteAttackChain(conversationID); err != nil {
+	if err := h.chain.DeleteForConversation(conversationID); err != nil {
 		h.logger.Warn("删除旧攻击链失败", zap.Error(err))
 	}
 
@@ -160,7 +171,7 @@ func (h *AttackChainHandler) RegenerateAttackChain(c *gin.Context) {
 	defer cancel()
 
 	openAIConfig := h.getOpenAIConfig()
-	builder := attackchain.NewBuilder(h.db, openAIConfig, h.logger)
+	builder := attackchain.NewBuilder(h.db, h.chain, openAIConfig, h.logger)
 	chain, err := builder.BuildChainFromConversation(ctx, conversationID)
 	if err != nil {
 		h.logger.Error("生成攻击链失败", zap.String("conversationId", conversationID), zap.Error(err))

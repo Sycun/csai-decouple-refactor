@@ -10,6 +10,7 @@ import (
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/project"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -28,12 +29,13 @@ func clampProjectDescription(s string) string {
 // ProjectHandler 项目管理处理器。
 type ProjectHandler struct {
 	db     database.ProjectStore
+	chain  *store.AttackChain // 把对话攻击链沉淀成项目事实时，节点与边从这张表读
 	logger *zap.Logger
 }
 
 // NewProjectHandler 创建项目管理处理器。
 func NewProjectHandler(db *database.DB, logger *zap.Logger) *ProjectHandler {
-	return &ProjectHandler{db: database.Narrow[database.ProjectStore](db), logger: logger}
+	return &ProjectHandler{db: database.Narrow[database.ProjectStore](db), chain: newAttackChainStore(db), logger: logger}
 }
 
 type createProjectRequest struct {
@@ -648,7 +650,7 @@ func (h *ProjectHandler) PromoteAttackChain(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问目标项目或来源对话"})
 		return
 	}
-	result, err := attackchain.PromoteToProject(h.db, projectID, conversationID)
+	result, err := attackchain.PromoteToProject(h.db, h.chain, projectID, conversationID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

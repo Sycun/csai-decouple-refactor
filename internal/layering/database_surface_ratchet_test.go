@@ -56,7 +56,9 @@ import (
 // 294 -> 287: the vulnerability alert domain moved whole - the subscription read and write, the
 // recipient expansion, the outbox enqueue, the due-list drain and both mark-backoff writes - together
 // with the DDL of its two tables, which EnsureSchema now creates itself.
-const dbMethodCeiling = 287
+// 287 -> 282: the attack chain moved whole - both saves, both loads, the delete-a-conversation's-chain
+// step - and the two tables' DDL with their conversation indexes went to store.AttackChain.EnsureSchema.
+const dbMethodCeiling = 282
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

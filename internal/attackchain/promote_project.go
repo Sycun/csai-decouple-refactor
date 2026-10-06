@@ -23,7 +23,7 @@ type PromoteToProjectResult struct {
 }
 
 // PromoteToProject 将对话攻击链沉淀为项目事实与边。
-func PromoteToProject(db Store, projectID, conversationID string) (*PromoteToProjectResult, error) {
+func PromoteToProject(db Store, chain ChainStore, projectID, conversationID string) (*PromoteToProjectResult, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database 未初始化")
 	}
@@ -43,11 +43,11 @@ func PromoteToProject(db Store, projectID, conversationID string) (*PromoteToPro
 		return nil, fmt.Errorf("对话已绑定其他项目")
 	}
 
-	nodes, err := db.LoadAttackChainNodes(conversationID)
+	nodes, err := chain.LoadNodes(conversationID)
 	if err != nil {
 		return nil, err
 	}
-	edges, err := db.LoadAttackChainEdges(conversationID)
+	edges, err := chain.LoadEdges(conversationID)
 	if err != nil {
 		return nil, err
 	}
