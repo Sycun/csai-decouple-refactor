@@ -70,7 +70,7 @@ func TestAssetToolsCRUDQueryAndPageLimit(t *testing.T) {
 	if err != nil || result == nil || result.IsError {
 		t.Fatalf("create asset result=%#v err=%v", result, err)
 	}
-	assets, total, err := db.ListAssets(20, 0, store.AssetListFilter{}, store.Access{UserID: user.ID, Scope: database.RBACScopeAssigned})
+	assets, total, err := database.NewAssets(db).ListAssets(20, 0, store.AssetListFilter{}, store.Access{UserID: user.ID, Scope: database.RBACScopeAssigned})
 	if err != nil || total != 1 || len(assets) != 1 {
 		t.Fatalf("saved assets total=%d len=%d err=%v", total, len(assets), err)
 	}
@@ -80,7 +80,7 @@ func TestAssetToolsCRUDQueryAndPageLimit(t *testing.T) {
 	if err != nil || result == nil || result.IsError {
 		t.Fatalf("update asset result=%#v err=%v", result, err)
 	}
-	updated, err := db.GetAsset(id, store.Access{UserID: user.ID, Scope: database.RBACScopeAssigned})
+	updated, err := database.NewAssets(db).GetAsset(id, store.Access{UserID: user.ID, Scope: database.RBACScopeAssigned})
 	if err != nil || updated.Title != "After" || updated.IP != "192.0.2.42" {
 		t.Fatalf("partial update lost fields: %#v err=%v", updated, err)
 	}
@@ -111,7 +111,7 @@ func TestAssetToolsCRUDQueryAndPageLimit(t *testing.T) {
 	if err != nil || result == nil || result.IsError {
 		t.Fatalf("complete scan result=%#v err=%v", result, err)
 	}
-	scanned, err := db.GetAsset(id, store.Access{UserID: user.ID, Scope: database.RBACScopeAssigned})
+	scanned, err := database.NewAssets(db).GetAsset(id, store.Access{UserID: user.ID, Scope: database.RBACScopeAssigned})
 	if err != nil || scanned.LastScanAt == nil || scanned.LastScanConversationID != conversation.ID || scanned.VulnerabilityCount != 1 {
 		t.Fatalf("scan fields not updated: %#v err=%v", scanned, err)
 	}
@@ -120,7 +120,7 @@ func TestAssetToolsCRUDQueryAndPageLimit(t *testing.T) {
 	if err != nil || result == nil || result.IsError {
 		t.Fatalf("delete asset result=%#v err=%v", result, err)
 	}
-	if _, err := db.GetAsset(id, store.Access{Scope: database.RBACScopeAll}); err == nil {
+	if _, err := database.NewAssets(db).GetAsset(id, store.Access{Scope: database.RBACScopeAll}); err == nil {
 		t.Fatal("asset still exists after delete")
 	}
 }
@@ -156,7 +156,7 @@ func TestAssetReadToolsRespectConversationProjectScope(t *testing.T) {
 		{ProjectID: projectB.ID, IP: "192.0.2.20", Protocol: "https"},
 		{IP: "192.0.2.30", Protocol: "https"},
 	}
-	if result, err := db.UpsertAssets(assets, "", true); err != nil || result.Created != len(assets) {
+	if result, err := database.NewAssets(db).UpsertAssets(assets, "", true); err != nil || result.Created != len(assets) {
 		t.Fatalf("seed assets result=%#v err=%v", result, err)
 	}
 

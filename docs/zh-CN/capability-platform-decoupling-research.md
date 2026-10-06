@@ -2686,6 +2686,42 @@ C2 三张列表都认的哨兵，而 `assetWhere` 只是把它当成一个匹配
 测试树 `make fmt-check vet layering-check wiring-check js-check test-race` + `generate` + golden 比对
 （`三套生成物与源码一致`，本刀没有行号漂移要重生成）+ 两个二进制构建全绿。
 
+### P6 第三十二刀 —— 资产域那 17 条一行式转发删掉：连接包装从此双向都碰不到 `assets`
+
+上一刀留的债在这一刀还清。**做的**：
+① `database.AssetStore` 里 15 个资产方法全部剥掉，剩下的两个本来就不是这张表的——`GetProject`（响应里带的
+项目名）与 `UserCanAccessResource`（可见性问答）——于是按 27(四) 的规矩改名成 **`AssetContextStore`**，
+`*DB` 继续答它；
+② `AssetHandler` 加一个 `assets *store.Assets` 字段，13 个调用点（共 17 处）改走 store，
+**构造器签名一个字没动**（`NewAssetHandler(db *database.DB, …)` 内部建 store），所以装配图没有搬家；
+③ MCP 那条工具路径 `registerAssetTools` 自己 `assets := database.NewAssets(db)`，6 个方法 10 处调用改指它；
+④ findings 的副作用适配器 `findingEffects.RefreshAssetRiskCache` 改成 `NewAssets(e.db)`——这是
+`store.FindingEffects` 注释里"两个后果属于别的主人的表"的第三次落地；
+⑤ 17 条转发删除。其中 `AssetIDsForVulnerabilityConversations` 那条**在生产代码里一个调用者都没有**
+（只有 store 自己内部用），属于"该删而不是该搬"那一类。
+
+**水位 `231 → 214`**（正好 −17，全部落在导出方法上：`TestDatabaseSurfaceHasNoUnreachableMethods` 的
+反空跑下限也从 197 收到实测 **180**）。传输层：持上帝对象的字段仍 **0**，`internal/handler` 里
+`*store.*` 字段 **28 → 29**。
+
+**我自己的构造器被刚立的门禁当场纠正**：按 27(四) 的清单规矩把 `{"AssetHandler", "assets"}` 加进
+`storeOwnedHandlers` 之后，`TestNarrowedStorageStaysNilWithoutADatabase` 第一次跑就红——
+`AssetHandler built with a nil *database.DB holds a non-nil *store.Assets`。第三十一刀为了修 panic 而让
+`database.NewAssets(nil)` 返回"非 nil 但内部是 nil"的 store，**方向反了**：`database.Narrow` 存在的理由就是
+"nil 连接必须给出 nil 句柄"，否则 `h.x == nil` 这类降级分支静默走错。现在 nil 连接 → **nil store**，
+而"返回 nil 会不会让调用方 panic"这个问题由 store 那一侧的答案兜住：19 个导出方法开头都判 `s == nil`，
+所以 nil 接收器是**拒绝**（同一条错误文本）而不是崩溃；store 测试补了对 nil 接收器的三条断言
+（`DeleteAsset` / `ListAssets` / `BatchTaskBelongsToQueue`）把这件事钉住，而不是钉在我的注释上。
+
+**顺带修掉一处门禁自身的死代码**：`database_dead_surface_test.go` 里躺着**两条连在一起的 `t.Fatalf`**
+（上一条脚本改基线时留下 195/240 两个版本，第一条先命中，第二条永远不会执行）。这类"看起来在检查、
+其实检查不到"的形状正是本仓库反复踩的那一类；删掉重复行，并把下降轨迹写进注释（296→256→249→225→205→180）。
+
+**测试调用点跟着搬家**（60 处）：`internal/database/asset_test.go` 52、`internal/app/asset_tools_test.go` 5、
+`internal/app/mcp_authorization_test.go` 2、`internal/handler/asset_test.go` 1，一律从 `db.X(` 改成
+`NewAssets(db).X(` / `database.NewAssets(db).X(`——**这批测试仍跑在真库上**，它们对语句的覆盖度没有变化，
+变的只是取得那条语句的入口。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

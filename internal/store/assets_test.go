@@ -172,6 +172,20 @@ func TestAssetsRefusesAConnectionlessHandle(t *testing.T) {
 	if a.BatchTaskBelongsToQueue("t1", "q1") {
 		t.Fatal("BatchTaskBelongsToQueue claimed a link without a connection")
 	}
+
+	// A handler built without a database holds a nil *Assets (database.NewAssets answers nil for a
+	// nil connection, the way database.Narrow answers a nil interface), so the nil receiver itself
+	// has to refuse rather than panic.
+	var missing *Assets
+	if err := missing.DeleteAsset("a1", Access{Scope: ScopeAll}); err == nil || err.Error() != want {
+		t.Fatalf("nil receiver answered %v, want %q", err, want)
+	}
+	if _, _, err := missing.ListAssets(10, 0, AssetListFilter{}, Access{Scope: ScopeAll}); err == nil || err.Error() != want {
+		t.Fatalf("nil receiver list answered %v, want %q", err, want)
+	}
+	if missing.BatchTaskBelongsToQueue("t1", "q1") {
+		t.Fatal("nil receiver claimed a link")
+	}
 }
 
 func seedAsset(t *testing.T, db *sql.DB, id, host, projectID, owner string) {

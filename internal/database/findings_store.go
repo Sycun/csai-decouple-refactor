@@ -31,7 +31,7 @@ func (e findingEffects) UnlinkFactReferences(tx *sql.Tx, findingIDs []string) er
 }
 
 func (e findingEffects) RefreshAssetRiskCache(conversationIDs ...string) {
-	if err := e.db.RefreshAssetRiskCacheForConversations(conversationIDs...); err != nil && e.db.logger != nil {
+	if err := NewAssets(e.db).RefreshAssetRiskCacheForConversations(conversationIDs...); err != nil && e.db.logger != nil {
 		e.db.logger.Warn("刷新资产风险缓存失败", zap.Error(err))
 	}
 }

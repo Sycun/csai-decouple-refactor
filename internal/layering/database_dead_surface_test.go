@@ -68,12 +68,12 @@ func deadDBSurface(t *testing.T, root string) (dead []string, scanned int) {
 	}
 	// 296 exported methods when the scan was first written, 256 after the finding record left, 249 after
 	// the alerts, 225 after the twenty workflow methods, 205 after the twenty blackboard methods went to
-	// store.Facts. The floor keeps a wide gap on purpose: it catches a scan that stopped reading the
-	// directory, and it has tripped four times now for the right reason - a domain cut landing -
-	// which is the reminder to re-measure rather than to widen it.
-	if len(names) < 195 {
-		t.Fatalf("only %d exported *DB methods parsed (floor 195): the scan is not reading the package", len(names))
-		t.Fatalf("only %d exported *DB methods parsed (floor 240): the scan is not reading the package", len(names))
+	// store.Facts, 180 after the seventeen assets delegations went with them. The floor keeps a wide gap
+	// on purpose: it catches a scan that stopped reading the directory, and it has tripped five times
+	// now for the right reason - a domain cut landing - which is the reminder to re-measure rather than
+	// to widen it.
+	if len(names) < 180 {
+		t.Fatalf("only %d exported *DB methods parsed (floor 180): the scan is not reading the package", len(names))
 	}
 
 	var production []string

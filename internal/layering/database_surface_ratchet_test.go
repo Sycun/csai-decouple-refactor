@@ -67,9 +67,14 @@ import (
 // it now holds that store as a field. Nothing on the connection wrapper can change these tables.
 // 232 -> 231: the assets domain moved whole - the upsert, the six list/read/update/delete/merge
 // writes, the scan bookkeeping, the risk-cache refresh and the project unlink, with the table's DDL,
-// its thirteen late columns and its seven indexes. Seventeen one-line delegations hold the call
-// sites, so the drop is the one private migration that has no reason to be on a connection at all.
-const dbMethodCeiling = 231
+// its thirteen late columns and its ten indexes. Seventeen one-line delegations held the call sites,
+// so the drop was the one private migration that had no reason to be on a connection at all.
+// 231 -> 214: those seventeen delegations are gone. AssetHandler and the MCP asset tools now hold
+// *store.Assets as their own field, the findings adapter asks it for the risk-cache refresh, and
+// AssetStore shrank to the two members that belong to other domains (the project row and the RBAC
+// existence check) under the name AssetContextStore. Nothing on the connection wrapper touches
+// `assets` now, in either direction - the write ledger and the fresh-install check both confirm it.
+const dbMethodCeiling = 214
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

@@ -55,26 +55,16 @@ type AgentStore interface {
 
 var _ AgentStore = (*DB)(nil)
 
-// AssetStore is the persistence surface required by AssetHandler.
-type AssetStore interface {
-	BatchTaskBelongsToQueue(taskID, queueID string) bool
-	DeleteAsset(id string, access store.Access) error
-	DeleteAssets(ids []string, access store.Access) (int, error)
-	GetAsset(id string, access store.Access) (*store.Asset, error)
-	GetAssetStats(access store.Access, requestedDays ...int) (map[string]interface{}, error)
+// AssetContextStore is what an asset request still needs from *other* domains: the project name that
+// comes with an asset row, and the RBAC existence check behind a visibility question. The asset rows
+// themselves left this interface - store.Assets answers for those, so no method on the connection
+// wrapper can change the assets table any more.
+type AssetContextStore interface {
 	GetProject(id string) (*Project, error)
-	ListAssets(limit, offset int, filter store.AssetListFilter, access store.Access) ([]*store.Asset, int, error)
-	ListAssetsForOperation(limit int, filter store.AssetListFilter, access store.Access) ([]*store.Asset, int, error)
-	MarkAssetScanned(id, conversationID, queueID, taskID string, access store.Access) error
-	MergeAssets(primary *store.Asset, duplicateIDs []string, writeAccess, deleteAccess store.Access) (int, error)
-	UpdateAsset(id string, a *store.Asset, access store.Access) error
-	UpdateAssetsBulk(ids []string, patch store.AssetBulkPatch, access store.Access) (int, error)
-	UpdateAssetsProject(ids []string, projectID string, access store.Access) (int, error)
-	UpsertAssets(assets []*store.Asset, ownerUserID string, allowGlobal ...bool) (store.AssetImportResult, error)
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 
-var _ AssetStore = (*DB)(nil)
+var _ AssetContextStore = (*DB)(nil)
 
 // AttackChainStore is the persistence surface required by AttackChainHandler.
 type AttackChainStore interface {

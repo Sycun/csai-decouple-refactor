@@ -72,6 +72,7 @@ var storeOwnedHandlers = []struct {
 		h.SetDB(db)
 		return h
 	}},
+	{"AssetHandler", "assets", func(db *database.DB) interface{} { return NewAssetHandler(db, zap.NewNop()) }},
 }
 
 // storeField returns a named field and requires it to be a pointer to a store from internal/store.

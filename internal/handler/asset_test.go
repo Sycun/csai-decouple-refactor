@@ -46,7 +46,7 @@ func TestAssetListPaginatesWithinProject(t *testing.T) {
 		Port:      443,
 		Protocol:  "https",
 	})
-	if _, err := db.UpsertAssets(assets, "", true); err != nil {
+	if _, err := database.NewAssets(db).UpsertAssets(assets, "", true); err != nil {
 		t.Fatal(err)
 	}
 

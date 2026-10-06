@@ -220,10 +220,10 @@ func TestMCPAssetToolAuthorizationUsesAssetPermissionsAndScope(t *testing.T) {
 	}
 	owned := &store.Asset{IP: "192.0.2.10", Port: 443, Protocol: "https"}
 	hidden := &store.Asset{IP: "192.0.2.20", Port: 443, Protocol: "https"}
-	if _, err := db.UpsertAssets([]*store.Asset{owned}, user.ID); err != nil {
+	if _, err := database.NewAssets(db).UpsertAssets([]*store.Asset{owned}, user.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.UpsertAssets([]*store.Asset{hidden}, ""); err != nil {
+	if _, err := database.NewAssets(db).UpsertAssets([]*store.Asset{hidden}, ""); err != nil {
 		t.Fatal(err)
 	}
 

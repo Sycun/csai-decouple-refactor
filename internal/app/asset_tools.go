@@ -20,6 +20,9 @@ import (
 const agentAssetPageSizeMax = 50
 
 func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger) {
+	// The MCP tool path writes the same rows the console does, so it goes to the table owner rather
+	// than through the connection wrapper.
+	assets := database.NewAssets(db)
 	if server == nil || db == nil {
 		return
 	}
@@ -37,7 +40,7 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 			return textResult("错误: "+err.Error(), true), nil
 		}
 		access, owner, global := assetAccessFromToolContext(ctx, "asset:write")
-		result, err := db.UpsertAssets([]*store.Asset{asset}, owner, global)
+		result, err := assets.UpsertAssets([]*store.Asset{asset}, owner, global)
 		if err != nil {
 			logger.Error("Agent 保存资产失败", zap.Error(err))
 			return textResult("错误: "+err.Error(), true), nil
@@ -45,7 +48,7 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 		if result.Skipped > 0 || asset.ID == "" {
 			return textResult("资产未保存：同一资产已存在但当前用户无权更新，或目标字段为空", true), nil
 		}
-		saved, err := db.GetAsset(asset.ID, access)
+		saved, err := assets.GetAsset(asset.ID, access)
 		if err != nil {
 			return textResult("资产已保存，但无法读取结果: "+err.Error(), true), nil
 		}
@@ -64,7 +67,7 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
-		asset, err := db.GetAsset(strings.TrimSpace(strArg(args, "id")), assetAccessOnly(ctx, "asset:read"))
+		asset, err := assets.GetAsset(strings.TrimSpace(strArg(args, "id")), assetAccessOnly(ctx, "asset:read"))
 		if err != nil {
 			if err == sql.ErrNoRows {
 				return textResult("错误: 资产不存在或无权查看", true), nil
@@ -94,7 +97,7 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 			// 对话绑定项目后，项目范围是服务端强制边界；不能通过工具参数扩大或切换范围。
 			filter.ProjectID = projectID
 		}
-		items, total, err := db.ListAssets(pageSize, (page-1)*pageSize, filter, assetAccessOnly(ctx, "asset:read"))
+		items, total, err := assets.ListAssets(pageSize, (page-1)*pageSize, filter, assetAccessOnly(ctx, "asset:read"))
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
@@ -123,17 +126,17 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
 		id := strings.TrimSpace(strArg(args, "id"))
 		access := assetAccessOnly(ctx, "asset:write")
-		asset, err := db.GetAsset(id, access)
+		asset, err := assets.GetAsset(id, access)
 		if err != nil {
 			return textResult("错误: 资产不存在或无权更新", true), nil
 		}
 		if err := applyAssetPatch(asset, args); err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
-		if err := db.UpdateAsset(id, asset, access); err != nil {
+		if err := assets.UpdateAsset(id, asset, access); err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
-		updated, err := db.GetAsset(id, access)
+		updated, err := assets.GetAsset(id, access)
 		if err != nil {
 			return textResult("资产已更新，但无法读取结果: "+err.Error(), true), nil
 		}
@@ -145,7 +148,7 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 		InputSchema: map[string]interface{}{"type": "object", "properties": map[string]interface{}{"id": map[string]interface{}{"type": "string", "description": "资产 ID"}}, "required": []string{"id"}},
 	}, func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
 		id := strings.TrimSpace(strArg(args, "id"))
-		if err := db.DeleteAsset(id, assetAccessOnly(ctx, "asset:delete")); err != nil {
+		if err := assets.DeleteAsset(id, assetAccessOnly(ctx, "asset:delete")); err != nil {
 			return textResult("错误: 资产不存在或无权删除", true), nil
 		}
 		return textResult("资产已删除: "+id, false), nil
@@ -169,13 +172,13 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 			return textResult("错误: 无法确定当前扫描对话", true), nil
 		}
 		access := assetAccessOnly(ctx, "asset:write")
-		if err := db.CompleteAssetScan(id, conversationID, access); err != nil {
+		if err := assets.CompleteAssetScan(id, conversationID, access); err != nil {
 			if err == sql.ErrNoRows {
 				return textResult("错误: 资产不存在或无权回写扫描结果", true), nil
 			}
 			return textResult("错误: "+err.Error(), true), nil
 		}
-		updated, err := db.GetAsset(id, access)
+		updated, err := assets.GetAsset(id, access)
 		if err != nil {
 			return textResult("扫描结果已回写，但无法读取资产: "+err.Error(), true), nil
 		}
