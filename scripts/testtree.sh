@@ -16,14 +16,14 @@
 #   scripts/testtree.sh generate-diff  # 只做"重新生成 + 与开发树逐字节比回来"，即 CI 里那三步的本地版
 #   scripts/testtree.sh run       # sync + verify，然后在测试树里 build 并起服务
 #
-# 测试树位置：$CSAI_TESTTREE，默认 $HOME/csai-测试版
+# 测试树位置：$CSAI_TESTTREE，默认取开发树同级的“测试版-CyberStrikeAI”目录
 set -eu
 
 # 漂移比对用的临时文件（check_generated 用完即删）
 gen_diff=$(mktemp)
 
 DEV=$(git rev-parse --show-toplevel)
-TEST=${CSAI_TESTTREE:-$HOME/csai-测试版}
+TEST=${CSAI_TESTTREE:-$(cd "$DEV/.." && pwd)/测试版-CyberStrikeAI}
 
 die() { echo "testtree: $*" >&2; exit 1; }
 
