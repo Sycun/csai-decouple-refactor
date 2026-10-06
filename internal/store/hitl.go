@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cyberstrike-ai/internal/sqltime"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -437,7 +438,7 @@ func (s *HITL) PendingApprovals(limit int, access Access) ([]PendingApproval, er
 			id,
 			conversation_id,
 			tool_name,
-			COALESCE(CAST(strftime('%s', created_at) AS INTEGER), 0)
+			`+sqltime.SecondsOrNull("created_at")+`
 		FROM hitl_interrupts
 		WHERE status = 'pending'
 	`, []any{}, "conversation_id", access)

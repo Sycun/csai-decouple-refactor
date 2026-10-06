@@ -1224,8 +1224,18 @@ CSAI_WRITE_OPENAPI_GOLDEN=1 go test ./internal/handler -run TestOpenAPIOperation
 出现在 `store/hitl.go:440`、`store/execution.go:44,47`、`store/vulnerability.go:51,53`，
 而 `strftime('%s', <列>) > strftime('%s', ?)` 出现在 `database/sqltime.go:15-16`。
 **同一件事两个入口**，且参数编码不同（绑定整数秒 vs 绑定 UTC 字符串）。
-所以先做一次归口（唯一的比较表达式 + 唯一的参数编码，配真库对照测试与"别处不许再出现该表达式"的门禁），
-再谈 `audit_logs`；`AuditStore` 里混着的存在性查询也要先按表拆开。
+**这一条已经做完（2026-10-06 同晚）**：新建 `internal/sqltime`，四个入口
+`UTC` / `Compare` / `Seconds` / `SecondsOrNull`，两处旧写法都从它发出——
+`database/sqltime.go` 的两个私有工具退化成一行委托（11 个调用点不动、编码不变），
+`store/{execution,vulnerability,hitl}.go` 的五处字面量改成拼接。
+参数编码为什么**故意保留两种**：一个调用点绑什么由它已经存进占位符的东西决定，
+统一它要改的是数据写法而不是表达式写法，那是另一件事、另一刀。
+漂移怎么证的：`internal/sqltime/sqltime_test.go` 把四条**逐字节等于搬迁前**的 SQL 字面量钉住
+（改动一个字节就红），加上 `UTC` 的时区无关用例；防回潮用
+`TestSQLiteInstantSpellingHasOneHome`——`strftime('%s'` 只许出现在 `internal/sqltime` 里
+（探针：在 `store/access.go` 抄一份即红），并已进 `make layering-check`。
+剩下两个前置条件还在：`AuditStore` 里混着的**存在性查询**要先按表拆开，
+`database.AuditLog` / `ListAuditLogsFilter` 两个类型有 5 个文件在用要一起搬。
 
 **仍然没有做的**：包内二进制的**制品签名链**（现在靠声明+双向核对+摘要撤销，没有 Ed25519 覆盖可执行文件）；
 netns/seccomp 级硬出网边界（插件仍走宿主侧 CONNECT 代理 + `StrictEgress`，这是代理白名单不是内核边界）；

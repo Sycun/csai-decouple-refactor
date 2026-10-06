@@ -4,17 +4,16 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	"cyberstrike-ai/internal/sqltime"
 )
 
-// formatSQLiteUTC stores instants as UTC RFC3339 for consistent SQLite reads/writes.
-func formatSQLiteUTC(t time.Time) string {
-	return t.UTC().Format(time.RFC3339Nano)
-}
+// formatSQLiteUTC and sqliteEpochGE are one-line delegations: the only spellings of these two
+// expressions live in internal/sqltime, and every call site in this package keeps its own parameter
+// encoding.
+func formatSQLiteUTC(t time.Time) string { return sqltime.UTC(t) }
 
-// sqliteEpochGE returns SQL comparing column to param as Unix seconds (timezone-safe).
-func sqliteEpochGE(column, op string) string {
-	return "strftime('%s', " + column + ") " + op + " strftime('%s', ?)"
-}
+func sqliteEpochGE(column, op string) string { return sqltime.Compare(column, op) }
 
 // ParseRFC3339Time parses API/query timestamps (RFC3339 or RFC3339Nano).
 func ParseRFC3339Time(value string) (time.Time, error) {

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cyberstrike-ai/internal/sqltime"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -41,10 +42,10 @@ func (e *Execution) FailedSince(sinceSec int64, limit int) ([]FailedExecution, e
 		SELECT
 			id,
 			tool_name,
-			COALESCE(CAST(strftime('%s', start_time) AS INTEGER), 0)
+			`+sqltime.SecondsOrNull("start_time")+`
 		FROM tool_executions
 		WHERE status = 'failed'
-		  AND CAST(strftime('%s', start_time) AS INTEGER) > ?
+		  AND `+sqltime.Seconds("start_time")+` > ?
 		ORDER BY start_time DESC
 		LIMIT ?
 	`, sinceSec, limit)
