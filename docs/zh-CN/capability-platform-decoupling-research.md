@@ -1799,9 +1799,22 @@ origin  https://github.com/AIPentest/CyberStrikeAI.git  # 上游父仓库，只�
    再往后才是 `internal/database` 那 320 个方法（**分层裸 SQL 已归零**：`internal/knowledge` 是
    `internal/handler` 之后最后一个在两个自有层之外写 SQL 的包，见 §11「P6 数据层第十一片」；
    剩下的 SQL 全在主人手里——`internal/database` 429 处、`internal/store` 87 处，
-   下一刀从这个连接包装自己按域拆开、以及把 `database.DB` 里内嵌的 `*sql.DB` 收掉开始）：
-   按文件数排下来的大水面是 `conversation.go 48 / c2.go 47 / rbac.go 40 / monitor.go 22 / batch_task.go 22`
-   （`wc` 复验：`for f in internal/database/*.go; do ...` 数 `*DB` 接收者），
+   下一刀从这个连接包装自己按域拆开开始）：按 `*DB` 接收者当场数的大水面是
+   **`conversation.go 48 / c2.go 47 / rbac.go 40 / monitor.go 22 / batch_task.go 22 / project.go 18 / asset.go 18`**，
+   复现命令：`for f in internal/database/*.go; do case "$f" in *_test.go) continue;; esac; n=$(grep -cE '^func \([a-zA-Z_]+ \*DB\)' "$f"); [ "$n" -gt 0 ] && printf "%4d %s\n" "$n" "$f"; done | sort -rn`，
+   **合计 308**。第十六刀之后另发现一条**排序约束**，值得排在下一轮第一位：
+   `vulnerability_alert_subscriptions` + `vulnerability_alert_deliveries` 这两张表（8 个方法）**不能**
+   先于 `vulnerabilities`（11 个方法）单独搬——`ListDueVulnerabilityAlertDeliveries` 的返回体里带着
+   整条 `Vulnerability` 行结构（12 个字段、handler 与 MCP 两侧都消费它），先把提醒表搬走就会让 store
+   反向依赖 `internal/database` 的行类型，层次直接违反 `make arch-lint`。
+   所以漏洞域必须**一次搬两个文件**（19 个方法、`store.Vulnerability` 已在位、只差行结构体与 3 个消费者），
+   搬完才能把 `robot_user_bindings` 补进归属清单（现在为这条 JOIN 故意没认领，原因写在
+   `internal/store/ownership_test.go` 上方）。
+   其余小文件里 `c2_payload.go`(2) / `tool_execution_args_lookup.go`(1) / `tool_guard_migration.go`(1)
+   是最后几个"单域小文件"，各 1-2 个方法即可整文件删掉；
+   `storage_activity.go` / `plantask.go` / `project_dashboard.go` 读的是**别人家**的表
+   （conversations / projects / process_details），按"以表定主人"应当随会话与项目那两片一起走，
+   先搬只会造出第二个写者。
    Eino 收到 ≤1 包、session 事件溯源。
 3. 需要你插队的只有一件：**§10 决策项 1**（`agent:local-execute` 是否作为阻断项立即处理），
    它决定社区制品的攻击面；其余决策项可以在 P4/P5 动工前再定。
