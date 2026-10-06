@@ -97,7 +97,7 @@ precommit: fmt-check vet test-race lint arch-lint
 ## 数字来自 `go test -count=1 -v -run TestEinoImportsOnlyShrink ./internal/layering/` 的日志。
 .PHONY: layering-check
 layering-check:
-	$(GO) test -count=1 -run 'TestEinoImportsOnlyShrink|TestHandler|TestNarrowedFields|TestDatabaseSurfaceOnlyShrinks|TestDatabaseSurfaceHasNoUnreachableMethods|TestConsumerSurfacesDeclareOnlyCalledMethods|TestSQLiteInstantSpellingHasOneHome' ./internal/layering/
+	$(GO) test -count=1 -run 'TestEinoImportsOnlyShrink|TestHandler|TestNarrowedFields|TestDatabaseSurfaceOnlyShrinks|TestDatabaseSurfaceHasNoUnreachableMethods|TestConsumerSurfacesDeclareOnlyCalledMethods|TestSQLiteInstantSpellingHasOneHome|TestRawSQLOutsideDataAndStoreLayersOnlyShrinks' ./internal/layering/
 
 .PHONY: wiring-check
 wiring-check:

@@ -1343,6 +1343,30 @@ store 侧 6 条真库用例（前缀级联删除、子树改名带同一套 `LIK
 `/api/audit/logs`、`/api/audit/summary`、`/api/skills/stats`、`/api/chat-uploads` 全部 200；
 `sqlite_master` 里 `audit_logs` + 四条 `idx_audit_logs_*` 都在。
 
+### 上帝对象的"最后一层可达"被量出来了（2026-10-06，第八片之后）
+
+`internal/database.DB` **仍然是 `struct { *sql.DB; ... }`**（`database.go:48-49`）——
+嵌入意味着"任何持有 `*database.DB` 的包都能对任意表写 SQL"。前七片靠窄接口 + `database.Narrow`
+把 handler 层的可达收掉了（`h.db.Exec/Query/...` 在 `internal/handler` 已归零），
+但嵌入本身还在。用**接收者形状**重新量了一遍（`(db|d|conn|sqlDB)\.(Exec|Query|QueryRow|Begin|Prepare|MustExec)\(`，
+遍历域 = `internal/` + `cmd/` 全部非测试文件，**排除** `internal/database/` 与 `internal/store/`
+——这两层写 SQL 是设计在起作用而不是泄漏）：
+
+**30 条，集中在 3 个文件，全在 `internal/knowledge`**：`manager.go` 24、`schema_migrate.go` 3、`indexer.go` 3。
+（`internal/security/process_scope.go:84` 的 `scope.guard.Prepare(cmd)` 是同类正则的误报，
+用接收者名单把它排除，而不是放宽判据。）
+
+新门禁 `TestRawSQLOutsideDataAndStoreLayersOnlyShrinks` 把这三行数字钉成**每文件上限、只准降**，
+并且**没在清单里的新文件一旦出现这种调用就红**（探针：在 `handler/audit.go` 加一条
+`db.QueryRow(...)` → 报 "a file not reviewed for this list"）。已进 `make layering-check`。
+
+**下一片因此是明确的**：把 `internal/knowledge` 那 30 条抽进 `internal/store/knowledge.go`
+（knowledge 自己的表：`knowledge_items` / `knowledge_embeddings` / schema 迁移），
+数字降到 0 之后，才能真正谈"把 `*sql.DB` 从 `DB` 里拆出来不再嵌入"——
+那需要先把**没有别的句柄可拿**的包全部转成窄接口或 store，否则拆嵌入就是编译灾难。
+门禁改动的纪律：**改完 Makefile 必须跑那个 target 本身**（这行引号我拼错过两次，
+`go test` 直接跑是发现不了的，只有 `make test-gates` 会撞）。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
