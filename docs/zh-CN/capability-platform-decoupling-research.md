@@ -1831,6 +1831,52 @@ SQL 构造器删掉了——从 `git show HEAD:internal/database/vulnerability.g
 按第十九刀定下的流程重读了全部被改到的注释行，孤儿注释与 `store` 包里那两句指向已改标题的
 文档引用一并删改。**注释不在任何门禁射程内这件事，是这两刀连续撞上的同一个坑。**
 
+### P6 第二十一刀（前半）—— 搬查询之前先修好它：升级库里的漏洞行从列表里消失
+
+第二十刀把 11 个方法标成"下一刀纯机械搬迁"，真搬之前先照 `RecentFindings` 那条规矩查了一遍
+**同一类缺陷是否也在记录读里**，结论：**在，而且比摘要那回更严重**。
+
+`vulnerabilities` 表里有 **7** 列可为 NULL，却在两条 SELECT 里**没有 COALESCE**、直接扫进
+`string`：`description`、`conversation_tag`、`task_tag`、`vulnerability_type`、`target`、
+`impact`、`recommendation`。它们为 NULL 有两条来路，都不是假设：
+① `conversation_tag`/`task_tag`/`project_id`/`preconditions`/`reproduction_steps`/`evidence`/
+`retest_notes` 是 `ALTER TABLE ... ADD COLUMN` 后加的（`database.go:1455-1461`），
+**升级过的库里旧行这些列就是 NULL**；
+② 本仓自己的表重建迁移（`database.go:1376-1390`）把旧表逐列搬进新表时，**只给其中 4 列写了
+`COALESCE(x,'')`**，`description`、`conversation_tag`、`task_tag`、`vulnerability_type`、`target`、
+`impact`、`recommendation` 原样搬运——这段迁移本身就是"NULL 是真实存在的状态"的最硬证据。
+新建库走 `CreateVulnerability` 永远绑值，所以从零装机看不出问题。
+
+- 列表读对 scan error 的处理是 `db.logger.Warn` + `continue`——这些行**从列表、
+  从批量删除的候选、从导出里消失**，只留一行 warning；
+  而 `GetVulnerabilityStatsForAccess` 的 `total` 是 SQL 数出来的，**统计说有几条、列表一条不显示**，
+  这就是它一直没人看见的原因。
+- 单条读更响：一个确实存在的 id 回答 `获取漏洞失败`。
+
+**修复**：两条 SELECT 的这 7 列全部 COALESCE 成 `''`；列表循环里 scan error 改为
+`return err` 并补 `rows.Err()`（COALESCE 之后这条分支只在"表和查询对不上"时才可能进，
+继续 skip 等于把结构故障变成少几条结果）。`zap` 在该文件不再有引用，import 一并删除。
+
+**回归测试**（`internal/database/vulnerability_legacy_row_test.go`，真库、零 mock）：
+用生产 schema（`database.NewDB`）插一条"升级形状"的行——只给 NOT NULL 列赋值，
+并在断言前先**验证那五列真的是 NULL**（否则夹具就不再复现升级形状了，这条自检是防夹具比浏览器聪明
+那一类的）；断言列表返回它、详情读得到它、`total` 与列表**一致地**都是 1；
+另设一条"有值的行必须把值读回来"的反向用例，防止 COALESCE 把真 tag 抹成空串。
+
+**先红后绿**：修复前该测试**如实红在**`list returned 0 rows [], want the legacy finding`。
+两个方向的探针（注入即红 / 撤销即绿）：① 只把**详情**那条 SELECT 的两列 COALESCE 摘掉 →
+`detail read of an existing finding failed: ... converting NULL to string is unsupported`；
+② 只把**列表**那条摘掉 → `list: 扫描漏洞记录失败: ... column index 7, name "conversation_tag"`。
+两条红话不同，说明测试分别盯住了两次读；恢复后绿。
+**探针也否证了一件事**：把 `return err` 换回 `continue` 之后测试仍然绿——因为 COALESCE 已经让
+这一分支不可达。所以本刀的测试证明的是**查询**，不是那句错误处理；文档不许把它写成"测试覆盖了错误分支"。
+
+**同一类还留在原地的两处**（本片没动，如实记下）：`GetVulnerabilityStatsForAccess` 的两个
+GROUP BY 循环、`GetVulnerabilityFilterOptionsForAccess` 的 `collect` 仍是
+`scan err → continue` 且不读 `rows.Err()`。它们扫的列 NOT NULL 或已被
+`IS NOT NULL` 过滤，**升级形状进不去**，所以不是同一个缺陷；要改的动机是"少一个吞错的循环"，
+属于第二十一刀后半搬迁时顺手做，不能算作已修。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
