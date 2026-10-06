@@ -24,7 +24,7 @@ func TestMCPToolAuthorizerEnforcesPermissionAndResource(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	user, err := db.CreateRBACUser("mcp-user", "MCP User", "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser("mcp-user", "MCP User", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestMCPToolAuthorizerEnforcesPermissionAndResource(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := db.AssignResourceToUser(user.ID, "webshell", "ws_allowed"); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "webshell", "ws_allowed"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -66,7 +66,7 @@ func TestMCPToolAuthorizerEnforcesConversationProjectBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	user, err := db.CreateRBACUser("boundary-user", "Boundary User", "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser("boundary-user", "Boundary User", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestMCPToolAuthorizerEnforcesConversationProjectBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{wsProject.ID, wsUnbound.ID} {
-		if err := db.AssignResourceToUser(user.ID, "webshell", id); err != nil {
+		if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "webshell", id); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -102,7 +102,7 @@ func TestMCPToolAuthorizerEnforcesConversationProjectBoundary(t *testing.T) {
 	if err := database.NewC2(db).CreateC2Listener(listener); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AssignResourceToUser(user.ID, "c2_listener", listener.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "c2_listener", listener.ID); err != nil {
 		t.Fatal(err)
 	}
 	session := &store.C2Session{ID: "s_project", ListenerID: listener.ID, ImplantUUID: "implant-project", Status: "active", FirstSeenAt: now, LastCheckIn: now}
@@ -175,7 +175,7 @@ func TestMCPExecutionControlAuthorizationUsesExecutionScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	user, err := db.CreateRBACUser("exec-user", "Exec User", "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser("exec-user", "Exec User", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestMCPAssetToolAuthorizationUsesAssetPermissionsAndScope(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	user, err := db.CreateRBACUser("asset-user", "Asset User", "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser("asset-user", "Asset User", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

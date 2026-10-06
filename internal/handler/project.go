@@ -29,6 +29,7 @@ func clampProjectDescription(s string) string {
 // ProjectHandler 项目管理处理器。
 type ProjectHandler struct {
 	db     database.ProjectStore
+	rbac   *store.RBAC
 	facts  *store.Facts       // 黑板两张表的账本：事实与边都从它读写，不再经过连接包装
 	chain  *store.AttackChain // 把对话攻击链沉淀成项目事实时，节点与边从这张表读
 	logger *zap.Logger
@@ -36,7 +37,7 @@ type ProjectHandler struct {
 
 // NewProjectHandler 创建项目管理处理器。
 func NewProjectHandler(db *database.DB, logger *zap.Logger) *ProjectHandler {
-	return &ProjectHandler{db: database.Narrow[database.ProjectStore](db), facts: database.NewFacts(db), chain: newAttackChainStore(db), logger: logger}
+	return &ProjectHandler{db: database.Narrow[database.ProjectStore](db), rbac: database.NewRBAC(db), facts: database.NewFacts(db), chain: newAttackChainStore(db), logger: logger}
 }
 
 type createProjectRequest struct {
@@ -75,8 +76,8 @@ func (h *ProjectHandler) CreateProject(c *gin.Context) {
 		return
 	}
 	if session, ok := security.CurrentSession(c); ok {
-		_ = h.db.SetResourceOwner("project", created.ID, session.UserID)
-		_ = h.db.AssignResourceToUser(session.UserID, "project", created.ID)
+		_ = h.rbac.SetResourceOwner("project", created.ID, session.UserID)
+		_ = h.rbac.AssignResourceToUser(session.UserID, "project", created.ID)
 	}
 	c.JSON(http.StatusOK, created)
 }
@@ -646,8 +647,8 @@ func (h *ProjectHandler) PromoteAttackChain(c *gin.Context) {
 	projectID := c.Param("id")
 	conversationID := c.Param("conversationId")
 	session, ok := security.CurrentSession(c)
-	if !ok || !h.db.UserCanAccessResource(session.UserID, session.Scope, "project", projectID) ||
-		!h.db.UserCanAccessResource(session.UserID, session.Scope, "conversation", conversationID) {
+	if !ok || !h.rbac.UserCanAccessResource(session.UserID, session.Scope, "project", projectID) ||
+		!h.rbac.UserCanAccessResource(session.UserID, session.Scope, "conversation", conversationID) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问目标项目或来源对话"})
 		return
 	}

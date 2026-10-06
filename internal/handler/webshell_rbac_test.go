@@ -108,7 +108,7 @@ func setupWebshellRBACTest(t *testing.T) (*database.DB, *database.RBACUser, *sto
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	user, err := db.CreateRBACUser("operator1", "Operator One", "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser("operator1", "Operator One", "hash", true, nil)
 	if err != nil {
 		t.Fatalf("CreateRBACUser: %v", err)
 	}
@@ -134,7 +134,7 @@ func setupWebshellRBACTest(t *testing.T) (*database.DB, *database.RBACUser, *sto
 	if err := database.NewWebshell(db).Create(hidden); err != nil {
 		t.Fatalf("CreateWebshellConnection hidden: %v", err)
 	}
-	if err := db.AssignResourceToUser(user.ID, "webshell", allowed.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "webshell", allowed.ID); err != nil {
 		t.Fatalf("AssignResourceToUser: %v", err)
 	}
 	return db, user, allowed, hidden

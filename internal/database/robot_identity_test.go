@@ -21,7 +21,7 @@ func TestRobotBindingCodeIsSingleUseAndPermissionsAreResolvedLive(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := db.BootstrapRBAC("hash", security.PermissionCatalog); err != nil {
+	if err := database.NewRBAC(db).BootstrapRBAC("hash", security.PermissionCatalog); err != nil {
 		t.Fatal(err)
 	}
 	// Start-up creates these tables through the store that owns them; a test that builds the data layer
@@ -30,7 +30,7 @@ func TestRobotBindingCodeIsSingleUseAndPermissionsAreResolvedLive(t *testing.T) 
 	if err := identity.EnsureSchema(); err != nil {
 		t.Fatalf("ensure robot identity schema: %v", err)
 	}
-	user, err := db.CreateRBACUser("bound-user", "Bound User", "hash", true, []string{database.RBACSystemRoleOperator})
+	user, err := database.NewRBAC(db).CreateRBACUser("bound-user", "Bound User", "hash", true, []string{database.RBACSystemRoleOperator})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,14 +49,14 @@ func TestRobotBindingCodeIsSingleUseAndPermissionsAreResolvedLive(t *testing.T) 
 	if err != nil || !found || resolved != user.ID {
 		t.Fatalf("resolve bound user: %q found=%v err=%v", resolved, found, err)
 	}
-	access, err := db.ResolveRBACAccess(resolved)
+	access, err := database.NewRBAC(db).ResolveRBACAccess(resolved)
 	if err != nil || !access.Permissions["agent:execute"] {
 		t.Fatalf("resolved access does not include live role permissions: %#v err=%v", access, err)
 	}
 	// Disabling the account takes the robot's authority away without deleting the binding row: the
 	// resolution joins on enabled=1 rather than the binding being unmade.
 	disabled := false
-	if err := db.UpdateRBACUser(user.ID, user.DisplayName, &disabled, nil); err != nil {
+	if err := database.NewRBAC(db).UpdateRBACUser(user.ID, user.DisplayName, &disabled, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, found, err := identity.ResolveBoundUser("lark", "t:tenant|u:user"); err != nil || found {
@@ -70,18 +70,18 @@ func TestRobotBindingCodeExpiryAndOwnerScopedRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := db.BootstrapRBAC("hash", security.PermissionCatalog); err != nil {
+	if err := database.NewRBAC(db).BootstrapRBAC("hash", security.PermissionCatalog); err != nil {
 		t.Fatal(err)
 	}
 	identity := store.NewRobotIdentity(db.DB)
 	if err := identity.EnsureSchema(); err != nil {
 		t.Fatal(err)
 	}
-	u1, err := db.CreateRBACUser("binding-owner", "Owner", "hash", true, nil)
+	u1, err := database.NewRBAC(db).CreateRBACUser("binding-owner", "Owner", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	u2, err := db.CreateRBACUser("binding-other", "Other", "hash", true, nil)
+	u2, err := database.NewRBAC(db).CreateRBACUser("binding-other", "Other", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 )
@@ -18,6 +19,8 @@ func RBACMiddleware(db *database.DB) gin.HandlerFunc {
 type RBACDenyHook func(c *gin.Context, reason, permission string)
 
 func RBACMiddlewareWithDenyHook(db *database.DB, denyHook RBACDenyHook) gin.HandlerFunc {
+	// 语句在 store.RBAC 里；连接包装只剩构造它这一件事。
+	rbac := database.NewRBAC(db)
 	return func(c *gin.Context) {
 		permission := permissionForRequest(c.Request.Method, c.FullPath())
 		if permission == "" {
@@ -47,7 +50,7 @@ func RBACMiddlewareWithDenyHook(db *database.DB, denyHook RBACDenyHook) gin.Hand
 		session.Scope = session.ScopeFor(permission)
 		c.Set(ContextSessionKey, session)
 		c.Set(ContextUserScopeKey, session.Scope)
-		if db != nil && !resourceAllowed(c, db) {
+		if rbac != nil && !resourceAllowed(c, rbac) {
 			if denyHook != nil {
 				denyHook(c, "resource_denied", permission)
 			}
@@ -228,7 +231,7 @@ func crudPermission(method, module string) string {
 	}
 }
 
-func resourceAllowed(c *gin.Context, db *database.DB) bool {
+func resourceAllowed(c *gin.Context, rbac *store.RBAC) bool {
 	session, ok := CurrentSession(c)
 	if !ok || session.Scope == database.RBACScopeAll {
 		return ok
@@ -252,29 +255,29 @@ func resourceAllowed(c *gin.Context, db *database.DB) bool {
 		// not silently become a process-global administrative capability.
 		return session.Scope == database.RBACScopeAll
 	case strings.HasPrefix(path, "/projects/:id"):
-		return db.UserCanAccessResource(session.UserID, session.Scope, "project", c.Param("id"))
+		return rbac.UserCanAccessResource(session.UserID, session.Scope, "project", c.Param("id"))
 	case strings.HasPrefix(path, "/conversations/:id"):
-		return db.UserCanAccessResource(session.UserID, session.Scope, "conversation", c.Param("id"))
+		return rbac.UserCanAccessResource(session.UserID, session.Scope, "conversation", c.Param("id"))
 	case strings.HasPrefix(path, "/messages/:id/process-details"):
-		return db.UserCanAccessMessage(session.UserID, session.Scope, c.Param("id"))
+		return rbac.UserCanAccessMessage(session.UserID, session.Scope, c.Param("id"))
 	case strings.HasPrefix(path, "/process-details/:id"):
-		return db.UserCanAccessProcessDetail(session.UserID, session.Scope, c.Param("id"))
+		return rbac.UserCanAccessProcessDetail(session.UserID, session.Scope, c.Param("id"))
 	case strings.HasPrefix(path, "/attack-chain/:conversationId"):
-		return db.UserCanAccessResource(session.UserID, session.Scope, "conversation", c.Param("conversationId"))
+		return rbac.UserCanAccessResource(session.UserID, session.Scope, "conversation", c.Param("conversationId"))
 	case strings.HasPrefix(path, "/webshell/connections/:id"):
-		return db.UserCanAccessResource(session.UserID, session.Scope, "webshell", c.Param("id"))
+		return rbac.UserCanAccessResource(session.UserID, session.Scope, "webshell", c.Param("id"))
 	case strings.HasPrefix(path, "/batch-tasks/:queueId"):
-		return db.UserCanAccessResource(session.UserID, session.Scope, "batch_task", c.Param("queueId"))
+		return rbac.UserCanAccessResource(session.UserID, session.Scope, "batch_task", c.Param("queueId"))
 	case strings.HasPrefix(path, "/vulnerabilities/:id"):
-		return db.UserCanAccessResource(session.UserID, session.Scope, "vulnerability", c.Param("id"))
+		return rbac.UserCanAccessResource(session.UserID, session.Scope, "vulnerability", c.Param("id"))
 	case strings.HasPrefix(path, "/assets/:id"):
-		return db.UserCanAccessResource(session.UserID, session.Scope, "asset", c.Param("id"))
+		return rbac.UserCanAccessResource(session.UserID, session.Scope, "asset", c.Param("id"))
 	case strings.HasPrefix(path, "/c2/listeners/:id"):
-		return db.UserCanAccessResource(session.UserID, session.Scope, "c2_listener", c.Param("id"))
+		return rbac.UserCanAccessResource(session.UserID, session.Scope, "c2_listener", c.Param("id"))
 	case strings.HasPrefix(path, "/c2/sessions/:id"):
-		return db.UserCanAccessResource(session.UserID, session.Scope, "c2_session", c.Param("id"))
+		return rbac.UserCanAccessResource(session.UserID, session.Scope, "c2_session", c.Param("id"))
 	case strings.HasPrefix(path, "/c2/tasks/:id"):
-		return db.UserCanAccessResource(session.UserID, session.Scope, "c2_task", c.Param("id"))
+		return rbac.UserCanAccessResource(session.UserID, session.Scope, "c2_task", c.Param("id"))
 	default:
 		return true
 	}

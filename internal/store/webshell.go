@@ -273,6 +273,7 @@ func (s *Webshell) MigrateConnectionsTable() error {
 		{name: "project_id", stmt: "ALTER TABLE webshell_connections ADD COLUMN project_id TEXT"},
 		{name: "encoding", stmt: "ALTER TABLE webshell_connections ADD COLUMN encoding TEXT NOT NULL DEFAULT ''"},
 		{name: "os", stmt: "ALTER TABLE webshell_connections ADD COLUMN os TEXT NOT NULL DEFAULT ''"},
+		{name: "owner_user_id", stmt: "ALTER TABLE webshell_connections ADD COLUMN owner_user_id TEXT"},
 	}
 
 	for _, col := range columns {

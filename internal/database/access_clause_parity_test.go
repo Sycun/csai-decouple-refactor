@@ -54,12 +54,12 @@ func newFindingParityBase(t *testing.T) (*database.DB, map[string]string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := db.BootstrapRBAC("hash", security.PermissionCatalog); err != nil {
+	if err := database.NewRBAC(db).BootstrapRBAC("hash", security.PermissionCatalog); err != nil {
 		t.Fatal(err)
 	}
 	users := map[string]string{}
 	for _, name := range []string{"finding-owner", "finding-assigned", "project-owner", "project-assigned", "conv-owner", "conv-assigned", "nobody"} {
-		u, err := db.CreateRBACUser(name, name, "hash", true, nil)
+		u, err := database.NewRBAC(db).CreateRBACUser(name, name, "hash", true, nil)
 		if err != nil {
 			t.Fatalf("create user %s: %v", name, err)
 		}
@@ -70,28 +70,28 @@ func newFindingParityBase(t *testing.T) (*database.DB, map[string]string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetResourceOwner("project", projectOwned.ID, users["project-owner"]); err != nil {
+	if err := database.NewRBAC(db).SetResourceOwner("project", projectOwned.ID, users["project-owner"]); err != nil {
 		t.Fatal(err)
 	}
 	projectAssigned, err := db.CreateProject(&database.Project{Name: "assigned project"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AssignResourceToUser(users["project-assigned"], "project", projectAssigned.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(users["project-assigned"], "project", projectAssigned.ID); err != nil {
 		t.Fatal(err)
 	}
 	convOwned, err := db.CreateConversation("owned conversation", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetResourceOwner("conversation", convOwned.ID, users["conv-owner"]); err != nil {
+	if err := database.NewRBAC(db).SetResourceOwner("conversation", convOwned.ID, users["conv-owner"]); err != nil {
 		t.Fatal(err)
 	}
 	convAssigned, err := db.CreateConversation("assigned conversation", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AssignResourceToUser(users["conv-assigned"], "conversation", convAssigned.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(users["conv-assigned"], "conversation", convAssigned.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -117,12 +117,12 @@ func newFindingParityBase(t *testing.T) (*database.DB, map[string]string) {
 			t.Fatalf("seed %s: %v", s.title, err)
 		}
 		if s.owner != "" {
-			if err := db.SetResourceOwner("vulnerability", v.ID, s.owner); err != nil {
+			if err := database.NewRBAC(db).SetResourceOwner("vulnerability", v.ID, s.owner); err != nil {
 				t.Fatalf("owner %s: %v", s.title, err)
 			}
 		}
 		for _, a := range s.assignees {
-			if err := db.AssignResourceToUser(a, "vulnerability", v.ID); err != nil {
+			if err := database.NewRBAC(db).AssignResourceToUser(a, "vulnerability", v.ID); err != nil {
 				t.Fatalf("assign %s: %v", s.title, err)
 			}
 		}

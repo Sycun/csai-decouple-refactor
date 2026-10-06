@@ -39,13 +39,15 @@ type depsAdapter struct {
 	c2 *store.C2
 	// executions answers the tool-execution access question; the SQL lives in store.Monitor.
 	executions *store.Monitor
+	// rbac answers the resource-visibility question; the SQL lives in store.RBAC.
+	rbac *store.RBAC
 }
 
 func (d depsAdapter) CanAccessResource(userID string, scope capability.Scope, resourceType, id string) bool {
 	if d.db == nil {
 		return false
 	}
-	return d.db.UserCanAccessResource(userID, string(scope), resourceType, id)
+	return d.rbac.UserCanAccessResource(userID, string(scope), resourceType, id)
 }
 
 func (d depsAdapter) CanAccessToolExecution(userID string, scope capability.Scope, executionID string) bool {
@@ -257,7 +259,7 @@ func authorizeWithCapability(ctx context.Context, db *database.DB, toolName stri
 	if p, ok := authctx.PrincipalFromContext(ctx); ok {
 		ctx = capability.WithPrincipal(ctx, principalAdapter{p: p})
 	}
-	ctx = capability.WithRequestDeps(ctx, depsAdapter{db: db, c2: database.NewC2(db), executions: database.NewMonitor(db)})
+	ctx = capability.WithRequestDeps(ctx, depsAdapter{db: db, c2: database.NewC2(db), executions: database.NewMonitor(db), rbac: database.NewRBAC(db)})
 	decision := evaluatorFor().Decide(ctx, toolName, args)
 	switch decision.Outcome {
 	case capability.OutcomeAllow:

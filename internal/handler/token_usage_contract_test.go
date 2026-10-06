@@ -56,7 +56,7 @@ func usageContractRouter(h *ConversationHandler, session *security.Session) *gin
 
 func usageContractUser(t *testing.T, db *database.DB, name string) *database.RBACUser {
 	t.Helper()
-	user, err := db.CreateRBACUser(name, name, "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser(name, name, "hash", true, nil)
 	if err != nil {
 		t.Fatalf("CreateRBACUser %s: %v", name, err)
 	}
@@ -82,7 +82,7 @@ func ownedConversation(t *testing.T, db *database.DB, user *database.RBACUser, t
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	if err := db.SetResourceOwner("conversation", conv.ID, user.ID); err != nil {
+	if err := database.NewRBAC(db).SetResourceOwner("conversation", conv.ID, user.ID); err != nil {
 		t.Fatalf("SetResourceOwner: %v", err)
 	}
 	return conv.ID
@@ -192,7 +192,7 @@ func TestUsageStatsScopesByCaller(t *testing.T) {
 
 	// Being assigned somebody's conversation reaches its usage too: the clause has four paths, not one.
 	second := ownedConversation(t, db, owner, "second")
-	if err := db.AssignResourceToUser(stranger.ID, "conversation", second); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(stranger.ID, "conversation", second); err != nil {
 		t.Fatalf("AssignResourceToUser: %v", err)
 	}
 	recordUsage(t, db, second, `{"promptTokens":1,"completionTokens":1,"totalTokens":2}`)

@@ -68,36 +68,36 @@ func TestSystemRoleBootstrapDoesNotLeakManagementReadPermissions(t *testing.T) {
 		"mcp:execute": "invoke", "mcp:write": "manage", "mcp:external:execute": "external invoke",
 		"workflow:execute": "run", "workflow:write": "manage definitions", "knowledge:write": "manage knowledge",
 	}
-	if err := db.BootstrapRBAC("hash", catalog); err != nil {
+	if err := NewRBAC(db).BootstrapRBAC("hash", catalog); err != nil {
 		t.Fatal(err)
 	}
-	viewer, err := db.CreateRBACUser("viewer-policy", "Viewer", "hash", true, []string{RBACSystemRoleViewer})
+	viewer, err := NewRBAC(db).CreateRBACUser("viewer-policy", "Viewer", "hash", true, []string{RBACSystemRoleViewer})
 	if err != nil {
 		t.Fatal(err)
 	}
-	viewerAccess, err := db.ResolveRBACAccess(viewer.ID)
+	viewerAccess, err := NewRBAC(db).ResolveRBACAccess(viewer.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !viewerAccess.Permissions["project:read"] || viewerAccess.Permissions["rbac:read"] || viewerAccess.Permissions["config:read"] || viewerAccess.Permissions["audit:read"] {
 		t.Fatalf("unexpected viewer permissions: %#v", viewerAccess.Permissions)
 	}
-	auditor, err := db.CreateRBACUser("auditor-policy", "Auditor", "hash", true, []string{RBACSystemRoleAuditor})
+	auditor, err := NewRBAC(db).CreateRBACUser("auditor-policy", "Auditor", "hash", true, []string{RBACSystemRoleAuditor})
 	if err != nil {
 		t.Fatal(err)
 	}
-	auditorAccess, err := db.ResolveRBACAccess(auditor.ID)
+	auditorAccess, err := NewRBAC(db).ResolveRBACAccess(auditor.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !auditorAccess.Permissions["audit:read"] || auditorAccess.Permissions["config:read"] || auditorAccess.Permissions["rbac:read"] {
 		t.Fatalf("unexpected auditor permissions: %#v", auditorAccess.Permissions)
 	}
-	operator, err := db.CreateRBACUser("operator-policy", "Operator", "hash", true, []string{RBACSystemRoleOperator})
+	operator, err := NewRBAC(db).CreateRBACUser("operator-policy", "Operator", "hash", true, []string{RBACSystemRoleOperator})
 	if err != nil {
 		t.Fatal(err)
 	}
-	operatorAccess, err := db.ResolveRBACAccess(operator.ID)
+	operatorAccess, err := NewRBAC(db).ResolveRBACAccess(operator.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,18 +115,18 @@ func TestSystemRoleBootstrapDoesNotLeakManagementReadPermissions(t *testing.T) {
 func TestPermissionScopeDoesNotWidenAcrossUnrelatedRoles(t *testing.T) {
 	db := newRBACTestDB(t)
 	catalog := map[string]string{"auth:self": "self", "project:read": "read", "project:write": "write", "audit:read": "audit"}
-	if err := db.BootstrapRBAC("hash", catalog); err != nil {
+	if err := NewRBAC(db).BootstrapRBAC("hash", catalog); err != nil {
 		t.Fatal(err)
 	}
-	ownWrite, err := db.UpsertRBACRole("", "own-writer", "", store.ScopeOwn, []string{"project:write"})
+	ownWrite, err := NewRBAC(db).UpsertRBACRole("", "own-writer", "", store.ScopeOwn, []string{"project:write"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	user, err := db.CreateRBACUser("mixed-scope", "Mixed", "hash", true, []string{RBACSystemRoleAuditor, ownWrite.ID})
+	user, err := NewRBAC(db).CreateRBACUser("mixed-scope", "Mixed", "hash", true, []string{RBACSystemRoleAuditor, ownWrite.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	access, err := db.ResolveRBACAccess(user.ID)
+	access, err := NewRBAC(db).ResolveRBACAccess(user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,16 +143,16 @@ func TestPermissionScopeDoesNotWidenAcrossUnrelatedRoles(t *testing.T) {
 
 func TestRoleRejectsUnknownPermission(t *testing.T) {
 	db := newRBACTestDB(t)
-	if err := db.BootstrapRBAC("hash", map[string]string{"auth:self": "self"}); err != nil {
+	if err := NewRBAC(db).BootstrapRBAC("hash", map[string]string{"auth:self": "self"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.UpsertRBACRole("", "future-role", "", RBACScopeAssigned, []string{"future:permission"}); err == nil {
+	if _, err := NewRBAC(db).UpsertRBACRole("", "future-role", "", RBACScopeAssigned, []string{"future:permission"}); err == nil {
 		t.Fatal("unknown permission was persisted")
 	}
 	if _, err := db.Exec(`INSERT INTO rbac_permissions (key, description, created_at) VALUES ('stale:permission', '', ?)`, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.BootstrapRBAC("hash", map[string]string{"auth:self": "self"}); err != nil {
+	if err := NewRBAC(db).BootstrapRBAC("hash", map[string]string{"auth:self": "self"}); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -165,13 +165,13 @@ func TestRBACProjectAndConversationListAccess(t *testing.T) {
 	db := newRBACTestDB(t)
 	p1, _ := db.CreateProject(&Project{Name: "visible"})
 	p2, _ := db.CreateProject(&Project{Name: "hidden"})
-	if err := db.SetResourceOwner("project", p1.ID, "u1"); err != nil {
+	if err := NewRBAC(db).SetResourceOwner("project", p1.ID, "u1"); err != nil {
 		t.Fatal(err)
 	}
 	c1, _ := db.CreateConversation("visible conv", ConversationCreateMeta{ProjectID: p1.ID})
 	c2, _ := db.CreateConversation("hidden conv", ConversationCreateMeta{ProjectID: p2.ID})
-	_ = db.SetResourceOwner("conversation", c1.ID, "u1")
-	_ = db.SetResourceOwner("conversation", c2.ID, "u2")
+	_ = NewRBAC(db).SetResourceOwner("conversation", c1.ID, "u1")
+	_ = NewRBAC(db).SetResourceOwner("conversation", c2.ID, "u2")
 
 	projects, err := db.ListProjectsForAccess("", "", 50, 0, "u1", store.ScopeOwn)
 	if err != nil {
@@ -192,13 +192,13 @@ func TestRBACProjectAndConversationListAccess(t *testing.T) {
 
 func TestRBACVulnerabilityAccessInheritsProject(t *testing.T) {
 	db := newRBACTestDB(t)
-	user, err := db.CreateRBACUser("u1", "User 1", "hash", true, nil)
+	user, err := NewRBAC(db).CreateRBACUser("u1", "User 1", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	p1, _ := db.CreateProject(&Project{Name: "visible"})
 	p2, _ := db.CreateProject(&Project{Name: "hidden"})
-	if err := db.AssignResourceToUser(user.ID, "project", p1.ID); err != nil {
+	if err := NewRBAC(db).AssignResourceToUser(user.ID, "project", p1.ID); err != nil {
 		t.Fatal(err)
 	}
 	v1, _ := NewFindings(db).Create(&store.Vulnerability{ProjectID: p1.ID, Title: "v1", Severity: "high"})
@@ -211,17 +211,17 @@ func TestRBACVulnerabilityAccessInheritsProject(t *testing.T) {
 	if len(items) != 1 || items[0].ID != v1.ID {
 		t.Fatalf("vulnerabilities = %#v, want only %s; hidden %s", items, v1.ID, v2.ID)
 	}
-	if !db.UserCanAccessResource(user.ID, RBACScopeAssigned, "vulnerability", v1.ID) {
+	if !NewRBAC(db).UserCanAccessResource(user.ID, RBACScopeAssigned, "vulnerability", v1.ID) {
 		t.Fatalf("expected project assignment to allow vulnerability detail")
 	}
-	if db.UserCanAccessResource(user.ID, RBACScopeAssigned, "vulnerability", v2.ID) {
+	if NewRBAC(db).UserCanAccessResource(user.ID, RBACScopeAssigned, "vulnerability", v2.ID) {
 		t.Fatalf("unexpected access to hidden vulnerability")
 	}
 }
 
 func TestRBACConversationAccessInheritsProject(t *testing.T) {
 	db := newRBACTestDB(t)
-	user, err := db.CreateRBACUser("project-member", "Project Member", "hash", true, nil)
+	user, err := NewRBAC(db).CreateRBACUser("project-member", "Project Member", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestRBACConversationAccessInheritsProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AssignResourceToUser(user.ID, "project", project.ID); err != nil {
+	if err := NewRBAC(db).AssignResourceToUser(user.ID, "project", project.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -244,14 +244,14 @@ func TestRBACConversationAccessInheritsProject(t *testing.T) {
 	if len(rows) != 1 || rows[0].ID != conversation.ID {
 		t.Fatalf("conversations = %#v, want project conversation %s", rows, conversation.ID)
 	}
-	if !db.UserCanAccessResource(user.ID, RBACScopeAssigned, "conversation", conversation.ID) {
+	if !NewRBAC(db).UserCanAccessResource(user.ID, RBACScopeAssigned, "conversation", conversation.ID) {
 		t.Fatal("expected project assignment to allow conversation detail")
 	}
 }
 
 func TestRBACBatchResourceAssignmentValidationAndAtomicity(t *testing.T) {
 	db := newRBACTestDB(t)
-	user, err := db.CreateRBACUser("batch-member", "Batch Member", "hash", true, nil)
+	user, err := NewRBAC(db).CreateRBACUser("batch-member", "Batch Member", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,18 +267,18 @@ func TestRBACBatchResourceAssignmentValidationAndAtomicity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	options, err := db.ListAssignableRBACResources("project", "p1", 50)
+	options, err := NewRBAC(db).ListAssignableRBACResourcesPage("project", "p1", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(options) != 1 || options[0].ID != p1.ID || options[0].Label != "p1" {
 		t.Fatalf("resource options = %#v, want p1", options)
 	}
-	firstPage, err := db.ListAssignableRBACResourcesPage("project", "", 2, 0)
+	firstPage, err := NewRBAC(db).ListAssignableRBACResourcesPage("project", "", 2, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	secondPage, err := db.ListAssignableRBACResourcesPage("project", "", 2, 2)
+	secondPage, err := NewRBAC(db).ListAssignableRBACResourcesPage("project", "", 2, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,17 +292,17 @@ func TestRBACBatchResourceAssignmentValidationAndAtomicity(t *testing.T) {
 	if !seen[p1.ID] || !seen[p2.ID] || !seen[p3.ID] {
 		t.Fatalf("paged resource options missed resources: %#v", seen)
 	}
-	if _, err := db.ListAssignableRBACResources("secret_table", "", 50); err == nil {
+	if _, err := NewRBAC(db).ListAssignableRBACResourcesPage("secret_table", "", 50, 0); err == nil {
 		t.Fatal("expected unsupported picker resource type to fail")
 	}
 
-	if _, err := db.AssignResourcesToUser(user.ID, "unknown_type", []string{p1.ID}); err == nil {
+	if _, err := NewRBAC(db).AssignResourcesToUser(user.ID, "unknown_type", []string{p1.ID}); err == nil {
 		t.Fatal("expected unsupported resource type to fail")
 	}
-	if _, err := db.AssignResourcesToUser(user.ID, "project", []string{p1.ID, "missing-project"}); err == nil {
+	if _, err := NewRBAC(db).AssignResourcesToUser(user.ID, "project", []string{p1.ID, "missing-project"}); err == nil {
 		t.Fatal("expected missing resource to fail the entire batch")
 	}
-	rows, err := db.ListRBACResourceAssignments(user.ID)
+	rows, err := NewRBAC(db).ListRBACResourceAssignments(user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,21 +310,21 @@ func TestRBACBatchResourceAssignmentValidationAndAtomicity(t *testing.T) {
 		t.Fatalf("partial grants persisted after failed batch: %#v", rows)
 	}
 
-	created, err := db.AssignResourcesToUser(user.ID, "project", []string{p1.ID, p1.ID, p2.ID})
+	created, err := NewRBAC(db).AssignResourcesToUser(user.ID, "project", []string{p1.ID, p1.ID, p2.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created != 2 {
 		t.Fatalf("created = %d, want 2 unique grants", created)
 	}
-	created, err = db.AssignResourcesToUser(user.ID, "project", []string{p1.ID, p2.ID})
+	created, err = NewRBAC(db).AssignResourcesToUser(user.ID, "project", []string{p1.ID, p2.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if created != 0 {
 		t.Fatalf("idempotent retry created = %d, want 0", created)
 	}
-	rows, err = db.ListRBACResourceAssignments(user.ID)
+	rows, err = NewRBAC(db).ListRBACResourceAssignments(user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,10 +351,10 @@ func TestRBACWebshellAndBatchListAccess(t *testing.T) {
 	if err := NewWebshell(db).Create(&ws4); err != nil {
 		t.Fatal(err)
 	}
-	_ = db.SetResourceOwner("webshell", ws1.ID, "u1")
-	_ = db.SetResourceOwner("webshell", ws2.ID, "u2")
-	_ = db.SetResourceOwner("webshell", ws3.ID, "u1")
-	_ = db.SetResourceOwner("webshell", ws4.ID, "u1")
+	_ = NewRBAC(db).SetResourceOwner("webshell", ws1.ID, "u1")
+	_ = NewRBAC(db).SetResourceOwner("webshell", ws2.ID, "u2")
+	_ = NewRBAC(db).SetResourceOwner("webshell", ws3.ID, "u1")
+	_ = NewRBAC(db).SetResourceOwner("webshell", ws4.ID, "u1")
 	webshells, err := NewWebshell(db).List(store.Access{UserID: "u1", Scope: store.ScopeOwn}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -383,8 +383,8 @@ func TestRBACWebshellAndBatchListAccess(t *testing.T) {
 	if err := NewBatchTasks(db).CreateBatchQueue("q_hidden", "hidden", "", "eino_single", "manual", "", nil, "", 1, []map[string]interface{}{{"id": "t2", "message": "b"}}); err != nil {
 		t.Fatal(err)
 	}
-	_ = db.SetResourceOwner("batch_task", "q_visible", "u1")
-	_ = db.SetResourceOwner("batch_task", "q_hidden", "u2")
+	_ = NewRBAC(db).SetResourceOwner("batch_task", "q_visible", "u1")
+	_ = NewRBAC(db).SetResourceOwner("batch_task", "q_hidden", "u2")
 	queues, err := NewBatchTasks(db).ListBatchQueuesForAccess(50, 0, "all", "", "u1", store.ScopeOwn)
 	if err != nil {
 		t.Fatal(err)
@@ -536,10 +536,10 @@ func TestRBACC2AccessInheritsListener(t *testing.T) {
 	if len(events) != 1 || events[0].ID != "e_unbound" {
 		t.Fatalf("unbound events = %#v, want only e_unbound", events)
 	}
-	if !db.UserCanAccessResource("u1", store.ScopeOwn, "c2_task", "t_visible") {
+	if !NewRBAC(db).UserCanAccessResource("u1", store.ScopeOwn, "c2_task", "t_visible") {
 		t.Fatalf("expected listener ownership to allow task detail")
 	}
-	if db.UserCanAccessResource("u1", store.ScopeOwn, "c2_task", "t_hidden") {
+	if NewRBAC(db).UserCanAccessResource("u1", store.ScopeOwn, "c2_task", "t_hidden") {
 		t.Fatalf("unexpected access to hidden task")
 	}
 }
@@ -547,7 +547,7 @@ func TestRBACC2AccessInheritsListener(t *testing.T) {
 func TestRBACC2AssignedDeleteIsScoped(t *testing.T) {
 	db := newRBACTestDB(t)
 	c2store := NewC2(db)
-	user, err := db.CreateRBACUser("u1", "User 1", "hash", true, nil)
+	user, err := NewRBAC(db).CreateRBACUser("u1", "User 1", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -558,7 +558,7 @@ func TestRBACC2AssignedDeleteIsScoped(t *testing.T) {
 	if err := c2store.CreateC2Listener(&store.C2Listener{ID: "l_hidden", Name: "hidden", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9002, CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AssignResourceToUser(user.ID, "c2_listener", "l_assigned"); err != nil {
+	if err := NewRBAC(db).AssignResourceToUser(user.ID, "c2_listener", "l_assigned"); err != nil {
 		t.Fatal(err)
 	}
 	for _, row := range []struct {
@@ -609,7 +609,7 @@ func TestRBACC2AssignedDeleteIsScoped(t *testing.T) {
 
 func TestRBACAssignmentLabelsAndWeakTitles(t *testing.T) {
 	db := newRBACTestDB(t)
-	user, err := db.CreateRBACUser("label-member", "Label Member", "hash", true, nil)
+	user, err := NewRBAC(db).CreateRBACUser("label-member", "Label Member", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -621,11 +621,11 @@ func TestRBACAssignmentLabelsAndWeakTitles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.AssignResourcesToUser(user.ID, "project", []string{project.ID}); err != nil {
+	if _, err := NewRBAC(db).AssignResourcesToUser(user.ID, "project", []string{project.ID}); err != nil {
 		t.Fatal(err)
 	}
 
-	options, err := db.ListAssignableRBACResources("conversation", "", 10)
+	options, err := NewRBAC(db).ListAssignableRBACResourcesPage("conversation", "", 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -638,7 +638,7 @@ func TestRBACAssignmentLabelsAndWeakTitles(t *testing.T) {
 		}
 	}
 
-	rows, err := db.ListRBACResourceAssignments(user.ID)
+	rows, err := NewRBAC(db).ListRBACResourceAssignments(user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -652,7 +652,7 @@ func TestRBACAssignmentLabelsAndWeakTitles(t *testing.T) {
 
 func TestDeleteRBACResourceAssignmentWithDetails(t *testing.T) {
 	db := newRBACTestDB(t)
-	user, err := db.CreateRBACUser("revoke-member", "Revoke Member", "hash", true, nil)
+	user, err := NewRBAC(db).CreateRBACUser("revoke-member", "Revoke Member", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -660,10 +660,10 @@ func TestDeleteRBACResourceAssignmentWithDetails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.AssignResourcesToUser(user.ID, "project", []string{project.ID}); err != nil {
+	if _, err := NewRBAC(db).AssignResourcesToUser(user.ID, "project", []string{project.ID}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := db.ListRBACResourceAssignments(user.ID)
+	rows, err := NewRBAC(db).ListRBACResourceAssignments(user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,21 +671,21 @@ func TestDeleteRBACResourceAssignmentWithDetails(t *testing.T) {
 		t.Fatalf("assignments = %#v, want 1", rows)
 	}
 
-	deleted, err := db.DeleteRBACResourceAssignmentWithDetails(rows[0].ID)
+	deleted, err := NewRBAC(db).DeleteRBACResourceAssignmentWithDetails(rows[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if deleted.ID != rows[0].ID || deleted.UserID != user.ID || deleted.ResourceType != "project" || deleted.ResourceID != project.ID {
 		t.Fatalf("deleted assignment = %#v", deleted)
 	}
-	remaining, err := db.ListRBACResourceAssignments(user.ID)
+	remaining, err := NewRBAC(db).ListRBACResourceAssignments(user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(remaining) != 0 {
 		t.Fatalf("remaining assignments = %#v, want none", remaining)
 	}
-	if _, err := db.DeleteRBACResourceAssignmentWithDetails(rows[0].ID); err == nil {
+	if _, err := NewRBAC(db).DeleteRBACResourceAssignmentWithDetails(rows[0].ID); err == nil {
 		t.Fatal("second delete unexpectedly succeeded")
 	}
 }

@@ -23,17 +23,17 @@ func TestRobotUsersAreResourceIsolated(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Project.Enabled = true
 	h := NewRobotHandler(cfg, db, nil, zap.NewNop())
-	if err := db.BootstrapRBAC("hash", security.PermissionCatalog); err != nil {
+	if err := database.NewRBAC(db).BootstrapRBAC("hash", security.PermissionCatalog); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.identity.EnsureSchema(); err != nil {
 		t.Fatalf("ensure robot identity schema: %v", err)
 	}
-	alice, err := db.CreateRBACUser("robot-alice", "Robot Alice", "hash", true, []string{database.RBACSystemRoleOperator})
+	alice, err := database.NewRBAC(db).CreateRBACUser("robot-alice", "Robot Alice", "hash", true, []string{database.RBACSystemRoleOperator})
 	if err != nil {
 		t.Fatal(err)
 	}
-	bob, err := db.CreateRBACUser("robot-bob", "Robot Bob", "hash", true, []string{database.RBACSystemRoleOperator})
+	bob, err := database.NewRBAC(db).CreateRBACUser("robot-bob", "Robot Bob", "hash", true, []string{database.RBACSystemRoleOperator})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestRobotUsersAreResourceIsolated(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("alice's binding did not resolve: found=%v err=%v", found, err)
 	}
-	aliceAccess, err := h.db.ResolveRBACAccess(boundID)
+	aliceAccess, err := h.rbac.ResolveRBACAccess(boundID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,10 +106,10 @@ func TestRobotServiceAccountRequiresExactSenderAllowlist(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	if err := db.BootstrapRBAC("hash", security.PermissionCatalog); err != nil {
+	if err := database.NewRBAC(db).BootstrapRBAC("hash", security.PermissionCatalog); err != nil {
 		t.Fatal(err)
 	}
-	serviceUser, err := db.CreateRBACUser("robot-service-user", "Robot Service", "hash", true, []string{database.RBACSystemRoleOperator})
+	serviceUser, err := database.NewRBAC(db).CreateRBACUser("robot-service-user", "Robot Service", "hash", true, []string{database.RBACSystemRoleOperator})
 	if err != nil {
 		t.Fatal(err)
 	}

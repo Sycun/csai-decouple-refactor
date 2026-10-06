@@ -185,7 +185,7 @@ func (h *WorkflowHandler) ResumeRun(c *gin.Context) {
 
 func (h *WorkflowHandler) workflowConversationAllowed(c *gin.Context, conversationID string) bool {
 	session, ok := security.CurrentSession(c)
-	return ok && h.db.UserCanAccessResource(session.UserID, session.Scope, "conversation", strings.TrimSpace(conversationID))
+	return ok && h.rbac.UserCanAccessResource(session.UserID, session.Scope, "conversation", strings.TrimSpace(conversationID))
 }
 
 func (h *WorkflowHandler) workflowRunAllowed(c *gin.Context, runID string) bool {

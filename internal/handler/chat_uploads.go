@@ -45,6 +45,7 @@ type ChatUploadsHandler struct {
 	logger  *zap.Logger
 	audit   *audit.Service
 	db      database.ChatUploadsStore
+	rbac    *store.RBAC
 	uploads *store.ChatUploads // chat_upload_artifacts: one row per uploaded path
 }
 
@@ -58,6 +59,7 @@ func NewChatUploadsHandler(logger *zap.Logger, databases ...*database.DB) *ChatU
 	h := &ChatUploadsHandler{logger: logger}
 	if len(databases) > 0 {
 		h.db = database.Narrow[database.ChatUploadsStore](databases[0])
+		h.rbac = database.NewRBAC(databases[0])
 		// A nil *database.DB stays a nil store: OwnerOf then answers "not an artifact" rather than
 		// panicking, which is what the path-authorization helper below assumes.
 		if databases[0] != nil {
@@ -78,13 +80,13 @@ func (h *ChatUploadsHandler) pathAllowed(c *gin.Context, relativePath string) bo
 	rel := filepath.ToSlash(filepath.Clean(filepath.FromSlash(strings.TrimSpace(relativePath))))
 	rel = strings.Trim(rel, "/")
 	if conversationID, ownerUserID, found := h.uploads.OwnerOf(rel); found {
-		return strings.TrimSpace(ownerUserID) == session.UserID || h.db.UserCanAccessResource(session.UserID, session.Scope, "conversation", conversationID)
+		return strings.TrimSpace(ownerUserID) == session.UserID || h.rbac.UserCanAccessResource(session.UserID, session.Scope, "conversation", conversationID)
 	}
 	parts := strings.Split(strings.Trim(rel, "/"), "/")
 	if len(parts) < 2 || parts[1] == "" || parts[1] == "_manual" {
 		return false
 	}
-	return h.db.UserCanAccessResource(session.UserID, session.Scope, "conversation", parts[1])
+	return h.rbac.UserCanAccessResource(session.UserID, session.Scope, "conversation", parts[1])
 }
 
 func (h *ChatUploadsHandler) reductionPathAllowed(c *gin.Context, scope, id string) bool {
@@ -101,12 +103,12 @@ func (h *ChatUploadsHandler) reductionPathAllowed(c *gin.Context, scope, id stri
 		if id == "" || id == "default" {
 			return false
 		}
-		return h.db.UserCanAccessResource(session.UserID, session.Scope, "conversation", id)
+		return h.rbac.UserCanAccessResource(session.UserID, session.Scope, "conversation", id)
 	case "projects":
 		if id == "" {
 			return false
 		}
-		return h.db.UserCanAccessResource(session.UserID, session.Scope, "project", id)
+		return h.rbac.UserCanAccessResource(session.UserID, session.Scope, "project", id)
 	default:
 		return false
 	}
@@ -156,7 +158,7 @@ func (h *ChatUploadsHandler) conversationArtifactPathAllowed(c *gin.Context, con
 	if conversationID == "" || conversationID == "default" {
 		return false
 	}
-	return h.db.UserCanAccessResource(session.UserID, session.Scope, "conversation", conversationID)
+	return h.rbac.UserCanAccessResource(session.UserID, session.Scope, "conversation", conversationID)
 }
 
 func (h *ChatUploadsHandler) conversationArtifactVirtualPathAllowed(c *gin.Context, relativePath string) bool {

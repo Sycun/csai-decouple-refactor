@@ -16,5 +16,5 @@ func NewMonitor(db *DB) *store.Monitor {
 	if db == nil {
 		return nil
 	}
-	return store.NewMonitor(db.DB, db.UserCanAccessResource)
+	return store.NewMonitor(db.DB, NewRBAC(db).UserCanAccessResource)
 }

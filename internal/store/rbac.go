@@ -1,4 +1,4 @@
-package database
+package store
 
 import (
 	"database/sql"
@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"cyberstrike-ai/internal/sqltime"
 
 	"github.com/google/uuid"
 )
@@ -16,12 +18,10 @@ const (
 	RBACSystemRoleAuditor  = "auditor"
 	RBACSystemRoleViewer   = "viewer"
 
-	RBACScopeAll      = "all"
-	RBACScopeAssigned = "assigned"
-	RBACScopeOwn      = "own"
-
 	RBACMaxBatchResourceAssignments = 100
 )
+
+// 三个 scope 字符串没有第二份声明：access.go 的 ScopeAll / ScopeAssigned / ScopeOwn 就是它们。
 
 var rbacAssignableResourceTables = map[string]string{
 	"project":       "projects",
@@ -32,6 +32,20 @@ var rbacAssignableResourceTables = map[string]string{
 	"batch_task":    "batch_task_queues",
 	"c2_listener":   "c2_listeners",
 }
+
+// RBAC owns the platform's accounts, roles, permissions and per-resource assignments: the six
+// rbac_* tables, their schema, the ownership columns they backfill on other tables, and the access
+// questions ("may this caller reach that resource") the rest of the process asks.
+//
+// The statements were copied out of internal/database verbatim: same SELECT lists, same ORDER BYs,
+// same error strings. The scope constants are access.go's existing ScopeAll/ScopeAssigned/ScopeOwn
+// rather than a second spelling of the same three strings.
+type RBAC struct {
+	db *sql.DB
+}
+
+// NewRBAC binds the store to a connection.
+func NewRBAC(db *sql.DB) *RBAC { return &RBAC{db: db} }
 
 // RBACUser is a local platform account.
 type RBACUser struct {
@@ -87,7 +101,12 @@ type RBACAccess struct {
 	Scope string `json:"scope"`
 }
 
-func (db *DB) initRBACTables() error {
+// EnsureSchema creates the six rbac_* tables and their four indexes, in the order the boot file
+// used. The statements were copied verbatim.
+func (r *RBAC) EnsureSchema() error {
+	if r == nil || r.db == nil {
+		return errors.New("store: rbac requires a database")
+	}
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS rbac_users (
 			id TEXT PRIMARY KEY,
@@ -147,58 +166,27 @@ func (db *DB) initRBACTables() error {
 		`CREATE INDEX IF NOT EXISTS idx_rbac_assignments_resource ON rbac_resource_assignments(resource_type, resource_id);`,
 	}
 	for _, stmt := range stmts {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := r.db.Exec(stmt); err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-func (db *DB) migrateRBACOwnershipColumns() error {
-	for _, col := range []struct {
-		table string
-		name  string
-		stmt  string
-	}{
-		{"projects", "owner_user_id", "ALTER TABLE projects ADD COLUMN owner_user_id TEXT"},
-		{"conversations", "owner_user_id", "ALTER TABLE conversations ADD COLUMN owner_user_id TEXT"},
-		{"vulnerabilities", "owner_user_id", "ALTER TABLE vulnerabilities ADD COLUMN owner_user_id TEXT"},
-		{"webshell_connections", "owner_user_id", "ALTER TABLE webshell_connections ADD COLUMN owner_user_id TEXT"},
-		{"batch_task_queues", "owner_user_id", "ALTER TABLE batch_task_queues ADD COLUMN owner_user_id TEXT"},
-		{"c2_listeners", "owner_user_id", "ALTER TABLE c2_listeners ADD COLUMN owner_user_id TEXT"},
-	} {
-		if err := db.addColumnIfMissing(col.table, col.name, col.stmt); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (db *DB) addColumnIfMissing(table, name, stmt string) error {
-	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?", table, name).Scan(&count)
-	if err != nil || count == 0 {
-		if _, addErr := db.Exec(stmt); addErr != nil {
-			msg := strings.ToLower(addErr.Error())
-			if !strings.Contains(msg, "duplicate column") && !strings.Contains(msg, "already exists") {
-				return fmt.Errorf("添加%s.%s字段失败: %w", table, name, addErr)
-			}
 		}
 	}
 	return nil
 }
 
 // RBACNeedsAdminPassword reports whether the built-in admin account still needs an initial password.
-func (db *DB) RBACNeedsAdminPassword() (bool, error) {
+func (r *RBAC) RBACNeedsAdminPassword() (bool, error) {
+	if r == nil || r.db == nil {
+		return false, errors.New("store: rbac requires a database")
+	}
 	var userCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM rbac_users`).Scan(&userCount); err != nil {
+	if err := r.db.QueryRow(`SELECT COUNT(*) FROM rbac_users`).Scan(&userCount); err != nil {
 		return false, err
 	}
 	if userCount == 0 {
 		return true, nil
 	}
 	var hash sql.NullString
-	err := db.QueryRow(`
+	err := r.db.QueryRow(`
 		SELECT password_hash FROM rbac_users
 		WHERE username = 'admin' AND is_builtin = 1
 		LIMIT 1
@@ -213,9 +201,12 @@ func (db *DB) RBACNeedsAdminPassword() (bool, error) {
 }
 
 // BootstrapRBAC seeds the local admin account and system roles.
-func (db *DB) BootstrapRBAC(adminPasswordHash string, permissions map[string]string) error {
+func (r *RBAC) BootstrapRBAC(adminPasswordHash string, permissions map[string]string) error {
+	if r == nil || r.db == nil {
+		return errors.New("store: rbac requires a database")
+	}
 	now := time.Now()
-	tx, err := db.Begin()
+	tx, err := r.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -264,10 +255,10 @@ func (db *DB) BootstrapRBAC(adminPasswordHash string, permissions map[string]str
 	}
 
 	systemRoles := []RBACRole{
-		{ID: RBACSystemRoleAdmin, Name: "管理员", Description: "全局管理权限", Scope: RBACScopeAll, IsSystem: true},
-		{ID: RBACSystemRoleOperator, Name: "操作员", Description: "可执行日常安全工作流，不能管理账号与核心配置", Scope: RBACScopeAssigned, IsSystem: true},
-		{ID: RBACSystemRoleAuditor, Name: "审计员", Description: "只读查看审计、监控与资产", Scope: RBACScopeAll, IsSystem: true},
-		{ID: RBACSystemRoleViewer, Name: "只读用户", Description: "只读查看被授权资源", Scope: RBACScopeAssigned, IsSystem: true},
+		{ID: RBACSystemRoleAdmin, Name: "管理员", Description: "全局管理权限", Scope: ScopeAll, IsSystem: true},
+		{ID: RBACSystemRoleOperator, Name: "操作员", Description: "可执行日常安全工作流，不能管理账号与核心配置", Scope: ScopeAssigned, IsSystem: true},
+		{ID: RBACSystemRoleAuditor, Name: "审计员", Description: "只读查看审计、监控与资产", Scope: ScopeAll, IsSystem: true},
+		{ID: RBACSystemRoleViewer, Name: "只读用户", Description: "只读查看被授权资源", Scope: ScopeAssigned, IsSystem: true},
 	}
 	for _, role := range systemRoles {
 		if _, err := tx.Exec(`
@@ -357,29 +348,35 @@ func grantSystemRolePermissions(tx *sql.Tx, permissions map[string]string) error
 	return nil
 }
 
-func (db *DB) GetRBACUserByUsername(username string) (*RBACUser, error) {
+func (r *RBAC) GetRBACUserByUsername(username string) (*RBACUser, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store: rbac requires a database")
+	}
 	username = strings.TrimSpace(strings.ToLower(username))
 	if username == "" {
 		return nil, sql.ErrNoRows
 	}
-	return db.scanRBACUser(db.QueryRow(`
+	return r.scanRBACUser(r.db.QueryRow(`
 		SELECT id, username, display_name, password_hash, enabled, is_builtin, created_at, updated_at
 		FROM rbac_users WHERE username = ?
 	`, username))
 }
 
-func (db *DB) GetRBACUserByID(id string) (*RBACUser, error) {
+func (r *RBAC) GetRBACUserByID(id string) (*RBACUser, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store: rbac requires a database")
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, sql.ErrNoRows
 	}
-	return db.scanRBACUser(db.QueryRow(`
+	return r.scanRBACUser(r.db.QueryRow(`
 		SELECT id, username, display_name, password_hash, enabled, is_builtin, created_at, updated_at
 		FROM rbac_users WHERE id = ?
 	`, id))
 }
 
-func (db *DB) scanRBACUser(row *sql.Row) (*RBACUser, error) {
+func (r *RBAC) scanRBACUser(row *sql.Row) (*RBACUser, error) {
 	var u RBACUser
 	var enabled, builtin int
 	var createdAt, updatedAt string
@@ -388,17 +385,20 @@ func (db *DB) scanRBACUser(row *sql.Row) (*RBACUser, error) {
 	}
 	u.Enabled = enabled != 0
 	u.IsBuiltin = builtin != 0
-	u.CreatedAt = parseDBTime(createdAt)
-	u.UpdatedAt = parseDBTime(updatedAt)
+	u.CreatedAt = sqltime.Parse(createdAt)
+	u.UpdatedAt = sqltime.Parse(updatedAt)
 	return &u, nil
 }
 
-func (db *DB) ResolveRBACAccess(userID string) (*RBACAccess, error) {
-	u, err := db.GetRBACUserByID(userID)
+func (r *RBAC) ResolveRBACAccess(userID string) (*RBACAccess, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store: rbac requires a database")
+	}
+	u, err := r.GetRBACUserByID(userID)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`
+	rows, err := r.db.Query(`
 		SELECT r.id, r.name, r.description, r.scope, r.is_system, r.created_at, r.updated_at
 		FROM rbac_roles r
 		JOIN rbac_user_roles ur ON ur.role_id = r.id
@@ -411,7 +411,7 @@ func (db *DB) ResolveRBACAccess(userID string) (*RBACAccess, error) {
 	defer rows.Close()
 
 	access := &RBACAccess{
-		User: *u, Permissions: map[string]bool{}, PermissionScopes: map[string]string{}, Scope: RBACScopeOwn,
+		User: *u, Permissions: map[string]bool{}, PermissionScopes: map[string]string{}, Scope: ScopeOwn,
 	}
 	for rows.Next() {
 		var role RBACRole
@@ -421,8 +421,8 @@ func (db *DB) ResolveRBACAccess(userID string) (*RBACAccess, error) {
 			return nil, err
 		}
 		role.IsSystem = isSystem != 0
-		role.CreatedAt = parseDBTime(createdAt)
-		role.UpdatedAt = parseDBTime(updatedAt)
+		role.CreatedAt = sqltime.Parse(createdAt)
+		role.UpdatedAt = sqltime.Parse(updatedAt)
 		access.Roles = append(access.Roles, role)
 		access.Scope = mergeRBACScope(access.Scope, role.Scope)
 	}
@@ -430,7 +430,7 @@ func (db *DB) ResolveRBACAccess(userID string) (*RBACAccess, error) {
 		return nil, err
 	}
 
-	prows, err := db.Query(`
+	prows, err := r.db.Query(`
 		SELECT rp.permission_key, r.scope
 		FROM rbac_role_permissions rp
 		JOIN rbac_user_roles ur ON ur.role_id = rp.role_id
@@ -457,137 +457,146 @@ func (db *DB) ResolveRBACAccess(userID string) (*RBACAccess, error) {
 }
 
 func mergeRBACScope(a, b string) string {
-	if a == RBACScopeAll || b == RBACScopeAll {
-		return RBACScopeAll
+	if a == ScopeAll || b == ScopeAll {
+		return ScopeAll
 	}
-	if a == RBACScopeAssigned || b == RBACScopeAssigned {
-		return RBACScopeAssigned
+	if a == ScopeAssigned || b == ScopeAssigned {
+		return ScopeAssigned
 	}
-	return RBACScopeOwn
+	return ScopeOwn
 }
 
-func (db *DB) UserCanAccessResource(userID, scope, resourceType, resourceID string) bool {
+func (r *RBAC) UserCanAccessResource(userID, scope, resourceType, resourceID string) bool {
+	if r == nil || r.db == nil {
+		return false
+	}
 	userID = strings.TrimSpace(userID)
 	resourceType = strings.TrimSpace(resourceType)
 	resourceID = strings.TrimSpace(resourceID)
 	if userID == "" || resourceType == "" || resourceID == "" {
 		return false
 	}
-	if scope == RBACScopeAll {
+	if scope == ScopeAll {
 		return true
 	}
-	if scope == RBACScopeOwn {
-		if db.userOwnsResource(userID, resourceType, resourceID) {
+	if scope == ScopeOwn {
+		if r.userOwnsResource(userID, resourceType, resourceID) {
 			return true
 		}
 	}
 	var n int
-	err := db.QueryRow(`SELECT COUNT(*) FROM rbac_resource_assignments WHERE user_id = ? AND resource_type = ? AND resource_id = ?`, userID, resourceType, resourceID).Scan(&n)
+	err := r.db.QueryRow(`SELECT COUNT(*) FROM rbac_resource_assignments WHERE user_id = ? AND resource_type = ? AND resource_id = ?`, userID, resourceType, resourceID).Scan(&n)
 	if err == nil && n > 0 {
 		return true
 	}
 	if resourceType == "vulnerability" {
-		return db.userCanAccessVulnerabilityViaParent(userID, scope, resourceID)
+		return r.userCanAccessVulnerabilityViaParent(userID, scope, resourceID)
 	}
 	if resourceType == "asset" {
-		return db.userCanAccessAssetViaParent(userID, scope, resourceID)
+		return r.userCanAccessAssetViaParent(userID, scope, resourceID)
 	}
 	if resourceType == "conversation" {
-		return db.userCanAccessConversationViaParent(userID, scope, resourceID)
+		return r.userCanAccessConversationViaParent(userID, scope, resourceID)
 	}
 	if strings.HasPrefix(resourceType, "c2_") {
-		return db.userCanAccessC2ViaParent(userID, scope, resourceType, resourceID)
+		return r.userCanAccessC2ViaParent(userID, scope, resourceType, resourceID)
 	}
 	return false
 }
 
-func (db *DB) userCanAccessAssetViaParent(userID, scope, assetID string) bool {
+func (r *RBAC) userCanAccessAssetViaParent(userID, scope, assetID string) bool {
 	var projectID sql.NullString
-	if err := db.QueryRow(`SELECT project_id FROM assets WHERE id = ?`, assetID).Scan(&projectID); err != nil {
+	if err := r.db.QueryRow(`SELECT project_id FROM assets WHERE id = ?`, assetID).Scan(&projectID); err != nil {
 		return false
 	}
 	return projectID.Valid && strings.TrimSpace(projectID.String) != "" &&
-		db.UserCanAccessResource(userID, scope, "project", strings.TrimSpace(projectID.String))
+		r.UserCanAccessResource(userID, scope, "project", strings.TrimSpace(projectID.String))
 }
 
-func (db *DB) userCanAccessConversationViaParent(userID, scope, conversationID string) bool {
+func (r *RBAC) userCanAccessConversationViaParent(userID, scope, conversationID string) bool {
 	var projectID sql.NullString
-	if err := db.QueryRow(`SELECT project_id FROM conversations WHERE id = ?`, conversationID).Scan(&projectID); err != nil {
+	if err := r.db.QueryRow(`SELECT project_id FROM conversations WHERE id = ?`, conversationID).Scan(&projectID); err != nil {
 		return false
 	}
 	return projectID.Valid && strings.TrimSpace(projectID.String) != "" &&
-		db.UserCanAccessResource(userID, scope, "project", strings.TrimSpace(projectID.String))
+		r.UserCanAccessResource(userID, scope, "project", strings.TrimSpace(projectID.String))
 }
 
-func (db *DB) userCanAccessVulnerabilityViaParent(userID, scope, vulnerabilityID string) bool {
+func (r *RBAC) userCanAccessVulnerabilityViaParent(userID, scope, vulnerabilityID string) bool {
 	var projectID, conversationID sql.NullString
-	err := db.QueryRow(`SELECT project_id, conversation_id FROM vulnerabilities WHERE id = ?`, vulnerabilityID).Scan(&projectID, &conversationID)
+	err := r.db.QueryRow(`SELECT project_id, conversation_id FROM vulnerabilities WHERE id = ?`, vulnerabilityID).Scan(&projectID, &conversationID)
 	if err != nil {
 		return false
 	}
-	if projectID.Valid && strings.TrimSpace(projectID.String) != "" && db.UserCanAccessResource(userID, scope, "project", strings.TrimSpace(projectID.String)) {
+	if projectID.Valid && strings.TrimSpace(projectID.String) != "" && r.UserCanAccessResource(userID, scope, "project", strings.TrimSpace(projectID.String)) {
 		return true
 	}
-	if conversationID.Valid && strings.TrimSpace(conversationID.String) != "" && db.UserCanAccessResource(userID, scope, "conversation", strings.TrimSpace(conversationID.String)) {
+	if conversationID.Valid && strings.TrimSpace(conversationID.String) != "" && r.UserCanAccessResource(userID, scope, "conversation", strings.TrimSpace(conversationID.String)) {
 		return true
 	}
 	return false
 }
 
-func (db *DB) UserCanAccessMessage(userID, scope, messageID string) bool {
+func (r *RBAC) UserCanAccessMessage(userID, scope, messageID string) bool {
+	if r == nil || r.db == nil {
+		return false
+	}
 	var conversationID string
-	err := db.QueryRow(`SELECT conversation_id FROM messages WHERE id = ?`, strings.TrimSpace(messageID)).Scan(&conversationID)
+	err := r.db.QueryRow(`SELECT conversation_id FROM messages WHERE id = ?`, strings.TrimSpace(messageID)).Scan(&conversationID)
 	if err != nil {
 		return false
 	}
-	return db.UserCanAccessResource(userID, scope, "conversation", conversationID)
+	return r.UserCanAccessResource(userID, scope, "conversation", conversationID)
 }
 
-func (db *DB) UserCanAccessProcessDetail(userID, scope, processDetailID string) bool {
+func (r *RBAC) UserCanAccessProcessDetail(userID, scope, processDetailID string) bool {
+	if r == nil || r.db == nil {
+		return false
+	}
 	var conversationID string
-	err := db.QueryRow(`SELECT conversation_id FROM process_details WHERE id = ?`, strings.TrimSpace(processDetailID)).Scan(&conversationID)
+	err := r.db.QueryRow(`SELECT conversation_id FROM process_details WHERE id = ?`, strings.TrimSpace(processDetailID)).Scan(&conversationID)
 	if err != nil {
 		return false
 	}
-	return db.UserCanAccessResource(userID, scope, "conversation", conversationID)
+	return r.UserCanAccessResource(userID, scope, "conversation", conversationID)
 }
 
-func (db *DB) userCanAccessC2ViaParent(userID, scope, resourceType, resourceID string) bool {
+func (r *RBAC) userCanAccessC2ViaParent(userID, scope, resourceType, resourceID string) bool {
 	switch resourceType {
 	case "c2_session":
 		var listenerID string
-		if err := db.QueryRow(`SELECT listener_id FROM c2_sessions WHERE id = ?`, resourceID).Scan(&listenerID); err != nil {
+		if err := r.db.QueryRow(`SELECT listener_id FROM c2_sessions WHERE id = ?`, resourceID).Scan(&listenerID); err != nil {
 			return false
 		}
-		return db.UserCanAccessResource(userID, scope, "c2_listener", listenerID)
+		return r.UserCanAccessResource(userID, scope, "c2_listener", listenerID)
 	case "c2_task":
 		var sessionID string
-		if err := db.QueryRow(`SELECT session_id FROM c2_tasks WHERE id = ?`, resourceID).Scan(&sessionID); err != nil {
+		if err := r.db.QueryRow(`SELECT session_id FROM c2_tasks WHERE id = ?`, resourceID).Scan(&sessionID); err != nil {
 			return false
 		}
-		return db.UserCanAccessResource(userID, scope, "c2_session", sessionID)
+		return r.UserCanAccessResource(userID, scope, "c2_session", sessionID)
 	case "c2_file":
 		var sessionID string
-		if err := db.QueryRow(`SELECT session_id FROM c2_files WHERE id = ?`, resourceID).Scan(&sessionID); err != nil {
+		if err := r.db.QueryRow(`SELECT session_id FROM c2_files WHERE id = ?`, resourceID).Scan(&sessionID); err != nil {
 			return false
 		}
-		return db.UserCanAccessResource(userID, scope, "c2_session", sessionID)
+		return r.UserCanAccessResource(userID, scope, "c2_session", sessionID)
 	case "c2_event":
 		var sessionID, taskID sql.NullString
-		if err := db.QueryRow(`SELECT session_id, task_id FROM c2_events WHERE id = ?`, resourceID).Scan(&sessionID, &taskID); err != nil {
+		if err := r.db.QueryRow(`SELECT session_id, task_id FROM c2_events WHERE id = ?`, resourceID).Scan(&sessionID, &taskID); err != nil {
 			return false
 		}
 		if sessionID.Valid && strings.TrimSpace(sessionID.String) != "" {
-			return db.UserCanAccessResource(userID, scope, "c2_session", strings.TrimSpace(sessionID.String))
+			return r.UserCanAccessResource(userID, scope, "c2_session", strings.TrimSpace(sessionID.String))
 		}
 		if taskID.Valid && strings.TrimSpace(taskID.String) != "" {
-			return db.UserCanAccessResource(userID, scope, "c2_task", strings.TrimSpace(taskID.String))
+			return r.UserCanAccessResource(userID, scope, "c2_task", strings.TrimSpace(taskID.String))
 		}
 	}
 	return false
 }
 
-func (db *DB) userOwnsResource(userID, resourceType, resourceID string) bool {
+func (r *RBAC) userOwnsResource(userID, resourceType, resourceID string) bool {
 	table := ""
 	switch resourceType {
 	case "project":
@@ -608,11 +617,14 @@ func (db *DB) userOwnsResource(userID, resourceType, resourceID string) bool {
 		return false
 	}
 	var n int
-	err := db.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE id = ? AND owner_user_id = ?`, resourceID, userID).Scan(&n)
+	err := r.db.QueryRow(`SELECT COUNT(*) FROM `+table+` WHERE id = ? AND owner_user_id = ?`, resourceID, userID).Scan(&n)
 	return err == nil && n > 0
 }
 
-func (db *DB) SetResourceOwner(resourceType, resourceID, userID string) error {
+func (r *RBAC) SetResourceOwner(resourceType, resourceID, userID string) error {
+	if r == nil || r.db == nil {
+		return errors.New("store: rbac requires a database")
+	}
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return nil
@@ -636,11 +648,14 @@ func (db *DB) SetResourceOwner(resourceType, resourceID, userID string) error {
 	default:
 		return nil
 	}
-	_, err := db.Exec(`UPDATE `+table+` SET owner_user_id = COALESCE(NULLIF(owner_user_id, ''), ?) WHERE id = ?`, userID, resourceID)
+	_, err := r.db.Exec(`UPDATE `+table+` SET owner_user_id = COALESCE(NULLIF(owner_user_id, ''), ?) WHERE id = ?`, userID, resourceID)
 	return err
 }
 
-func (db *DB) GetResourceOwner(resourceType, resourceID string) string {
+func (r *RBAC) GetResourceOwner(resourceType, resourceID string) string {
+	if r == nil || r.db == nil {
+		return ""
+	}
 	table := ""
 	switch strings.TrimSpace(resourceType) {
 	case "project":
@@ -661,21 +676,27 @@ func (db *DB) GetResourceOwner(resourceType, resourceID string) string {
 		return ""
 	}
 	var owner sql.NullString
-	if err := db.QueryRow(`SELECT owner_user_id FROM `+table+` WHERE id = ?`, strings.TrimSpace(resourceID)).Scan(&owner); err != nil {
+	if err := r.db.QueryRow(`SELECT owner_user_id FROM `+table+` WHERE id = ?`, strings.TrimSpace(resourceID)).Scan(&owner); err != nil {
 		return ""
 	}
 	return strings.TrimSpace(owner.String)
 }
 
-func (db *DB) AssignResourceToUser(userID, resourceType, resourceID string) error {
-	_, err := db.AssignResourcesToUser(userID, resourceType, []string{resourceID})
+func (r *RBAC) AssignResourceToUser(userID, resourceType, resourceID string) error {
+	if r == nil || r.db == nil {
+		return errors.New("store: rbac requires a database")
+	}
+	_, err := r.AssignResourcesToUser(userID, resourceType, []string{resourceID})
 	return err
 }
 
 // ListAssignableRBACResourcesPage returns one stable page for the assignment
 // picker. Callers can request limit+1 rows to determine whether another page
 // exists without running a separate COUNT query.
-func (db *DB) ListAssignableRBACResourcesPage(resourceType, search string, limit, offset int) ([]RBACResourceOption, error) {
+func (r *RBAC) ListAssignableRBACResourcesPage(resourceType, search string, limit, offset int) ([]RBACResourceOption, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store: rbac requires a database")
+	}
 	resourceType = strings.TrimSpace(resourceType)
 	if _, ok := rbacAssignableResourceTables[resourceType]; !ok {
 		return nil, fmt.Errorf("不支持的资源类型: %s", resourceType)
@@ -729,7 +750,7 @@ func (db *DB) ListAssignableRBACResourcesPage(resourceType, search string, limit
 		queryArgs = append(queryArgs, pattern)
 	}
 	queryArgs = append(queryArgs, limit, offset)
-	rows, err := db.Query(query, queryArgs...)
+	rows, err := r.db.Query(query, queryArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -747,7 +768,10 @@ func (db *DB) ListAssignableRBACResourcesPage(resourceType, search string, limit
 }
 
 // CountAssignableRBACResources returns the total rows matching the resource picker filter.
-func (db *DB) CountAssignableRBACResources(resourceType, search string) (int, error) {
+func (r *RBAC) CountAssignableRBACResources(resourceType, search string) (int, error) {
+	if r == nil || r.db == nil {
+		return 0, errors.New("store: rbac requires a database")
+	}
 	resourceType = strings.TrimSpace(resourceType)
 	if _, ok := rbacAssignableResourceTables[resourceType]; !ok {
 		return 0, fmt.Errorf("不支持的资源类型: %s", resourceType)
@@ -777,7 +801,7 @@ func (db *DB) CountAssignableRBACResources(resourceType, search string) (int, er
 	if resourceType == "asset" {
 		queryArgs = append(queryArgs, pattern)
 	}
-	if err := db.QueryRow(query, queryArgs...).Scan(&total); err != nil {
+	if err := r.db.QueryRow(query, queryArgs...).Scan(&total); err != nil {
 		return 0, err
 	}
 	return total, nil
@@ -820,7 +844,7 @@ func shortRBACResourceID(id string) string {
 	return id[:8] + "…"
 }
 
-func (db *DB) lookupRBACResourceOptionsByIDs(resourceType string, ids []string) (map[string]RBACResourceOption, error) {
+func (r *RBAC) lookupRBACResourceOptionsByIDs(resourceType string, ids []string) (map[string]RBACResourceOption, error) {
 	resourceType = strings.TrimSpace(resourceType)
 	if _, ok := rbacAssignableResourceTables[resourceType]; !ok {
 		return nil, fmt.Errorf("不支持的资源类型: %s", resourceType)
@@ -869,7 +893,7 @@ func (db *DB) lookupRBACResourceOptionsByIDs(resourceType string, ids []string) 
 		return out, nil
 	}
 
-	rows, err := db.Query(query, args...)
+	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -916,7 +940,10 @@ func enrichRBACAssignmentLabels(rows []RBACResourceAssignment, lookup func(resou
 
 // AssignResourcesToUser validates the complete request before writing anything,
 // then inserts all grants in one transaction. Existing grants are idempotent.
-func (db *DB) AssignResourcesToUser(userID, resourceType string, resourceIDs []string) (int64, error) {
+func (r *RBAC) AssignResourcesToUser(userID, resourceType string, resourceIDs []string) (int64, error) {
+	if r == nil || r.db == nil {
+		return 0, errors.New("store: rbac requires a database")
+	}
 	userID = strings.TrimSpace(userID)
 	resourceType = strings.TrimSpace(resourceType)
 	if userID == "" || resourceType == "" || len(resourceIDs) == 0 {
@@ -947,7 +974,7 @@ func (db *DB) AssignResourcesToUser(userID, resourceType string, resourceIDs []s
 		return 0, errors.New("资源 ID 不能为空")
 	}
 
-	tx, err := db.Begin()
+	tx, err := r.db.Begin()
 	if err != nil {
 		return 0, err
 	}
@@ -991,7 +1018,10 @@ func (db *DB) AssignResourcesToUser(userID, resourceType string, resourceIDs []s
 
 // AssignResourcesToUserAuto detects each resource's actual type before writing.
 // The whole batch is validated first and committed atomically.
-func (db *DB) AssignResourcesToUserAuto(userID string, resourceIDs []string) (int64, map[string]string, error) {
+func (r *RBAC) AssignResourcesToUserAuto(userID string, resourceIDs []string) (int64, map[string]string, error) {
+	if r == nil || r.db == nil {
+		return 0, nil, errors.New("store: rbac requires a database")
+	}
 	userID = strings.TrimSpace(userID)
 	if userID == "" || len(resourceIDs) == 0 {
 		return 0, nil, errors.New("user_id and resource_ids are required")
@@ -1013,7 +1043,7 @@ func (db *DB) AssignResourcesToUserAuto(userID string, resourceIDs []string) (in
 		uniqueIDs = append(uniqueIDs, id)
 	}
 
-	tx, err := db.Begin()
+	tx, err := r.db.Begin()
 	if err != nil {
 		return 0, nil, err
 	}
@@ -1070,8 +1100,11 @@ func (db *DB) AssignResourcesToUserAuto(userID string, resourceIDs []string) (in
 	return created, detected, nil
 }
 
-func (db *DB) ListRBACUsers() ([]RBACUser, error) {
-	rows, err := db.Query(`SELECT id, username, display_name, password_hash, enabled, is_builtin, created_at, updated_at FROM rbac_users ORDER BY username ASC`)
+func (r *RBAC) ListRBACUsers() ([]RBACUser, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store: rbac requires a database")
+	}
+	rows, err := r.db.Query(`SELECT id, username, display_name, password_hash, enabled, is_builtin, created_at, updated_at FROM rbac_users ORDER BY username ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1086,69 +1119,78 @@ func (db *DB) ListRBACUsers() ([]RBACUser, error) {
 		}
 		u.Enabled = enabled != 0
 		u.IsBuiltin = builtin != 0
-		u.CreatedAt = parseDBTime(createdAt)
-		u.UpdatedAt = parseDBTime(updatedAt)
+		u.CreatedAt = sqltime.Parse(createdAt)
+		u.UpdatedAt = sqltime.Parse(updatedAt)
 		out = append(out, u)
 	}
 	return out, rows.Err()
 }
 
-func (db *DB) ListRBACRoles() ([]RBACRole, error) {
-	rows, err := db.Query(`SELECT id, name, description, scope, is_system, created_at, updated_at FROM rbac_roles ORDER BY is_system DESC, name ASC`)
+func (r *RBAC) ListRBACRoles() ([]RBACRole, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store: rbac requires a database")
+	}
+	rows, err := r.db.Query(`SELECT id, name, description, scope, is_system, created_at, updated_at FROM rbac_roles ORDER BY is_system DESC, name ASC`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []RBACRole
 	for rows.Next() {
-		var r RBACRole
+		var role RBACRole
 		var system int
 		var createdAt, updatedAt string
-		if err := rows.Scan(&r.ID, &r.Name, &r.Description, &r.Scope, &system, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&role.ID, &role.Name, &role.Description, &role.Scope, &system, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
-		r.IsSystem = system != 0
-		r.CreatedAt = parseDBTime(createdAt)
-		r.UpdatedAt = parseDBTime(updatedAt)
-		out = append(out, r)
+		role.IsSystem = system != 0
+		role.CreatedAt = sqltime.Parse(createdAt)
+		role.UpdatedAt = sqltime.Parse(updatedAt)
+		out = append(out, role)
 	}
 	return out, rows.Err()
 }
 
-func (db *DB) GetRBACRoleByID(id string) (*RBACRole, error) {
+func (r *RBAC) GetRBACRoleByID(id string) (*RBACRole, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store: rbac requires a database")
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, sql.ErrNoRows
 	}
-	var r RBACRole
+	var role RBACRole
 	var system int
 	var createdAt, updatedAt string
-	err := db.QueryRow(`SELECT id, name, description, scope, is_system, created_at, updated_at FROM rbac_roles WHERE id = ?`, id).
-		Scan(&r.ID, &r.Name, &r.Description, &r.Scope, &system, &createdAt, &updatedAt)
+	err := r.db.QueryRow(`SELECT id, name, description, scope, is_system, created_at, updated_at FROM rbac_roles WHERE id = ?`, id).
+		Scan(&role.ID, &role.Name, &role.Description, &role.Scope, &system, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
-	r.IsSystem = system != 0
-	r.CreatedAt = parseDBTime(createdAt)
-	r.UpdatedAt = parseDBTime(updatedAt)
-	return &r, nil
+	role.IsSystem = system != 0
+	role.CreatedAt = sqltime.Parse(createdAt)
+	role.UpdatedAt = sqltime.Parse(updatedAt)
+	return &role, nil
 }
 
-func (db *DB) UpsertRBACRole(id, name, description, scope string, permissionKeys []string) (*RBACRole, error) {
+func (r *RBAC) UpsertRBACRole(id, name, description, scope string, permissionKeys []string) (*RBACRole, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store: rbac requires a database")
+	}
 	id = strings.TrimSpace(id)
 	name = strings.TrimSpace(name)
 	scope = strings.TrimSpace(scope)
 	if name == "" {
 		return nil, errors.New("role name is required")
 	}
-	if scope != RBACScopeAll && scope != RBACScopeAssigned && scope != RBACScopeOwn {
-		scope = RBACScopeAssigned
+	if scope != ScopeAll && scope != ScopeAssigned && scope != ScopeOwn {
+		scope = ScopeAssigned
 	}
 	if id == "" {
 		id = uuid.NewString()
 	}
 	now := time.Now()
-	tx, err := db.Begin()
+	tx, err := r.db.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -1188,10 +1230,13 @@ func (db *DB) UpsertRBACRole(id, name, description, scope string, permissionKeys
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return db.GetRBACRoleByID(id)
+	return r.GetRBACRoleByID(id)
 }
 
-func (db *DB) DeleteRBACRole(id string) error {
+func (r *RBAC) DeleteRBACRole(id string) error {
+	if r == nil || r.db == nil {
+		return errors.New("store: rbac requires a database")
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return errors.New("role id is required")
@@ -1199,32 +1244,41 @@ func (db *DB) DeleteRBACRole(id string) error {
 	if id == RBACSystemRoleAdmin || id == RBACSystemRoleOperator || id == RBACSystemRoleAuditor || id == RBACSystemRoleViewer {
 		return errors.New("system role cannot be deleted")
 	}
-	_, err := db.Exec(`DELETE FROM rbac_roles WHERE id = ? AND is_system = 0`, id)
+	_, err := r.db.Exec(`DELETE FROM rbac_roles WHERE id = ? AND is_system = 0`, id)
 	return err
 }
 
-func (db *DB) UpdateRBACUserPassword(userID, passwordHash string) error {
+func (r *RBAC) UpdateRBACUserPassword(userID, passwordHash string) error {
+	if r == nil || r.db == nil {
+		return errors.New("store: rbac requires a database")
+	}
 	userID = strings.TrimSpace(userID)
 	passwordHash = strings.TrimSpace(passwordHash)
 	if userID == "" || passwordHash == "" {
 		return errors.New("user_id and password_hash are required")
 	}
-	_, err := db.Exec(`UPDATE rbac_users SET password_hash = ?, updated_at = ? WHERE id = ?`, passwordHash, time.Now(), userID)
+	_, err := r.db.Exec(`UPDATE rbac_users SET password_hash = ?, updated_at = ? WHERE id = ?`, passwordHash, time.Now(), userID)
 	return err
 }
 
-func (db *DB) UpdateRBACAdminPassword(passwordHash string) error {
-	return db.UpdateRBACUserPassword("admin", passwordHash)
+func (r *RBAC) UpdateRBACAdminPassword(passwordHash string) error {
+	if r == nil || r.db == nil {
+		return errors.New("store: rbac requires a database")
+	}
+	return r.UpdateRBACUserPassword("admin", passwordHash)
 }
 
-func (db *DB) CreateRBACUser(username, displayName, passwordHash string, enabled bool, roleIDs []string) (*RBACUser, error) {
+func (r *RBAC) CreateRBACUser(username, displayName, passwordHash string, enabled bool, roleIDs []string) (*RBACUser, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store: rbac requires a database")
+	}
 	username = strings.TrimSpace(strings.ToLower(username))
 	if username == "" || passwordHash == "" {
 		return nil, errors.New("username and password are required")
 	}
 	id := uuid.NewString()
 	now := time.Now()
-	tx, err := db.Begin()
+	tx, err := r.db.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -1247,15 +1301,18 @@ func (db *DB) CreateRBACUser(username, displayName, passwordHash string, enabled
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return db.GetRBACUserByID(id)
+	return r.GetRBACUserByID(id)
 }
 
-func (db *DB) UpdateRBACUser(userID, displayName string, enabled *bool, roleIDs *[]string) error {
+func (r *RBAC) UpdateRBACUser(userID, displayName string, enabled *bool, roleIDs *[]string) error {
+	if r == nil || r.db == nil {
+		return errors.New("store: rbac requires a database")
+	}
 	userID = strings.TrimSpace(userID)
 	if userID == "" {
 		return errors.New("user_id is required")
 	}
-	tx, err := db.Begin()
+	tx, err := r.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -1286,17 +1343,23 @@ func (db *DB) UpdateRBACUser(userID, displayName string, enabled *bool, roleIDs 
 	return tx.Commit()
 }
 
-func (db *DB) DeleteRBACUser(userID string) error {
+func (r *RBAC) DeleteRBACUser(userID string) error {
+	if r == nil || r.db == nil {
+		return errors.New("store: rbac requires a database")
+	}
 	userID = strings.TrimSpace(userID)
 	if userID == "" || userID == "admin" {
 		return errors.New("cannot delete this user")
 	}
-	_, err := db.Exec(`DELETE FROM rbac_users WHERE id = ? AND is_builtin = 0`, userID)
+	_, err := r.db.Exec(`DELETE FROM rbac_users WHERE id = ? AND is_builtin = 0`, userID)
 	return err
 }
 
-func (db *DB) ListRBACUserRoleIDs(userID string) ([]string, error) {
-	rows, err := db.Query(`SELECT role_id FROM rbac_user_roles WHERE user_id = ? ORDER BY role_id ASC`, userID)
+func (r *RBAC) ListRBACUserRoleIDs(userID string) ([]string, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store: rbac requires a database")
+	}
+	rows, err := r.db.Query(`SELECT role_id FROM rbac_user_roles WHERE user_id = ? ORDER BY role_id ASC`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -1312,8 +1375,11 @@ func (db *DB) ListRBACUserRoleIDs(userID string) ([]string, error) {
 	return out, rows.Err()
 }
 
-func (db *DB) ListRBACRolePermissionKeys(roleID string) ([]string, error) {
-	rows, err := db.Query(`SELECT permission_key FROM rbac_role_permissions WHERE role_id = ? ORDER BY permission_key ASC`, roleID)
+func (r *RBAC) ListRBACRolePermissionKeys(roleID string) ([]string, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store: rbac requires a database")
+	}
+	rows, err := r.db.Query(`SELECT permission_key FROM rbac_role_permissions WHERE role_id = ? ORDER BY permission_key ASC`, roleID)
 	if err != nil {
 		return nil, err
 	}
@@ -1329,7 +1395,10 @@ func (db *DB) ListRBACRolePermissionKeys(roleID string) ([]string, error) {
 	return out, rows.Err()
 }
 
-func (db *DB) ListRBACResourceAssignments(userID string) ([]RBACResourceAssignment, error) {
+func (r *RBAC) ListRBACResourceAssignments(userID string) ([]RBACResourceAssignment, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store: rbac requires a database")
+	}
 	query := `SELECT id, user_id, resource_type, resource_id, created_at FROM rbac_resource_assignments WHERE 1=1`
 	args := []interface{}{}
 	if strings.TrimSpace(userID) != "" {
@@ -1337,7 +1406,7 @@ func (db *DB) ListRBACResourceAssignments(userID string) ([]RBACResourceAssignme
 		args = append(args, strings.TrimSpace(userID))
 	}
 	query += ` ORDER BY created_at DESC`
-	rows, err := db.Query(query, args...)
+	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1349,10 +1418,10 @@ func (db *DB) ListRBACResourceAssignments(userID string) ([]RBACResourceAssignme
 		if err := rows.Scan(&row.ID, &row.UserID, &row.ResourceType, &row.ResourceID, &createdAt); err != nil {
 			return nil, err
 		}
-		row.CreatedAt = parseDBTime(createdAt)
+		row.CreatedAt = sqltime.Parse(createdAt)
 		out = append(out, row)
 	}
-	if err := enrichRBACAssignmentLabels(out, db.lookupRBACResourceOptionsByIDs); err != nil {
+	if err := enrichRBACAssignmentLabels(out, r.lookupRBACResourceOptionsByIDs); err != nil {
 		return nil, err
 	}
 	return out, rows.Err()
@@ -1361,12 +1430,15 @@ func (db *DB) ListRBACResourceAssignments(userID string) ([]RBACResourceAssignme
 // DeleteRBACResourceAssignmentWithDetails atomically removes an assignment and
 // returns the deleted row so callers can write a complete, attributable audit
 // event without racing a separate lookup against another delete.
-func (db *DB) DeleteRBACResourceAssignmentWithDetails(id string) (*RBACResourceAssignment, error) {
+func (r *RBAC) DeleteRBACResourceAssignmentWithDetails(id string) (*RBACResourceAssignment, error) {
+	if r == nil || r.db == nil {
+		return nil, errors.New("store: rbac requires a database")
+	}
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, errors.New("assignment id is required")
 	}
-	tx, err := db.Begin()
+	tx, err := r.db.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -1385,7 +1457,7 @@ func (db *DB) DeleteRBACResourceAssignmentWithDetails(id string) (*RBACResourceA
 	if err != nil {
 		return nil, err
 	}
-	row.CreatedAt = parseDBTime(createdAt)
+	row.CreatedAt = sqltime.Parse(createdAt)
 
 	result, err := tx.Exec(`DELETE FROM rbac_resource_assignments WHERE id = ?`, id)
 	if err != nil {
@@ -1400,10 +1472,4 @@ func (db *DB) DeleteRBACResourceAssignmentWithDetails(id string) (*RBACResourceA
 		return nil, err
 	}
 	return &row, nil
-}
-
-// ListAssignableRBACResources returns real resources for the admin assignment
-// picker without exposing full records or secret-bearing fields.
-func (db *DB) ListAssignableRBACResources(resourceType, search string, limit int) ([]RBACResourceOption, error) {
-	return db.ListAssignableRBACResourcesPage(resourceType, search, limit, 0)
 }

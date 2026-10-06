@@ -60,8 +60,8 @@ func TestPromoteAttackChainRequiresSourceConversationAccess(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	project, _ := db.CreateProject(&database.Project{Name: "owned"})
 	conversation, _ := db.CreateConversation("foreign", database.ConversationCreateMeta{})
-	_ = db.SetResourceOwner("project", project.ID, "u1")
-	_ = db.SetResourceOwner("conversation", conversation.ID, "u2")
+	_ = database.NewRBAC(db).SetResourceOwner("project", project.ID, "u1")
+	_ = database.NewRBAC(db).SetResourceOwner("conversation", conversation.ID, "u2")
 	h := NewProjectHandler(db, zap.NewNop())
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -84,13 +84,13 @@ func TestVulnerabilityCannotBeReparentedToForeignProject(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	owned, _ := db.CreateProject(&database.Project{Name: "owned"})
 	foreign, _ := db.CreateProject(&database.Project{Name: "foreign"})
-	_ = db.SetResourceOwner("project", owned.ID, "u1")
-	_ = db.SetResourceOwner("project", foreign.ID, "u2")
+	_ = database.NewRBAC(db).SetResourceOwner("project", owned.ID, "u1")
+	_ = database.NewRBAC(db).SetResourceOwner("project", foreign.ID, "u2")
 	vulnerability, err := database.NewFindings(db).Create(&store.Vulnerability{Title: "v", Severity: "high", ProjectID: owned.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = db.SetResourceOwner("vulnerability", vulnerability.ID, "u1")
+	_ = database.NewRBAC(db).SetResourceOwner("vulnerability", vulnerability.ID, "u1")
 	h := NewVulnerabilityHandler(db, zap.NewNop(), nil)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
@@ -111,7 +111,7 @@ func TestAgentTaskEndpointsFilterAndRejectForeignConversations(t *testing.T) {
 	db, user := setupConversationRBACTest(t)
 	allowed, _ := db.CreateConversation("allowed", database.ConversationCreateMeta{})
 	hidden, _ := db.CreateConversation("hidden", database.ConversationCreateMeta{})
-	if err := db.AssignResourceToUser(user.ID, "conversation", allowed.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "conversation", allowed.ID); err != nil {
 		t.Fatal(err)
 	}
 	tasks := NewAgentTaskManager()
@@ -121,7 +121,7 @@ func TestAgentTaskEndpointsFilterAndRejectForeignConversations(t *testing.T) {
 	if _, err := tasks.StartTask(hidden.ID, "secret", func(error) {}); err != nil {
 		t.Fatal(err)
 	}
-	h := &AgentHandler{db: db, tasks: tasks, logger: zap.NewNop()}
+	h := &AgentHandler{db: database.Narrow[database.AgentStore](db), rbac: database.NewRBAC(db), tasks: tasks, logger: zap.NewNop()}
 
 	w := performAssignedHandler(user, http.MethodGet, "/api/agent-loop/tasks", nil, h.ListAgentTasks)
 	if w.Code != http.StatusOK {
@@ -147,7 +147,7 @@ func TestChatUploadPathAuthorizationFollowsConversationAccess(t *testing.T) {
 	db, user := setupConversationRBACTest(t)
 	allowed, _ := db.CreateConversation("allowed", database.ConversationCreateMeta{})
 	hidden, _ := db.CreateConversation("hidden", database.ConversationCreateMeta{})
-	if err := db.AssignResourceToUser(user.ID, "conversation", allowed.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "conversation", allowed.ID); err != nil {
 		t.Fatal(err)
 	}
 	h := NewChatUploadsHandler(zap.NewNop(), db)
@@ -175,7 +175,7 @@ func TestChatUploadsListIncludesAuthorizedProjectWorkspaceFiles(t *testing.T) {
 	allowedProject, _ := db.CreateProject(&database.Project{Name: "allowed"})
 	hiddenProject, _ := db.CreateProject(&database.Project{Name: "hidden"})
 	conversation, _ := db.CreateConversation("project conversation", database.ConversationCreateMeta{ProjectID: allowedProject.ID})
-	if err := db.AssignResourceToUser(user.ID, "project", allowedProject.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "project", allowedProject.ID); err != nil {
 		t.Fatal(err)
 	}
 	allowedFile := filepath.Join(workspaceBase, "projects", allowedProject.ID, "csv", "assets.csv")
@@ -294,7 +294,7 @@ func TestChatUploadsListIncludesAuthorizedProjectWorkspaceFiles(t *testing.T) {
 func TestPrepareMultiAgentSessionRejectsForeignConversation(t *testing.T) {
 	db, user := setupConversationRBACTest(t)
 	hidden, _ := db.CreateConversation("hidden", database.ConversationCreateMeta{})
-	h := &AgentHandler{db: db, logger: zap.NewNop()}
+	h := &AgentHandler{db: database.Narrow[database.AgentStore](db), rbac: database.NewRBAC(db), logger: zap.NewNop()}
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Set(security.ContextSessionKey, security.Session{UserID: user.ID, Scope: database.RBACScopeAssigned, Permissions: map[string]bool{"chat:write": true}})
 

@@ -47,6 +47,15 @@ func (c *C2) MigrateListenerColumns() error {
 			}
 		}
 	}
+	// owner_user_id：RBAC 迁移搬来时它建的列，同一套 probe + duplicate 容错。
+	if err := c.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?", "c2_listeners", "owner_user_id").Scan(&count); err != nil || count == 0 {
+		if _, addErr := c.db.Exec("ALTER TABLE c2_listeners ADD COLUMN owner_user_id TEXT"); addErr != nil {
+			msg := strings.ToLower(addErr.Error())
+			if !strings.Contains(msg, "duplicate column") && !strings.Contains(msg, "already exists") {
+				return fmt.Errorf("添加c2_listeners.owner_user_id字段失败: %w", addErr)
+			}
+		}
+	}
 	return nil
 }
 

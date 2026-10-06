@@ -28,6 +28,7 @@ import (
 type Manager struct {
 	db       *database.DB
 	c2       *store.C2
+	rbac     *store.RBAC
 	logger   *zap.Logger
 	bus      *EventBus
 	registry *ListenerRegistry
@@ -85,6 +86,7 @@ func NewManager(db *database.DB, logger *zap.Logger, storageDir string) *Manager
 	return &Manager{
 		db:               db,
 		c2:               database.NewC2(db),
+		rbac:             database.NewRBAC(db),
 		logger:           logger,
 		bus:              NewEventBus(),
 		registry:         NewListenerRegistry(),
@@ -124,6 +126,9 @@ func (m *Manager) DB() *database.DB { return m.db }
 
 // C2 暴露 C2 域存储：监听器 / 会话 / 任务 / 文件 / 事件 / Profile 六张表的读写都在它上面。
 func (m *Manager) C2() *store.C2 { return m.c2 }
+
+// RBAC 暴露账号/归属/可见性存储：handler 与 mcptools 里"谁能碰这条 C2 资产"的问句都在它上面。
+func (m *Manager) RBAC() *store.RBAC { return m.rbac }
 
 // Logger 暴露日志句柄
 func (m *Manager) Logger() *zap.Logger { return m.logger }

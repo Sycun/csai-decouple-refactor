@@ -32,7 +32,7 @@ func TestCreateConversationRequiresProjectAccess(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusForbidden, w.Body.String())
 	}
 
-	if err := db.AssignResourceToUser(user.ID, "project", project.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "project", project.ID); err != nil {
 		t.Fatalf("AssignResourceToUser: %v", err)
 	}
 	w = performConversationRequest(user, http.MethodPost, "/api/conversations", map[string]string{
@@ -55,10 +55,10 @@ func TestSetConversationProjectRequiresProjectAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	if err := db.SetResourceOwner("conversation", conv.ID, user.ID); err != nil {
+	if err := database.NewRBAC(db).SetResourceOwner("conversation", conv.ID, user.ID); err != nil {
 		t.Fatalf("SetResourceOwner: %v", err)
 	}
-	if err := db.AssignResourceToUser(user.ID, "conversation", conv.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "conversation", conv.ID); err != nil {
 		t.Fatalf("AssignResourceToUser conversation: %v", err)
 	}
 	handler := NewConversationHandler(db, zap.NewNop())
@@ -73,7 +73,7 @@ func TestSetConversationProjectRequiresProjectAccess(t *testing.T) {
 		t.Fatalf("status = %d, want %d: %s", w.Code, http.StatusForbidden, w.Body.String())
 	}
 
-	if err := db.AssignResourceToUser(user.ID, "project", project.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "project", project.ID); err != nil {
 		t.Fatalf("AssignResourceToUser project: %v", err)
 	}
 	w = performConversationRequest(user, http.MethodPut, "/api/conversations/"+conv.ID+"/project", map[string]string{
@@ -94,7 +94,7 @@ func setupConversationRBACTest(t *testing.T) (*database.DB, *database.RBACUser) 
 		t.Fatalf("NewDB: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	user, err := db.CreateRBACUser("operator1", "Operator One", "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser("operator1", "Operator One", "hash", true, nil)
 	if err != nil {
 		t.Fatalf("CreateRBACUser: %v", err)
 	}

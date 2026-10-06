@@ -28,7 +28,7 @@ func TestAuthManagerAuthenticatesCreatedRBACUser(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HashPassword: %v", err)
 	}
-	user, err := db.CreateRBACUser("operator1", "Operator One", hash, true, []string{database.RBACSystemRoleViewer})
+	user, err := database.NewRBAC(db).CreateRBACUser("operator1", "Operator One", hash, true, []string{database.RBACSystemRoleViewer})
 	if err != nil {
 		t.Fatalf("CreateRBACUser: %v", err)
 	}

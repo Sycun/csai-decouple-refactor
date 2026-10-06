@@ -21,7 +21,7 @@ func TestAssetToolsCRUDQueryAndPageLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	user, err := db.CreateRBACUser("asset-agent", "Asset Agent", "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser("asset-agent", "Asset Agent", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestAssetToolsCRUDQueryAndPageLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AssignResourceToUser(user.ID, "conversation", conversation.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "conversation", conversation.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := database.NewFindings(db).Create(&store.Vulnerability{ConversationID: conversation.ID, Title: "finding", Severity: "high", Target: "192.0.2.42"}); err != nil {

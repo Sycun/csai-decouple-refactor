@@ -84,7 +84,8 @@ func RequireResourcePermission(db *database.DB, permission, resourceType, paramN
 			})
 			return
 		}
-		if db == nil {
+		rbac := database.NewRBAC(db)
+		if rbac == nil {
 			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "资源鉴权服务不可用"})
 			return
 		}
@@ -94,7 +95,7 @@ func RequireResourcePermission(db *database.DB, permission, resourceType, paramN
 			return
 		}
 		session, ok := CurrentSession(c)
-		if !ok || !db.UserCanAccessResource(session.UserID, session.Scope, resourceType, resourceID) {
+		if !ok || !rbac.UserCanAccessResource(session.UserID, session.Scope, resourceType, resourceID) {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 				"error":         "无权访问该资源",
 				"resource_type": resourceType,

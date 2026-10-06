@@ -364,6 +364,18 @@ func (s *BatchTasks) MigrateQueueColumns() error {
 		}
 	}
 
+	// owner_user_id：RBAC 迁移搬来时它建的列；probe + duplicate 容错同其他列。
+	var ownerCount int
+	err = s.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='owner_user_id'").Scan(&ownerCount)
+	if err != nil || ownerCount == 0 {
+		if _, addErr := s.db.Exec("ALTER TABLE batch_task_queues ADD COLUMN owner_user_id TEXT"); addErr != nil {
+			errMsg := strings.ToLower(addErr.Error())
+			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
+				return fmt.Errorf("补列 batch_task_queues.owner_user_id 失败: %w", addErr)
+			}
+		}
+	}
+
 	return nil
 }
 

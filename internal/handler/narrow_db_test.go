@@ -30,10 +30,7 @@ var narrowedHandlers = []struct {
 		return NewAttackChainHandler(db, nil, zap.NewNop())
 	}},
 	{"AuditHandler", func(db *database.DB) interface{} { return NewAuditHandler(db, nil, zap.NewNop()) }},
-	{"RBACHandler", func(db *database.DB) interface{} { return NewRBACHandler(db, zap.NewNop()) }},
-	{"VulnerabilityHandler", func(db *database.DB) interface{} { return NewVulnerabilityHandler(db, zap.NewNop(), nil) }},
 	{"ConversationHandler", func(db *database.DB) interface{} { return NewConversationHandler(db, zap.NewNop()) }},
-	{"MonitorHandler", func(db *database.DB) interface{} { return NewMonitorHandler(nil, nil, db, zap.NewNop()) }},
 	{"AgentHandler", func(db *database.DB) interface{} {
 		return NewAgentHandler(nil, db, &config.Config{}, zap.NewNop())
 	}},
@@ -45,11 +42,6 @@ var narrowedHandlers = []struct {
 	{"RobotHandler", func(db *database.DB) interface{} { return NewRobotHandler(&config.Config{}, db, nil, zap.NewNop()) }},
 	{"WebShellHandler", func(db *database.DB) interface{} { return NewWebShellHandler(zap.NewNop(), db) }},
 	{"ChatUploadsHandler", func(db *database.DB) interface{} { return NewChatUploadsHandler(zap.NewNop(), db) }},
-	{"ConfigHandler", func(db *database.DB) interface{} {
-		h := &ConfigHandler{logger: zap.NewNop()}
-		h.SetDB(db)
-		return h
-	}},
 }
 
 // storeOwnedHandlers are the domains that went one step further than a consumer interface: their
@@ -73,6 +65,15 @@ var storeOwnedHandlers = []struct {
 		m.SetDB(db)
 		return m
 	}},
+	// RBAC 域交回 store 之后，这四个 handler 的 RBAC 字段自己就是 *store.RBAC（没有 db 接口字段了）。
+	{"RBACHandler", "rbac", func(db *database.DB) interface{} { return NewRBACHandler(db, zap.NewNop()) }},
+	{"VulnerabilityHandler", "rbac", func(db *database.DB) interface{} { return NewVulnerabilityHandler(db, zap.NewNop(), nil) }},
+	{"ConfigHandler", "rbac", func(db *database.DB) interface{} {
+		h := &ConfigHandler{logger: zap.NewNop()}
+		h.SetDB(db)
+		return h
+	}},
+	{"MonitorHandler", "executions", func(db *database.DB) interface{} { return NewMonitorHandler(nil, nil, db, zap.NewNop()) }},
 }
 
 // storeField returns a named field and requires it to be a pointer to a store from internal/store.

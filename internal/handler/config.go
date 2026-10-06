@@ -24,6 +24,7 @@ import (
 	"cyberstrike-ai/internal/mcp/builtin"
 	"cyberstrike-ai/internal/openai"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 	"cyberstrike-ai/internal/toolguard"
 	"cyberstrike-ai/internal/typesafe"
 
@@ -96,7 +97,7 @@ type ConfigHandler struct {
 	appUpdater           AppUpdater           // App更新器（可选）
 	robotRestarter       RobotRestarter       // 机器人连接重启器（可选），ApplyConfig 时重启钉钉/飞书
 	audit                *audit.Service
-	db                   database.ConfigStore
+	rbac                 *store.RBAC
 	logger               *zap.Logger
 	mu                   sync.RWMutex
 	toolGuard            *toolguard.Manager
@@ -104,15 +105,15 @@ type ConfigHandler struct {
 }
 
 func (h *ConfigHandler) SetDB(db *database.DB) {
-	h.db = database.Narrow[database.ConfigStore](db)
+	h.rbac = database.NewRBAC(db)
 }
 
 func (h *ConfigHandler) validateRobotServiceAccounts(robots config.RobotsConfig) error {
-	if h.db == nil {
+	if h.rbac == nil {
 		return fmt.Errorf("RBAC 服务不可用，无法校验机器人服务账号")
 	}
 	for platform, userID := range robots.ServiceAccountUserIDs() {
-		user, err := h.db.GetRBACUserByID(userID)
+		user, err := h.rbac.GetRBACUserByID(userID)
 		if err != nil {
 			return fmt.Errorf("robots.%s.auth.service_user_id 对应用户不存在", platform)
 		}

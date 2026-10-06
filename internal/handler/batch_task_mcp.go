@@ -225,7 +225,7 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 		}
 		projectID := strings.TrimSpace(mcpArgString(args, "project_id"))
 		if principal, ok := authctx.PrincipalFromContext(ctx); ok && projectID != "" && principal.ScopeFor("tasks:write") != database.RBACScopeAll {
-			if h.db == nil || !h.db.UserCanAccessResource(principal.UserID, principal.ScopeFor("tasks:write"), "project", projectID) {
+			if h.db == nil || !h.rbac.UserCanAccessResource(principal.UserID, principal.ScopeFor("tasks:write"), "project", projectID) {
 				return batchMCPTextResult("无权访问目标项目", true), nil
 			}
 		}
@@ -235,8 +235,8 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 			return batchMCPTextResult("创建队列失败: "+createErr.Error(), true), nil
 		}
 		if principal, ok := authctx.PrincipalFromContext(ctx); ok && h.db != nil {
-			_ = h.db.SetResourceOwner("batch_task", queue.ID, principal.UserID)
-			_ = h.db.AssignResourceToUser(principal.UserID, "batch_task", queue.ID)
+			_ = h.rbac.SetResourceOwner("batch_task", queue.ID, principal.UserID)
+			_ = h.rbac.AssignResourceToUser(principal.UserID, "batch_task", queue.ID)
 		}
 		started := false
 		if executeNow {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/google/uuid"
 )
@@ -33,7 +34,7 @@ type Session struct {
 // AuthManager manages password-based authentication and session lifecycle.
 type AuthManager struct {
 	sessionDuration time.Duration
-	db              *database.DB
+	rbac            *store.RBAC
 
 	mu       sync.RWMutex
 	sessions map[string]Session
@@ -54,11 +55,12 @@ func NewAuthManager(sessionDurationHours int) *AuthManager {
 // AttachRBACStore enables multi-user RBAC authentication. When no users exist yet,
 // it bootstraps the built-in admin account and returns the generated initial password.
 func (a *AuthManager) AttachRBACStore(db *database.DB) (generatedAdminPassword string, err error) {
-	if db == nil {
+	rbac := database.NewRBAC(db)
+	if rbac == nil {
 		return "", errors.New("database is required for authentication")
 	}
 
-	needsAdminPassword, err := db.RBACNeedsAdminPassword()
+	needsAdminPassword, err := rbac.RBACNeedsAdminPassword()
 	if err != nil {
 		return "", err
 	}
@@ -75,12 +77,12 @@ func (a *AuthManager) AttachRBACStore(db *database.DB) (generatedAdminPassword s
 		}
 	}
 
-	if err := db.BootstrapRBAC(adminPasswordHash, PermissionCatalog); err != nil {
+	if err := rbac.BootstrapRBAC(adminPasswordHash, PermissionCatalog); err != nil {
 		return "", err
 	}
 
 	a.mu.Lock()
-	a.db = db
+	a.rbac = rbac
 	a.mu.Unlock()
 	return generatedAdminPassword, nil
 }
@@ -102,9 +104,9 @@ func (a *AuthManager) authenticateSession(username, password string) (Session, e
 	expiresAt := time.Now().Add(a.sessionDuration)
 
 	a.mu.RLock()
-	db := a.db
+	rbac := a.rbac
 	a.mu.RUnlock()
-	if db == nil {
+	if rbac == nil {
 		return Session{}, errors.New("authentication store is not configured")
 	}
 
@@ -112,7 +114,7 @@ func (a *AuthManager) authenticateSession(username, password string) (Session, e
 	if username == "" {
 		username = "admin"
 	}
-	user, err := db.GetRBACUserByUsername(username)
+	user, err := rbac.GetRBACUserByUsername(username)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return Session{}, ErrInvalidPassword
@@ -122,7 +124,7 @@ func (a *AuthManager) authenticateSession(username, password string) (Session, e
 	if !user.Enabled || !VerifyPasswordHash(password, user.PasswordHash) {
 		return Session{}, ErrInvalidPassword
 	}
-	access, err := db.ResolveRBACAccess(user.ID)
+	access, err := rbac.ResolveRBACAccess(user.ID)
 	if err != nil {
 		return Session{}, err
 	}
@@ -181,12 +183,12 @@ func (a *AuthManager) CheckPassword(password string) bool {
 // CheckUserPassword verifies whether the provided password matches a user.
 func (a *AuthManager) CheckUserPassword(username, password string) bool {
 	a.mu.RLock()
-	db := a.db
+	rbac := a.rbac
 	a.mu.RUnlock()
-	if db == nil {
+	if rbac == nil {
 		return false
 	}
-	user, err := db.GetRBACUserByUsername(username)
+	user, err := rbac.GetRBACUserByUsername(username)
 	if err != nil {
 		return false
 	}
@@ -203,12 +205,12 @@ func (a *AuthManager) UpdateUserPassword(userID, password string) error {
 		return err
 	}
 	a.mu.RLock()
-	db := a.db
+	rbac := a.rbac
 	a.mu.RUnlock()
-	if db == nil {
+	if rbac == nil {
 		return errors.New("authentication store is not configured")
 	}
-	if err := db.UpdateRBACUserPassword(userID, hash); err != nil {
+	if err := rbac.UpdateRBACUserPassword(userID, hash); err != nil {
 		return err
 	}
 	a.mu.Lock()

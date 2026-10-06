@@ -157,7 +157,7 @@ func NewDB(dbPath string, logger *zap.Logger) (*DB, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("初始化表失败: %w", err)
 	}
-	if err := store.NewMonitor(database.DB, database.UserCanAccessResource).MigrateLegacyGuardBlocks(); err != nil {
+	if err := store.NewMonitor(database.DB, NewRBAC(database).UserCanAccessResource).MigrateLegacyGuardBlocks(); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("迁移历史安全拦截记录失败: %w", err)
 	}
@@ -257,7 +257,7 @@ func (db *DB) initTables() error {
 		return err
 	}
 
-	if err := store.NewMonitor(db.DB, db.UserCanAccessResource).EnsureSchema(); err != nil {
+	if err := store.NewMonitor(db.DB, NewRBAC(db).UserCanAccessResource).EnsureSchema(); err != nil {
 		return err
 	}
 
@@ -297,7 +297,7 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("创建 WebShell 连接表失败: %w", err)
 	}
 
-	if err := db.initRBACTables(); err != nil {
+	if err := store.NewRBAC(db.DB).EnsureSchema(); err != nil {
 		return fmt.Errorf("创建RBAC表失败: %w", err)
 	}
 	// 漏洞提醒的两张表由它们的 store 自己建：订阅页与投递 worker 是仅有的两个读者。
@@ -376,14 +376,14 @@ func (db *DB) initTables() error {
 	if err := store.NewWorkflows(db.DB).MigrateRunsTable(); err != nil {
 		db.logger.Warn("迁移 workflow 运行表失败", zap.Error(err))
 	}
-	if err := store.NewMonitor(db.DB, db.UserCanAccessResource).MigrateLateColumns(); err != nil {
+	if err := store.NewMonitor(db.DB, NewRBAC(db).UserCanAccessResource).MigrateLateColumns(); err != nil {
 		db.logger.Warn("迁移tool_executions partial output字段失败", zap.Error(err))
 	}
 	// 三条 tool_executions 索引仍按原顺序跑在补列之后（全局建索引那一步的位置）。
-	if err := store.NewMonitor(db.DB, db.UserCanAccessResource).EnsureIndexes(); err != nil {
+	if err := store.NewMonitor(db.DB, NewRBAC(db).UserCanAccessResource).EnsureIndexes(); err != nil {
 		return fmt.Errorf("创建tool_executions索引失败: %w", err)
 	}
-	if err := db.migrateRBACOwnershipColumns(); err != nil {
+	if err := db.migrateLegacyOwnerColumns(); err != nil {
 		db.logger.Warn("迁移RBAC资源归属字段失败", zap.Error(err))
 	}
 
@@ -528,6 +528,39 @@ func (db *DB) migrateProjectsTable() error {
 		if count == 0 {
 			if _, addErr := db.Exec(col.stmt); addErr != nil {
 				db.logger.Warn("添加字段失败", zap.String("table", col.table), zap.String("field", col.name), zap.Error(addErr))
+			}
+		}
+	}
+	return nil
+}
+
+// migrateLegacyOwnerColumns 是 RBAC 迁移里剩下的两张表的 owner 补列：projects 与 conversations
+// 的 DDL 还在本文件里（它们的刀没到），补列先跟着表走；其余四张表（vulnerabilities /
+// webshell_connections / batch_task_queues / c2_listeners）的同一列已随各自表主进 store 的迁移。
+func (db *DB) migrateLegacyOwnerColumns() error {
+	for _, col := range []struct {
+		table string
+		name  string
+		stmt  string
+	}{
+		{"projects", "owner_user_id", "ALTER TABLE projects ADD COLUMN owner_user_id TEXT"},
+		{"conversations", "owner_user_id", "ALTER TABLE conversations ADD COLUMN owner_user_id TEXT"},
+	} {
+		if err := db.addColumnIfMissing(col.table, col.name, col.stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (db *DB) addColumnIfMissing(table, name, stmt string) error {
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?", table, name).Scan(&count)
+	if err != nil || count == 0 {
+		if _, addErr := db.Exec(stmt); addErr != nil {
+			msg := strings.ToLower(addErr.Error())
+			if !strings.Contains(msg, "duplicate column") && !strings.Contains(msg, "already exists") {
+				return fmt.Errorf("添加%s.%s字段失败: %w", table, name, addErr)
 			}
 		}
 	}

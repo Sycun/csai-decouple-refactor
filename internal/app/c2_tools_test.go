@@ -21,7 +21,7 @@ func TestC2ListenerCreateInheritsConversationProject(t *testing.T) {
 	}
 	defer db.Close()
 
-	user, err := db.CreateRBACUser("c2-agent", "C2 Agent", "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser("c2-agent", "C2 Agent", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestC2ListenerCreateInheritsConversationProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AssignResourceToUser(user.ID, "project", project.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "project", project.ID); err != nil {
 		t.Fatal(err)
 	}
 	conversation, err := db.CreateConversation("project chat", database.ConversationCreateMeta{ProjectID: project.ID})

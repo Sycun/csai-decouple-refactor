@@ -185,6 +185,7 @@ func discardPlanningIfEchoesToolResult(respPlan *responsePlanAgg, toolData inter
 type AgentHandler struct {
 	agent *agent.Agent
 	db    database.AgentStore
+	rbac  *store.RBAC
 	// runs 是 workflow 五张表的主人：绑角色的工作流从这里落运行与节点状态
 	runs *store.Workflows
 	// facts 是黑板两张表的账本：会话里生成的项目事实与边从这里读写，不再经过连接包装。
@@ -340,12 +341,13 @@ func NewAgentHandler(agent *agent.Agent, db *database.DB, cfg *config.Config, lo
 	handler := &AgentHandler{
 		agent:            agent,
 		db:               database.Narrow[database.AgentStore](db),
+		rbac:             database.NewRBAC(db),
 		stats:            newSkillStatsStore(db),
 		hitlStore:        newHITLStore(db),
 		runs:             newWorkflowStore(db),
 		facts:            database.NewFacts(db),
 		webshells:        database.NewWebshell(db),
-		hitlQueue:        newHITLQueue(database.Narrow[database.AgentStore](db), newHITLStore(db), cfg, hitlManager),
+		hitlQueue:        newHITLQueue(database.NewRBAC(db), newHITLStore(db), cfg, hitlManager),
 		sessions:         newSessionStore(db),
 		logger:           logger,
 		tasks:            tm,
@@ -834,7 +836,7 @@ func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, platform stri
 		}
 		meta := audit.ConversationCreateMeta(src)
 		meta.ProjectID = effectiveProjectID(h.config, "")
-		if meta.ProjectID != "" && (!principal.HasPermission("project:read") || !h.db.UserCanAccessResource(ownerUserID, principal.ScopeFor("project:read"), "project", meta.ProjectID)) {
+		if meta.ProjectID != "" && (!principal.HasPermission("project:read") || !h.rbac.UserCanAccessResource(ownerUserID, principal.ScopeFor("project:read"), "project", meta.ProjectID)) {
 			meta.ProjectID = ""
 		}
 		conv, createErr := h.db.CreateConversation(title, meta)
@@ -842,9 +844,9 @@ func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, platform stri
 			return "", "", fmt.Errorf("创建对话失败: %w", createErr)
 		}
 		conversationID = conv.ID
-		_ = h.db.SetResourceOwner("conversation", conversationID, ownerUserID)
+		_ = h.rbac.SetResourceOwner("conversation", conversationID, ownerUserID)
 	} else {
-		if _, getErr := h.db.GetConversation(conversationID); getErr != nil || !h.db.UserCanAccessResource(ownerUserID, principal.ScopeFor("chat:write"), "conversation", conversationID) {
+		if _, getErr := h.db.GetConversation(conversationID); getErr != nil || !h.rbac.UserCanAccessResource(ownerUserID, principal.ScopeFor("chat:write"), "conversation", conversationID) {
 			return "", "", fmt.Errorf("对话不存在")
 		}
 	}
@@ -1836,7 +1838,7 @@ func (h *AgentHandler) ListCompletedTasks(c *gin.Context) {
 
 func (h *AgentHandler) agentConversationAllowed(c *gin.Context, conversationID string) bool {
 	session, ok := security.CurrentSession(c)
-	return ok && h.db != nil && h.db.UserCanAccessResource(session.UserID, session.Scope, "conversation", strings.TrimSpace(conversationID))
+	return ok && h.db != nil && h.rbac.UserCanAccessResource(session.UserID, session.Scope, "conversation", strings.TrimSpace(conversationID))
 }
 
 func filterSlice[T any](items []T, keep func(T) bool) []T {
@@ -1902,7 +1904,7 @@ func (h *AgentHandler) CreateBatchQueue(c *gin.Context) {
 		return
 	}
 	if session, ok := security.CurrentSession(c); ok && h.db != nil && session.Scope != database.RBACScopeAll && strings.TrimSpace(req.ProjectID) != "" {
-		if !h.db.UserCanAccessResource(session.UserID, session.Scope, "project", strings.TrimSpace(req.ProjectID)) {
+		if !h.rbac.UserCanAccessResource(session.UserID, session.Scope, "project", strings.TrimSpace(req.ProjectID)) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "无权在该项目下创建批量任务"})
 			return
 		}
@@ -1932,8 +1934,8 @@ func (h *AgentHandler) CreateBatchQueue(c *gin.Context) {
 		return
 	}
 	if session, ok := security.CurrentSession(c); ok && h.db != nil {
-		_ = h.db.SetResourceOwner("batch_task", queue.ID, session.UserID)
-		_ = h.db.AssignResourceToUser(session.UserID, "batch_task", queue.ID)
+		_ = h.rbac.SetResourceOwner("batch_task", queue.ID, session.UserID)
+		_ = h.rbac.AssignResourceToUser(session.UserID, "batch_task", queue.ID)
 	}
 	started := false
 	if req.ExecuteNow {

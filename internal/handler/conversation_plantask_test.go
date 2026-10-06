@@ -37,7 +37,7 @@ func TestGetConversationPlanTasksRequiresAccessAndReportsProgress(t *testing.T) 
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	user, err := db.CreateRBACUser("plan-user", "Plan User", "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser("plan-user", "Plan User", "hash", true, nil)
 	if err != nil {
 		t.Fatalf("CreateRBACUser: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestGetConversationPlanTasksRequiresAccessAndReportsProgress(t *testing.T) 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("unassigned status = %d, want %d", w.Code, http.StatusForbidden)
 	}
-	if err := db.AssignResourceToUser(user.ID, "conversation", conversation.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "conversation", conversation.ID); err != nil {
 		t.Fatalf("AssignResourceToUser: %v", err)
 	}
 	w = request()
@@ -110,11 +110,11 @@ func TestGetConversationPlanTasksReportsStoppedLiveTask(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	user, err := db.CreateRBACUser("stopped-plan-user", "Stopped Plan User", "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser("stopped-plan-user", "Stopped Plan User", "hash", true, nil)
 	if err != nil {
 		t.Fatalf("CreateRBACUser: %v", err)
 	}
-	if err := db.AssignResourceToUser(user.ID, "conversation", conversation.ID); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "conversation", conversation.ID); err != nil {
 		t.Fatalf("AssignResourceToUser: %v", err)
 	}
 	base := filepath.Join(tmp, "plantask")

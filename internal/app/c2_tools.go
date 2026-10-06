@@ -141,8 +141,8 @@ tcp_reverse 默认仅接受 CSB1 加密 Beacon（AES-GCM + ImplantToken）才登
 				return makeC2Result(nil, err)
 			}
 			if principal, ok := authctx.PrincipalFromContext(ctx); ok {
-				_ = m.DB().SetResourceOwner("c2_listener", listener.ID, principal.UserID)
-				_ = m.DB().AssignResourceToUser(principal.UserID, "c2_listener", listener.ID)
+				_ = m.RBAC().SetResourceOwner("c2_listener", listener.ID, principal.UserID)
+				_ = m.RBAC().AssignResourceToUser(principal.UserID, "c2_listener", listener.ID)
 			}
 			implantToken := listener.ImplantToken
 			listener.EncryptionKey = ""

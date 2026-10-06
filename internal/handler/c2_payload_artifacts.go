@@ -33,5 +33,5 @@ func userMayFetchPayloadArtifact(mgr *c2.Manager, session security.Session, file
 	if artifact.OwnerUserID == strings.TrimSpace(session.UserID) {
 		return true
 	}
-	return mgr.DB().UserCanAccessResource(session.UserID, session.Scope, "c2_listener", artifact.ListenerID)
+	return mgr.RBAC().UserCanAccessResource(session.UserID, session.Scope, "c2_listener", artifact.ListenerID)
 }

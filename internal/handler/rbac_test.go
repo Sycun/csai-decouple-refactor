@@ -25,7 +25,7 @@ func TestRBACAssignResourceBatchIsAtomicAndLegacyCompatible(t *testing.T) {
 	}
 	defer db.Close()
 
-	user, err := db.CreateRBACUser("api-member", "API Member", "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser("api-member", "API Member", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestRBACAssignResourceBatchIsAtomicAndLegacyCompatible(t *testing.T) {
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("invalid status = %d, body = %s", invalid.Code, invalid.Body.String())
 	}
-	rows, err := db.ListRBACResourceAssignments(user.ID)
+	rows, err := database.NewRBAC(db).ListRBACResourceAssignments(user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestRBACAssignResourceAutoDetectsActualType(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	user, err := db.CreateRBACUser("auto-member", "Auto Member", "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser("auto-member", "Auto Member", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestRBACAssignResourceAutoDetectsActualType(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("auto-detect status = %d, body = %s", response.Code, response.Body.String())
 	}
-	rows, err := db.ListRBACResourceAssignments(user.ID)
+	rows, err := database.NewRBAC(db).ListRBACResourceAssignments(user.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestRBACDeleteResourceAssignmentAuditsTargetResource(t *testing.T) {
 	if err := store.NewAuditLogs(db.DB).EnsureSchema(); err != nil {
 		t.Fatal(err)
 	}
-	user, err := db.CreateRBACUser("audit-member", "Audit Member", "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser("audit-member", "Audit Member", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,10 +162,10 @@ func TestRBACDeleteResourceAssignmentAuditsTargetResource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.AssignResourcesToUser(user.ID, "project", []string{project.ID}); err != nil {
+	if _, err := database.NewRBAC(db).AssignResourcesToUser(user.ID, "project", []string{project.ID}); err != nil {
 		t.Fatal(err)
 	}
-	assignments, err := db.ListRBACResourceAssignments(user.ID)
+	assignments, err := database.NewRBAC(db).ListRBACResourceAssignments(user.ID)
 	if err != nil || len(assignments) != 1 {
 		t.Fatalf("assignments = %#v, err = %v", assignments, err)
 	}

@@ -24,7 +24,6 @@ type AgentStore interface {
 	AddMessage(conversationID, role, content string, mcpExecutionIDs []string) (*Message, error)
 	AddProcessDetail(messageID, conversationID, eventType, message string, data interface{}) error
 	AddProcessDetailWithID(messageID, conversationID, eventType, message string, data interface{}) (string, error)
-	AssignResourceToUser(userID, resourceType, resourceID string) error
 	CreateConversation(title string, meta ConversationCreateMeta) (*Conversation, error)
 	CreateConversationWithWebshell(webshellConnectionID, title string, meta ConversationCreateMeta) (*Conversation, error)
 	DeleteProcessDetail(id string) error
@@ -34,16 +33,12 @@ type AgentStore interface {
 	GetConversationProjectID(conversationID string) (string, error)
 	GetConversationTitle(id string) (string, error)
 	GetMessages(conversationID string) ([]Message, error)
-	GetResourceOwner(resourceType, resourceID string) string
 	GetTurnUserMessage(conversationID, anchorMessageID string) (string, error)
-	ResolveRBACAccess(userID string) (*RBACAccess, error)
 	SaveAgentTrace(conversationID, traceInputJSON, assistantOutput string) error
 	SetConversationAgentMode(id, agentMode string) error
 	SetConversationRoleName(id, roleName string) error
-	SetResourceOwner(resourceType, resourceID, userID string) error
 	UpdateAssistantMessageFinalize(messageID, content string, mcpExecutionIDs []string, reasoningContent string) error
 	UpdateProcessDetailContent(id, message string, data interface{}) error
-	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 	Exec(query string, args ...any) (sql.Result, error)
 	Query(query string, args ...any) (*sql.Rows, error)
 	QueryRow(query string, args ...any) *sql.Row
@@ -57,7 +52,6 @@ var _ AgentStore = (*DB)(nil)
 // wrapper can change the assets table any more.
 type AssetContextStore interface {
 	GetProject(id string) (*Project, error)
-	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 
 var _ AssetContextStore = (*DB)(nil)
@@ -102,21 +96,14 @@ type ChatUploadsStore interface {
 	GetConversationProjectID(conversationID string) (string, error)
 	GetConversationTitle(id string) (string, error)
 	GetProjectName(id string) (string, error)
-	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 
 var _ ChatUploadsStore = (*DB)(nil)
 
 // ConfigStore is the persistence surface required by ConfigHandler.
-type ConfigStore interface {
-	GetRBACUserByID(id string) (*RBACUser, error)
-}
-
-var _ ConfigStore = (*DB)(nil)
 
 // ConversationStore is the persistence surface required by ConversationHandler.
 type ConversationStore interface {
-	AssignResourceToUser(userID, resourceType, resourceID string) error
 	CountConversationsForAccess(search, projectID, userID, scope string) (int, error)
 	CreateConversation(title string, meta ConversationCreateMeta) (*Conversation, error)
 	DeleteConversation(id string) error
@@ -131,10 +118,8 @@ type ConversationStore interface {
 	ListConversationPlanTasksSince(conversationID string, since time.Time) ([]ConversationPlanTask, error)
 	ListConversationsForAccess(limit, offset int, search, sortBy, projectID, userID, scope string) ([]*Conversation, error)
 	SetConversationProjectID(conversationID, projectID string) error
-	SetResourceOwner(resourceType, resourceID, userID string) error
 	UpdateConversationPinned(id string, pinned bool) error
 	UpdateConversationTitle(id, title string) error
-	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 
 var _ ConversationStore = (*DB)(nil)
@@ -142,18 +127,9 @@ var _ ConversationStore = (*DB)(nil)
 // MonitorContextStore is what MonitorHandler still needs from the connection wrapper: the RBAC
 // conversation visibility that toolExecutionVisible reaches for. The fourteen tool-execution members
 // it used to carry are store.Monitor's now (see §11 第四十一刀).
-type MonitorContextStore interface {
-	// Reached through handler.toolExecutionVisible, which takes the handler's storage as a
-	// one-method interface: an execution with no owner match is visible iff its conversation is.
-	// Same generation blind spot as AuditStore's existence lookups - direct h.db.X calls only.
-	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
-}
-
-var _ MonitorContextStore = (*DB)(nil)
 
 // NotificationStore is the persistence surface required by NotificationHandler.
 type NotificationStore interface {
-	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 	Begin() (*sql.Tx, error)
 	Query(query string, args ...any) (*sql.Rows, error)
 }
@@ -172,7 +148,6 @@ var _ OpenAPIStore = (*DB)(nil)
 type ProjectStore interface {
 	ProjectRowStore
 	AttackChainLedger
-	AssignResourceToUser(userID, resourceType, resourceID string) error
 	CountConversationsByProjectID(projectID string) (int, error)
 	CountProjectsForAccess(status, search, userID, scope string) (int, error)
 	CreateProject(p *Project) (*Project, error)
@@ -181,42 +156,17 @@ type ProjectStore interface {
 	GetProjectDashboardSummaryForAccess(factLimit int, userID, scope string) (*ProjectDashboardSummary, error)
 	ListConversationsByProjectID(projectID string, limit, offset int) ([]*Conversation, error)
 	ListProjectsForAccess(status, search string, limit, offset int, userID, scope string) ([]*Project, error)
-	SetResourceOwner(resourceType, resourceID, userID string) error
 	UpdateProject(p *Project) error
-	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 
 var _ ProjectStore = (*DB)(nil)
 
 // RBACStore is the persistence surface required by RBACHandler.
-type RBACStore interface {
-	AssignResourcesToUser(userID, resourceType string, resourceIDs []string) (int64, error)
-	AssignResourcesToUserAuto(userID string, resourceIDs []string) (int64, map[string]string, error)
-	CountAssignableRBACResources(resourceType, search string) (int, error)
-	CreateRBACUser(username, displayName, passwordHash string, enabled bool, roleIDs []string) (*RBACUser, error)
-	DeleteRBACResourceAssignmentWithDetails(id string) (*RBACResourceAssignment, error)
-	DeleteRBACRole(id string) error
-	DeleteRBACUser(userID string) error
-	GetRBACRoleByID(id string) (*RBACRole, error)
-	GetRBACUserByID(id string) (*RBACUser, error)
-	ListAssignableRBACResourcesPage(resourceType, search string, limit, offset int) ([]RBACResourceOption, error)
-	ListRBACResourceAssignments(userID string) ([]RBACResourceAssignment, error)
-	ListRBACRolePermissionKeys(roleID string) ([]string, error)
-	ListRBACRoles() ([]RBACRole, error)
-	ListRBACUserRoleIDs(userID string) ([]string, error)
-	ListRBACUsers() ([]RBACUser, error)
-	UpdateRBACUser(userID, displayName string, enabled *bool, roleIDs *[]string) error
-	UpdateRBACUserPassword(userID, passwordHash string) error
-	UpsertRBACRole(id, name, description, scope string, permissionKeys []string) (*RBACRole, error)
-}
-
-var _ RBACStore = (*DB)(nil)
 
 // RobotStore is the persistence surface required by RobotHandler. The alert subscription and the
 // durable outbox are not in it any more - they are store.VulnerabilityAlerts, and the robot handler
 // holds that store directly (its worker only needs the queue, its commands only need the subscription).
 type RobotStore interface {
-	GetRBACUserByID(id string) (*RBACUser, error)
 	CreateConversation(title string, meta ConversationCreateMeta) (*Conversation, error)
 	CreateProject(p *Project) (*Project, error)
 	DeleteConversation(id string) error
@@ -225,11 +175,8 @@ type RobotStore interface {
 	GetProject(id string) (*Project, error)
 	ListConversationsForAccess(limit, offset int, search, sortBy, projectID, userID, scope string) ([]*Conversation, error)
 	ListProjectsForAccess(status, search string, limit, offset int, userID, scope string) ([]*Project, error)
-	ResolveRBACAccess(userID string) (*RBACAccess, error)
 	SetConversationProjectID(conversationID, projectID string) error
-	SetResourceOwner(resourceType, resourceID, userID string) error
 	UpdateConversationTitle(id, title string) error
-	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 
 var _ RobotStore = (*DB)(nil)
@@ -238,21 +185,11 @@ var _ RobotStore = (*DB)(nil)
 // finding rows themselves moved to store.Vulnerabilities: the three RBAC lookups a finding's owner and
 // candidates are decided with. The alert subscription the same page edits is store.VulnerabilityAlerts,
 // so it is not here either. The name says which handler this surface serves, not which table it owns.
-type VulnerabilityStore interface {
-	AssignResourceToUser(userID, resourceType, resourceID string) error
-	SetResourceOwner(resourceType, resourceID, userID string) error
-	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
-}
-
-var _ VulnerabilityStore = (*DB)(nil)
 
 // WebShellStore is the persistence surface required by WebShellHandler.
 type WebShellStore interface {
-	AssignResourceToUser(userID, resourceType, resourceID string) error
 	GetConversationByWebshellConnectionID(connectionID string) (*Conversation, error)
 	ListConversationsByWebshellConnectionID(connectionID string) ([]WebShellConversationItem, error)
-	SetResourceOwner(resourceType, resourceID, userID string) error
-	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 
 var _ WebShellStore = (*DB)(nil)
@@ -264,7 +201,6 @@ var _ WebShellStore = (*DB)(nil)
 type WorkflowStore interface {
 	ProjectRowStore
 	AddProcessDetail(conversationID, messageID, id, eventType string, data interface{}) error
-	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 
 var _ WorkflowStore = (*DB)(nil)

@@ -327,6 +327,7 @@ type WebShellHandler struct {
 	logger *zap.Logger
 	client *http.Client
 	db     database.WebShellStore
+	rbac   *store.RBAC
 	conns  *store.Webshell // webshell_connections + 状态表：这个页面唯一的写来源
 	audit  *audit.Service
 }
@@ -349,7 +350,8 @@ func NewWebShellHandler(logger *zap.Logger, db *database.DB) *WebShellHandler {
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // intentional for webshell proxy
 			},
 		},
-		db: database.Narrow[database.WebShellStore](db),
+		db:   database.Narrow[database.WebShellStore](db),
+		rbac: database.NewRBAC(db),
 	}
 }
 
@@ -448,8 +450,8 @@ func (h *WebShellHandler) CreateConnection(c *gin.Context) {
 		return
 	}
 	if session, ok := security.CurrentSession(c); ok {
-		_ = h.db.SetResourceOwner("webshell", conn.ID, session.UserID)
-		_ = h.db.AssignResourceToUser(session.UserID, "webshell", conn.ID)
+		_ = h.rbac.SetResourceOwner("webshell", conn.ID, session.UserID)
+		_ = h.rbac.AssignResourceToUser(session.UserID, "webshell", conn.ID)
 	}
 	if h.audit != nil {
 		host := req.URL
@@ -944,7 +946,7 @@ func (h *WebShellHandler) authorizedWebshellConnection(c *gin.Context, connectio
 		return nil, false
 	}
 	session, ok := security.CurrentSession(c)
-	if !ok || !h.db.UserCanAccessResource(session.UserID, session.Scope, "webshell", connectionID) {
+	if !ok || !h.rbac.UserCanAccessResource(session.UserID, session.Scope, "webshell", connectionID) {
 		return nil, false
 	}
 	conn, err := h.conns.Get(connectionID)
@@ -969,7 +971,7 @@ func (h *WebShellHandler) canAccessProject(c *gin.Context, projectID string) boo
 	if session.Scope == database.RBACScopeAll {
 		return true
 	}
-	return h.db.UserCanAccessResource(session.UserID, session.Scope, "project", projectID)
+	return h.rbac.UserCanAccessResource(session.UserID, session.Scope, "project", projectID)
 }
 
 // ExecWithConnection 在指定 WebShell 连接上执行命令（供 MCP/Agent 等非 HTTP 调用）

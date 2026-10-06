@@ -162,7 +162,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		config.PrintBootstrapAdminPassword(generatedPassword)
 	}
 	for platform, userID := range cfg.Robots.ServiceAccountUserIDs() {
-		user, userErr := db.GetRBACUserByID(userID)
+		user, userErr := database.NewRBAC(db).GetRBACUserByID(userID)
 		if userErr != nil || !user.Enabled {
 			return nil, fmt.Errorf("robots.%s.auth.service_user_id 必须指向已启用的 RBAC 用户", platform)
 		}
@@ -1429,7 +1429,7 @@ func registerWebshellManagementTools(mcpServer *mcp.Server, db *database.DB, web
 		if projectID == store.ProjectUnbound {
 			return nil
 		}
-		if !db.UserCanAccessResource(principal.UserID, principal.ScopeFor(permission), "project", projectID) {
+		if !database.NewRBAC(db).UserCanAccessResource(principal.UserID, principal.ScopeFor(permission), "project", projectID) {
 			return &mcp.ToolResult{
 				Content: []mcp.Content{{Type: "text", Text: "无权访问项目: " + projectID}},
 				IsError: true,
@@ -1596,8 +1596,8 @@ func registerWebshellManagementTools(mcpServer *mcp.Server, db *database.DB, web
 				IsError: true,
 			}, nil
 		}
-		_ = db.SetResourceOwner("webshell", conn.ID, principal.UserID)
-		_ = db.AssignResourceToUser(principal.UserID, "webshell", conn.ID)
+		_ = database.NewRBAC(db).SetResourceOwner("webshell", conn.ID, principal.UserID)
+		_ = database.NewRBAC(db).AssignResourceToUser(principal.UserID, "webshell", conn.ID)
 		projectLine := "项目: 未绑定"
 		if conn.ProjectID != "" {
 			projectLine = "项目ID: " + conn.ProjectID

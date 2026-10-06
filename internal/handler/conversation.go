@@ -31,6 +31,7 @@ type ConversationTaskStateProvider interface {
 // ConversationHandler 对话处理器
 type ConversationHandler struct {
 	db          database.ConversationStore
+	rbac        *store.RBAC
 	usage       *store.ModelTokenUsage // model_token_usage: 用量页唯一的读来源
 	execArgs    *store.Execution       // tool_executions: 历史渲染补全工具参数时唯一的读来源
 	logger      *zap.Logger
@@ -59,6 +60,7 @@ func (h *ConversationHandler) SetTaskStateProvider(provider ConversationTaskStat
 func NewConversationHandler(db *database.DB, logger *zap.Logger) *ConversationHandler {
 	return &ConversationHandler{
 		db:       database.Narrow[database.ConversationStore](db),
+		rbac:     database.NewRBAC(db),
 		usage:    newModelTokenUsageStore(db),
 		execArgs: newExecutionStore(db),
 		logger:   logger,
@@ -102,10 +104,10 @@ func (h *ConversationHandler) CreateConversation(c *gin.Context) {
 		return
 	}
 	if session, ok := security.CurrentSession(c); ok {
-		_ = h.db.SetResourceOwner("conversation", conv.ID, session.UserID)
-		_ = h.db.AssignResourceToUser(session.UserID, "conversation", conv.ID)
+		_ = h.rbac.SetResourceOwner("conversation", conv.ID, session.UserID)
+		_ = h.rbac.AssignResourceToUser(session.UserID, "conversation", conv.ID)
 		if conv.ProjectID != "" {
-			_ = h.db.AssignResourceToUser(session.UserID, "project", conv.ProjectID)
+			_ = h.rbac.AssignResourceToUser(session.UserID, "project", conv.ProjectID)
 		}
 	}
 
@@ -145,7 +147,7 @@ func (h *ConversationHandler) conversationProjectAllowed(c *gin.Context, project
 	if !ok {
 		return false
 	}
-	return h.db.UserCanAccessResource(session.UserID, session.Scope, "project", projectID)
+	return h.rbac.UserCanAccessResource(session.UserID, session.Scope, "project", projectID)
 }
 
 // ListConversations 列出对话
@@ -200,7 +202,7 @@ type UpdateConversationPinnedRequest struct {
 func (h *ConversationHandler) UpdateConversationPinned(c *gin.Context) {
 	conversationID := c.Param("id")
 	session, ok := security.CurrentSession(c)
-	if !ok || !h.db.UserCanAccessResource(session.UserID, session.Scope, "conversation", conversationID) {
+	if !ok || !h.rbac.UserCanAccessResource(session.UserID, session.Scope, "conversation", conversationID) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
 		return
 	}
@@ -252,7 +254,7 @@ func (h *ConversationHandler) GetConversation(c *gin.Context) {
 func (h *ConversationHandler) GetConversationPlanTasks(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
 	session, ok := security.CurrentSession(c)
-	if !ok || !h.db.UserCanAccessResource(session.UserID, session.Scope, "conversation", id) {
+	if !ok || !h.rbac.UserCanAccessResource(session.UserID, session.Scope, "conversation", id) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该对话"})
 		return
 	}

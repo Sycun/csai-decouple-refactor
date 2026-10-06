@@ -33,7 +33,10 @@ var consumerSurfaceFiles = []string{
 // 140 measured after the monitor domain left: MonitorStore shrank to the one RBAC member
 // (MonitorContextStore), AgentStore lost its ToolExecutionLedger embed, ResourceExistence lost
 // GetToolExecution and the run finalizer's ledger moved to internal/agentfinalizer.
-const consumerSurfaceMemberFloor = 140
+// 95 measured after the RBAC domain left: thirteen interfaces dropped their RBAC members
+// (RBACStore / VulnerabilityStore / ConfigStore / MonitorContextStore vanished whole), and the
+// remaining members live on store.RBAC handles in the handlers instead.
+const consumerSurfaceMemberFloor = 95
 
 func TestConsumerSurfacesDeclareOnlyCalledMethods(t *testing.T) {
 	root := moduleRoot(t)

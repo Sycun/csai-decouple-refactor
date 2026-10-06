@@ -38,7 +38,7 @@ func newHITLEndpointHandler(t *testing.T) (*AgentHandler, *database.DB) {
 	h := &AgentHandler{
 		db:          db,
 		hitlStore:   store.NewHITL(db.DB),
-		hitlQueue:   newHITLQueue(database.Narrow[database.AgentStore](db), store.NewHITL(db.DB), &config.Config{}, manager),
+		hitlQueue:   newHITLQueue(database.NewRBAC(db), store.NewHITL(db.DB), &config.Config{}, manager),
 		hitlManager: manager,
 		config:      &config.Config{},
 		logger:      zap.NewNop(),
@@ -62,7 +62,7 @@ func hitlTestConversation(t *testing.T, db *database.DB, title string) string {
 // row - assignments to an unknown user are refused, not silently ignored.
 func hitlTestUser(t *testing.T, db *database.DB, name string) string {
 	t.Helper()
-	user, err := db.CreateRBACUser(name, name, "hash", true, nil)
+	user, err := database.NewRBAC(db).CreateRBACUser(name, name, "hash", true, nil)
 	if err != nil {
 		t.Fatalf("create user %s: %v", name, err)
 	}
@@ -283,7 +283,7 @@ func TestHITLLogDetailEndpointEnforcesConversationAccess(t *testing.T) {
 	seedEndpointInterrupt(t, db, "d-mine", mine, "exec", "decided", "human", hitlTimePtr(time.Now()))
 	seedEndpointInterrupt(t, db, "d-theirs", theirs, "exec", "decided", "human", hitlTimePtr(time.Now()))
 	owner := hitlTestUser(t, db, "hitl-detail-owner")
-	if err := db.AssignResourceToUser(owner, "conversation", mine); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(owner, "conversation", mine); err != nil {
 		t.Fatalf("assign conversation: %v", err)
 	}
 
@@ -394,7 +394,7 @@ func TestHITLDeleteEndpointNeverClearsPendingRows(t *testing.T) {
 	seedEndpointInterrupt(t, db, "d-a", mine, "exec", "decided", "human", hitlTimePtr(time.Now()))
 	seedEndpointInterrupt(t, db, "d-b", theirs, "exec", "decided", "human", hitlTimePtr(time.Now()))
 	owner := hitlTestUser(t, db, "hitl-delete-owner")
-	if err := db.AssignResourceToUser(owner, "conversation", mine); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(owner, "conversation", mine); err != nil {
 		t.Fatalf("assign conversation: %v", err)
 	}
 

@@ -49,7 +49,7 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 		if !hasSession || h.db == nil || strings.TrimSpace(resourceID) == "" {
 			return false
 		}
-		return h.db.UserCanAccessResource(session.UserID, session.Scope, resourceType, resourceID)
+		return h.rbac.UserCanAccessResource(session.UserID, session.Scope, resourceType, resourceID)
 	}
 	if projectID != "" && (!session.Permissions["project:read"] || !canAccess("project", projectID)) {
 		return nil, fmt.Errorf("无权访问目标项目")
@@ -79,8 +79,8 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 		conversationID = conv.ID
 		createdNew = true
 		if hasSession {
-			_ = h.db.SetResourceOwner("conversation", conversationID, session.UserID)
-			_ = h.db.AssignResourceToUser(session.UserID, "conversation", conversationID)
+			_ = h.rbac.SetResourceOwner("conversation", conversationID, session.UserID)
+			_ = h.rbac.AssignResourceToUser(session.UserID, "conversation", conversationID)
 		}
 	} else {
 		if _, err := h.db.GetConversation(conversationID); err != nil {

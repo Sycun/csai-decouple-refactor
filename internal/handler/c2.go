@@ -119,8 +119,8 @@ func (h *C2Handler) CreateListener(c *gin.Context) {
 	}
 	if session, ok := security.CurrentSession(c); ok {
 		listener.OwnerUserID = session.UserID
-		_ = h.mgr().DB().SetResourceOwner("c2_listener", listener.ID, session.UserID)
-		_ = h.mgr().DB().AssignResourceToUser(session.UserID, "c2_listener", listener.ID)
+		_ = h.mgr().RBAC().SetResourceOwner("c2_listener", listener.ID, session.UserID)
+		_ = h.mgr().RBAC().AssignResourceToUser(session.UserID, "c2_listener", listener.ID)
 	}
 	implantToken := listener.ImplantToken
 	listener.EncryptionKey = ""
@@ -606,7 +606,7 @@ func (h *C2Handler) CreateTask(c *gin.Context) {
 	}
 	if conversationID := strings.TrimSpace(req.ConversationID); conversationID != "" {
 		session, ok := security.CurrentSession(c)
-		if !ok || !h.mgr().DB().UserCanAccessResource(session.UserID, session.Scope, "conversation", conversationID) {
+		if !ok || !h.mgr().RBAC().UserCanAccessResource(session.UserID, session.Scope, "conversation", conversationID) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "无权关联目标对话"})
 			return
 		}
@@ -1215,7 +1215,7 @@ func (h *C2Handler) canAccessProject(c *gin.Context, projectID string) bool {
 	if session.Scope == database.RBACScopeAll {
 		return true
 	}
-	return h.mgr().DB().UserCanAccessResource(session.UserID, session.Scope, "project", projectID)
+	return h.mgr().RBAC().UserCanAccessResource(session.UserID, session.Scope, "project", projectID)
 }
 
 func (h *C2Handler) c2ResourceAllowed(c *gin.Context, resourceType, resourceID string) bool {
@@ -1223,7 +1223,7 @@ func (h *C2Handler) c2ResourceAllowed(c *gin.Context, resourceType, resourceID s
 	if !ok {
 		return false
 	}
-	return h.mgr().DB().UserCanAccessResource(session.UserID, session.Scope, resourceType, resourceID)
+	return h.mgr().RBAC().UserCanAccessResource(session.UserID, session.Scope, resourceType, resourceID)
 }
 
 func (h *C2Handler) c2EventAllowed(c *gin.Context, e *c2.Event) bool {
@@ -1238,10 +1238,10 @@ func (h *C2Handler) c2EventAllowed(c *gin.Context, e *c2.Event) bool {
 		return true
 	}
 	if strings.TrimSpace(e.SessionID) != "" {
-		return h.mgr().DB().UserCanAccessResource(session.UserID, session.Scope, "c2_session", e.SessionID)
+		return h.mgr().RBAC().UserCanAccessResource(session.UserID, session.Scope, "c2_session", e.SessionID)
 	}
 	if strings.TrimSpace(e.TaskID) != "" {
-		return h.mgr().DB().UserCanAccessResource(session.UserID, session.Scope, "c2_task", e.TaskID)
+		return h.mgr().RBAC().UserCanAccessResource(session.UserID, session.Scope, "c2_task", e.TaskID)
 	}
 	return false
 }

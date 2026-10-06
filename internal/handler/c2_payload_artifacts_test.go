@@ -23,15 +23,15 @@ func TestPayloadArtifactDownloadGate(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	// Assignments point at real accounts, so the three identities this gate distinguishes have to
 	// exist as users rather than as bare ids.
-	owner, err := db.CreateRBACUser("c2-owner", "C2 Owner", "hash", true, nil)
+	owner, err := database.NewRBAC(db).CreateRBACUser("c2-owner", "C2 Owner", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	assigned, err := db.CreateRBACUser("c2-assigned", "C2 Assigned", "hash", true, nil)
+	assigned, err := database.NewRBAC(db).CreateRBACUser("c2-assigned", "C2 Assigned", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	stranger, err := db.CreateRBACUser("c2-stranger", "C2 Stranger", "hash", true, nil)
+	stranger, err := database.NewRBAC(db).CreateRBACUser("c2-stranger", "C2 Stranger", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,7 +53,7 @@ func TestPayloadArtifactDownloadGate(t *testing.T) {
 			t.Fatalf("create listener %s: %v", id, err)
 		}
 	}
-	if err := db.AssignResourceToUser(assigned.ID, "c2_listener", "lis-2"); err != nil {
+	if err := database.NewRBAC(db).AssignResourceToUser(assigned.ID, "c2_listener", "lis-2"); err != nil {
 		t.Fatal(err)
 	}
 

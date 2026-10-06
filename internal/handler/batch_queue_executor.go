@@ -110,8 +110,8 @@ func (h *AgentHandler) tryFinalizeBatchQueue(queueID string) {
 
 // executeOneBatchSubTask 执行单条批量子任务（各自独立会话）。
 func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQueue, task *BatchTask) {
-	ownerUserID := h.db.GetResourceOwner("batch_task", queueID)
-	access, accessErr := h.db.ResolveRBACAccess(ownerUserID)
+	ownerUserID := h.rbac.GetResourceOwner("batch_task", queueID)
+	access, accessErr := h.rbac.ResolveRBACAccess(ownerUserID)
 	if accessErr != nil || access == nil || !access.User.Enabled {
 		h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, BatchTaskStatusFailed, "", "队列所有者不存在或已禁用")
 		return
@@ -126,8 +126,8 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 		return
 	}
 	conversationID := conv.ID
-	_ = h.db.SetResourceOwner("conversation", conversationID, access.User.ID)
-	_ = h.db.AssignResourceToUser(access.User.ID, "conversation", conversationID)
+	_ = h.rbac.SetResourceOwner("conversation", conversationID, access.User.ID)
+	_ = h.rbac.AssignResourceToUser(access.User.ID, "conversation", conversationID)
 
 	h.batchTaskManager.UpdateTaskStatusWithConversationID(queueID, task.ID, BatchTaskStatusRunning, "", "", conversationID)
 

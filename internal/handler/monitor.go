@@ -29,8 +29,8 @@ type MonitorHandler struct {
 	taskManager      *AgentTaskManager
 	agentHandler     *AgentHandler
 	executor         *security.Executor
-	db               database.MonitorContextStore // 只剩 RBAC 的会话可见性（还没轮到搬迁的域）
-	executions       *store.Monitor               // tool_executions / tool_stats 的读面
+	executions       *store.Monitor // tool_executions / tool_stats 的读面
+	rbac             *store.RBAC    // 会话可见性（RBAC 域；toolExecutionVisible 那一问）
 	logger           *zap.Logger
 	audit            *audit.Service
 	monitorRetention *monitor.Service
@@ -52,8 +52,8 @@ func NewMonitorHandler(mcpServer *mcp.Server, executor *security.Executor, db *d
 		mcpServer:      mcpServer,
 		externalMCPMgr: nil, // 将在创建后设置
 		executor:       executor,
-		db:             database.Narrow[database.MonitorContextStore](db),
 		executions:     database.NewMonitor(db),
+		rbac:           database.NewRBAC(db),
 		logger:         logger,
 	}
 }
@@ -210,7 +210,7 @@ func (h *MonitorHandler) loadExecutions() []*mcp.ToolExecution {
 
 func (h *MonitorHandler) loadExecutionListWithPagination(page, pageSize int, status, toolName string, access store.Access) ([]*mcp.ToolExecution, int) {
 	if h.executions == nil {
-		allExecutions := filterToolExecutionsForAccess(h.mcpServer.GetAllExecutions(), access, h.db)
+		allExecutions := filterToolExecutionsForAccess(h.mcpServer.GetAllExecutions(), access, h.rbac)
 		if status != "" || toolName != "" {
 			filtered := make([]*mcp.ToolExecution, 0)
 			for _, exec := range allExecutions {
@@ -262,7 +262,7 @@ func (h *MonitorHandler) loadExecutionListWithPagination(page, pageSize int, sta
 }
 
 func (h *MonitorHandler) loadExecutionListWithPaginationFromMemory(page, pageSize int, status, toolName string, access store.Access) ([]*mcp.ToolExecution, int) {
-	allExecutions := filterToolExecutionsForAccess(h.mcpServer.GetAllExecutions(), access, h.db)
+	allExecutions := filterToolExecutionsForAccess(h.mcpServer.GetAllExecutions(), access, h.rbac)
 	if status != "" || toolName != "" {
 		filtered := make([]*mcp.ToolExecution, 0)
 		for _, exec := range allExecutions {
@@ -314,27 +314,22 @@ func slimToolExecution(exec *mcp.ToolExecution) *mcp.ToolExecution {
 	return slim
 }
 
-// conversationAccessLookup is the single storage question the visibility helpers ask: may this
-// principal see the conversation a tool execution belongs to? Named instead of taking
-// *database.DB so the helpers cannot reach any other table.
-type conversationAccessLookup interface {
-	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
-}
-
-func filterToolExecutionsForAccess(executions []*mcp.ToolExecution, access store.Access, db conversationAccessLookup) []*mcp.ToolExecution {
+// 可见性 helpers 只问一个问题：这个调用者够得着这条执行记录的会话吗。语句在 store.RBAC 里，
+// 所以这里收具体的 *store.RBAC（nil 表示没有数据库），helpers 因而够不着任何别的表。
+func filterToolExecutionsForAccess(executions []*mcp.ToolExecution, access store.Access, rbac *store.RBAC) []*mcp.ToolExecution {
 	if access.Scope == database.RBACScopeAll {
 		return executions
 	}
 	out := make([]*mcp.ToolExecution, 0, len(executions))
 	for _, exec := range executions {
-		if toolExecutionVisible(exec, access, db) {
+		if toolExecutionVisible(exec, access, rbac) {
 			out = append(out, exec)
 		}
 	}
 	return out
 }
 
-func toolExecutionVisible(exec *mcp.ToolExecution, access store.Access, db conversationAccessLookup) bool {
+func toolExecutionVisible(exec *mcp.ToolExecution, access store.Access, rbac *store.RBAC) bool {
 	if exec == nil || strings.TrimSpace(access.UserID) == "" {
 		return false
 	}
@@ -342,7 +337,7 @@ func toolExecutionVisible(exec *mcp.ToolExecution, access store.Access, db conve
 		return true
 	}
 	conversationID := strings.TrimSpace(exec.ConversationID)
-	return conversationID != "" && db != nil && db.UserCanAccessResource(access.UserID, access.Scope, "conversation", conversationID)
+	return conversationID != "" && rbac != nil && rbac.UserCanAccessResource(access.UserID, access.Scope, "conversation", conversationID)
 }
 
 func (h *MonitorHandler) monitorExecutionAllowed(c *gin.Context, id string) bool {
@@ -355,11 +350,11 @@ func (h *MonitorHandler) monitorExecutionAllowed(c *gin.Context, id string) bool
 		return false
 	}
 	if exec, ok := h.mcpServer.GetExecution(id); ok {
-		return toolExecutionVisible(exec, access, h.db)
+		return toolExecutionVisible(exec, access, h.rbac)
 	}
 	if h.externalMCPMgr != nil {
 		if exec, ok := h.externalMCPMgr.GetExecution(id); ok {
-			return toolExecutionVisible(exec, access, h.db)
+			return toolExecutionVisible(exec, access, h.rbac)
 		}
 	}
 	return h.executions != nil && h.executions.UserCanAccessToolExecution(access.UserID, access.Scope, id)

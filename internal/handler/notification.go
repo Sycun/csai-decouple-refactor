@@ -18,6 +18,7 @@ import (
 // NotificationHandler 聚合通知（Phase 2：服务端统一计算）
 type NotificationHandler struct {
 	db           database.NotificationStore
+	rbac         *store.RBAC
 	agentHandler *AgentHandler
 	logger       *zap.Logger
 	// c2 is the beacon ledger this digest reads events from. The query lives with the table's owner,
@@ -91,6 +92,7 @@ type NotificationSummaryResponse struct {
 func NewNotificationHandler(db *database.DB, agentHandler *AgentHandler, logger *zap.Logger) *NotificationHandler {
 	handler := &NotificationHandler{
 		db:           database.Narrow[database.NotificationStore](db),
+		rbac:         database.NewRBAC(db),
 		agentHandler: agentHandler,
 		logger:       logger,
 	}
@@ -658,5 +660,5 @@ func (h *NotificationHandler) notificationConversationAllowed(access store.Acces
 	if conversationID == "" {
 		return access.Scope == database.RBACScopeAll
 	}
-	return h.db.UserCanAccessResource(access.UserID, access.Scope, "conversation", conversationID)
+	return h.rbac.UserCanAccessResource(access.UserID, access.Scope, "conversation", conversationID)
 }

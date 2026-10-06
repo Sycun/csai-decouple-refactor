@@ -16,6 +16,7 @@ import (
 
 type AssetHandler struct {
 	db     database.AssetContextStore
+	rbac   *store.RBAC
 	assets *store.Assets
 	logger *zap.Logger
 }
@@ -30,7 +31,7 @@ const (
 // from one *database.DB, so `h.db == nil` still means "no database for this handler", exactly as
 // before the split.
 func NewAssetHandler(db *database.DB, logger *zap.Logger) *AssetHandler {
-	return &AssetHandler{db: database.Narrow[database.AssetContextStore](db), assets: database.NewAssets(db), logger: logger}
+	return &AssetHandler{db: database.Narrow[database.AssetContextStore](db), rbac: database.NewRBAC(db), assets: database.NewAssets(db), logger: logger}
 }
 
 func assetAccess(c *gin.Context) store.Access {
@@ -111,7 +112,7 @@ func (h *AssetHandler) Import(c *gin.Context) {
 			continue
 		}
 		if strings.TrimSpace(asset.ProjectID) != "" {
-			if session, ok := security.CurrentSession(c); ok && !h.db.UserCanAccessResource(session.UserID, session.Scope, "project", strings.TrimSpace(asset.ProjectID)) {
+			if session, ok := security.CurrentSession(c); ok && !h.rbac.UserCanAccessResource(session.UserID, session.Scope, "project", strings.TrimSpace(asset.ProjectID)) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "无权绑定该项目"})
 				return
 			}
@@ -302,11 +303,11 @@ func (h *AssetHandler) RecordScans(c *gin.Context) {
 			return
 		}
 		if session, ok := security.CurrentSession(c); ok {
-			if id := conversationID; id != "" && !h.db.UserCanAccessResource(session.UserID, session.Scope, "conversation", id) {
+			if id := conversationID; id != "" && !h.rbac.UserCanAccessResource(session.UserID, session.Scope, "conversation", id) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "无权关联该对话"})
 				return
 			}
-			if id := queueID; id != "" && !h.db.UserCanAccessResource(session.UserID, session.Scope, "batch_task", id) {
+			if id := queueID; id != "" && !h.rbac.UserCanAccessResource(session.UserID, session.Scope, "batch_task", id) {
 				c.JSON(http.StatusForbidden, gin.H{"error": "无权关联该任务队列"})
 				return
 			}
@@ -329,7 +330,7 @@ func (h *AssetHandler) Update(c *gin.Context) {
 		return
 	}
 	if asset.ProjectID != "" {
-		if session, ok := security.CurrentSession(c); ok && !h.db.UserCanAccessResource(session.UserID, session.Scope, "project", asset.ProjectID) {
+		if session, ok := security.CurrentSession(c); ok && !h.rbac.UserCanAccessResource(session.UserID, session.Scope, "project", asset.ProjectID) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "无权绑定该项目"})
 			return
 		}
@@ -363,7 +364,7 @@ func (h *AssetHandler) UpdateProjectBinding(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "项目不存在"})
 			return
 		}
-		if session, ok := security.CurrentSession(c); ok && !h.db.UserCanAccessResource(session.UserID, session.Scope, "project", req.ProjectID) {
+		if session, ok := security.CurrentSession(c); ok && !h.rbac.UserCanAccessResource(session.UserID, session.Scope, "project", req.ProjectID) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "无权绑定该项目"})
 			return
 		}

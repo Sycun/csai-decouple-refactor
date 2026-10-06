@@ -29,7 +29,7 @@ func TestStandaloneMCPPrefersUserRBACAndDisablesGlobalTokenByDefault(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpdateRBACAdminPassword(hash); err != nil {
+	if err := database.NewRBAC(db).UpdateRBACAdminPassword(hash); err != nil {
 		t.Fatal(err)
 	}
 	token, _, err := auth.Authenticate("admin", "admin-secret")

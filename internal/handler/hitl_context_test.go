@@ -34,7 +34,7 @@ func TestEnrichHitlApprovalPayload(t *testing.T) {
 		t.Fatalf("detail: %v", err)
 	}
 
-	h := &AgentHandler{db: db, tasks: NewAgentTaskManager()}
+	h := &AgentHandler{db: database.Narrow[database.AgentStore](db), rbac: database.NewRBAC(db), tasks: NewAgentTaskManager()}
 	payload := map[string]interface{}{"toolName": "nmap", "arguments": "{}"}
 	h.enrichHitlApprovalPayload(conv.ID, asst.ID, payload)
 

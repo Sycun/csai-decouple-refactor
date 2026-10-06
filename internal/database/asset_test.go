@@ -151,10 +151,10 @@ func TestAssetAccessFiltersOwners(t *testing.T) {
 		t.Fatalf("owner cannot list asset: total=%d err=%v", total, err)
 	}
 	assets, _, err := NewAssets(db).ListAssets(1, 0, store.AssetListFilter{}, store.Access{UserID: "user-a", Scope: RBACScopeAssigned})
-	if err != nil || len(assets) != 1 || !db.UserCanAccessResource("user-a", RBACScopeAssigned, "asset", assets[0].ID) {
+	if err != nil || len(assets) != 1 || !NewRBAC(db).UserCanAccessResource("user-a", RBACScopeAssigned, "asset", assets[0].ID) {
 		t.Fatalf("creator assignment missing: assets=%d err=%v", len(assets), err)
 	}
-	options, err := db.ListAssignableRBACResources("asset", "10.0.0.1", 10)
+	options, err := NewRBAC(db).ListAssignableRBACResourcesPage("asset", "10.0.0.1", 10, 0)
 	if err != nil || len(options) != 1 {
 		t.Fatalf("asset resource picker: options=%#v err=%v", options, err)
 	}
@@ -162,7 +162,7 @@ func TestAssetAccessFiltersOwners(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetResourceOwner("project", project.ID, "user-b"); err != nil {
+	if err := NewRBAC(db).SetResourceOwner("project", project.ID, "user-b"); err != nil {
 		t.Fatal(err)
 	}
 	asset := assets[0]
@@ -174,7 +174,7 @@ func TestAssetAccessFiltersOwners(t *testing.T) {
 	if err != nil || total != 1 || len(projectAssets) != 1 || projectAssets[0].ProjectName != "Alpha" {
 		t.Fatalf("project-bound asset access failed: total=%d assets=%#v err=%v", total, projectAssets, err)
 	}
-	if !db.UserCanAccessResource("user-b", RBACScopeOwn, "asset", asset.ID) {
+	if !NewRBAC(db).UserCanAccessResource("user-b", RBACScopeOwn, "asset", asset.ID) {
 		t.Fatal("project owner cannot access bound asset")
 	}
 }

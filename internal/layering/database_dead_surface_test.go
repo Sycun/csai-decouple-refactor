@@ -19,9 +19,8 @@ import (
 // is a new unreachable method accepted as normal, and a name whose method got deleted or started
 // being called stays here failing, so the list cannot quietly fossilise.
 var dbSurfaceDeadAllowList = map[string]string{
-	"CountConversations":          "superseded by the access-scoped conversation count the handler uses",
-	"ListAssignableRBACResources": "superseded by ListAssignableRBACResourcesPage",
-	"ListConversationPlanTasks":   "superseded by ListConversationPlanTasksSince",
+	"CountConversations":        "superseded by the access-scoped conversation count the handler uses",
+	"ListConversationPlanTasks": "superseded by ListConversationPlanTasksSince",
 }
 
 // deadDBSurface reports exported *DB methods with no production call site and no consumer-interface
@@ -73,7 +72,7 @@ func deadDBSurface(t *testing.T, root string) (dead []string, scanned int) {
 	// on purpose: it catches a scan that stopped reading the directory, and it has tripped six times
 	// now for the right reason - a domain cut landing - which is the reminder to re-measure rather than
 	// to widen it.
-	if len(names) < 91 {
+	if len(names) < 61 {
 		t.Fatalf("only %d exported *DB methods parsed (floor 157): the scan is not reading the package", len(names))
 	}
 

@@ -47,8 +47,8 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 		{
 			storeConstructor: "NewVulnerabilityAlerts",
 			tablePrefix:      "vulnerability_alert_",
-			anchorCall:       "initRBACTables",
-			anchorReason:     "both alert tables have foreign keys onto rbac_users",
+			anchorCall:       "NewRBAC",
+			anchorReason:     "both alert tables have foreign keys onto rbac_users, which store.RBAC's EnsureSchema creates now - the anchor is the call that builds that store",
 			mustNotChangeSQL: "",
 		},
 		{
@@ -57,6 +57,13 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 			anchorCall:       "NewMonitor",
 			anchorReason:     "attack_chain_nodes has a foreign key onto tool_executions, which store.Monitor's EnsureSchema creates now - the anchor is the call that builds that store",
 			mustNotChangeSQL: "attack_chain",
+		},
+		{
+			storeConstructor: "NewRBAC",
+			tablePrefix:      "rbac_",
+			anchorCall:       "createConversationsTable",
+			anchorReason:     "the six rbac_* tables reference only each other, so the anchor is any stable earlier boot step",
+			mustNotChangeSQL: "rbac_",
 		},
 		{
 			storeConstructor: "NewMonitor",

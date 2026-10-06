@@ -10,20 +10,21 @@ import (
 	"cyberstrike-ai/internal/authctx"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
 type RBACHandler struct {
-	db     database.RBACStore
+	rbac   *store.RBAC
 	logger *zap.Logger
 	audit  *audit.Service
 	auth   *security.AuthManager
 }
 
 func NewRBACHandler(db *database.DB, logger *zap.Logger) *RBACHandler {
-	return &RBACHandler{db: database.Narrow[database.RBACStore](db), logger: logger}
+	return &RBACHandler{rbac: database.NewRBAC(db), logger: logger}
 }
 
 func (h *RBACHandler) SetAudit(s *audit.Service) {
@@ -56,14 +57,14 @@ func (h *RBACHandler) Me(c *gin.Context) {
 }
 
 func (h *RBACHandler) Metadata(c *gin.Context) {
-	roles, err := h.db.ListRBACRoles()
+	roles, err := h.rbac.ListRBACRoles()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	rolePermissions := map[string][]string{}
 	for _, role := range roles {
-		keys, _ := h.db.ListRBACRolePermissionKeys(role.ID)
+		keys, _ := h.rbac.ListRBACRolePermissionKeys(role.ID)
 		rolePermissions[role.ID] = keys
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -75,14 +76,14 @@ func (h *RBACHandler) Metadata(c *gin.Context) {
 }
 
 func (h *RBACHandler) ListRoles(c *gin.Context) {
-	roles, err := h.db.ListRBACRoles()
+	roles, err := h.rbac.ListRBACRoles()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	out := make([]gin.H, 0, len(roles))
 	for _, role := range roles {
-		keys, _ := h.db.ListRBACRolePermissionKeys(role.ID)
+		keys, _ := h.rbac.ListRBACRolePermissionKeys(role.ID)
 		out = append(out, gin.H{
 			"id":          role.ID,
 			"name":        role.Name,
@@ -128,7 +129,7 @@ func (h *RBACHandler) CreateRole(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	role, err := h.db.UpsertRBACRole("", req.Name, req.Description, req.Scope, req.Permissions)
+	role, err := h.rbac.UpsertRBACRole("", req.Name, req.Description, req.Scope, req.Permissions)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -141,7 +142,7 @@ func (h *RBACHandler) CreateRole(c *gin.Context) {
 
 func (h *RBACHandler) UpdateRole(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
-	existing, err := h.db.GetRBACRoleByID(id)
+	existing, err := h.rbac.GetRBACRoleByID(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "角色不存在"})
 		return
@@ -159,7 +160,7 @@ func (h *RBACHandler) UpdateRole(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	role, err := h.db.UpsertRBACRole(id, req.Name, req.Description, req.Scope, req.Permissions)
+	role, err := h.rbac.UpsertRBACRole(id, req.Name, req.Description, req.Scope, req.Permissions)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -178,7 +179,7 @@ func (h *RBACHandler) UpdateRole(c *gin.Context) {
 
 func (h *RBACHandler) DeleteRole(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
-	if err := h.db.DeleteRBACRole(id); err != nil {
+	if err := h.rbac.DeleteRBACRole(id); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -192,14 +193,14 @@ func (h *RBACHandler) DeleteRole(c *gin.Context) {
 }
 
 func (h *RBACHandler) ListUsers(c *gin.Context) {
-	users, err := h.db.ListRBACUsers()
+	users, err := h.rbac.ListRBACUsers()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	out := make([]gin.H, 0, len(users))
 	for _, user := range users {
-		roleIDs, _ := h.db.ListRBACUserRoleIDs(user.ID)
+		roleIDs, _ := h.rbac.ListRBACUserRoleIDs(user.ID)
 		out = append(out, gin.H{
 			"id":           user.ID,
 			"username":     user.Username,
@@ -241,7 +242,7 @@ func (h *RBACHandler) CreateUser(c *gin.Context) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	user, err := h.db.CreateRBACUser(req.Username, req.DisplayName, hash, enabled, req.Roles)
+	user, err := h.rbac.CreateRBACUser(req.Username, req.DisplayName, hash, enabled, req.Roles)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -261,7 +262,7 @@ type updateRBACUserRequest struct {
 
 func (h *RBACHandler) UpdateUser(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
-	user, err := h.db.GetRBACUserByID(id)
+	user, err := h.rbac.GetRBACUserByID(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "用户不存在"})
 		return
@@ -275,7 +276,7 @@ func (h *RBACHandler) UpdateUser(c *gin.Context) {
 	if req.DisplayName != nil {
 		displayName = *req.DisplayName
 	}
-	if err := h.db.UpdateRBACUser(id, displayName, req.Enabled, req.Roles); err != nil {
+	if err := h.rbac.UpdateRBACUser(id, displayName, req.Enabled, req.Roles); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -289,7 +290,7 @@ func (h *RBACHandler) UpdateUser(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		if err := h.db.UpdateRBACUserPassword(id, hash); err != nil {
+		if err := h.rbac.UpdateRBACUserPassword(id, hash); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -300,13 +301,13 @@ func (h *RBACHandler) UpdateUser(c *gin.Context) {
 	if h.auth != nil {
 		h.auth.RevokeUserSessions(id)
 	}
-	updated, _ := h.db.GetRBACUserByID(id)
+	updated, _ := h.rbac.GetRBACUserByID(id)
 	c.JSON(http.StatusOK, gin.H{"user": updated})
 }
 
 func (h *RBACHandler) DeleteUser(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
-	if err := h.db.DeleteRBACUser(id); err != nil {
+	if err := h.rbac.DeleteRBACUser(id); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -345,9 +346,9 @@ func (h *RBACHandler) AssignResource(c *gin.Context) {
 	var detectedTypes map[string]string
 	var err error
 	if req.AutoDetect {
-		created, detectedTypes, err = h.db.AssignResourcesToUserAuto(req.UserID, resourceIDs)
+		created, detectedTypes, err = h.rbac.AssignResourcesToUserAuto(req.UserID, resourceIDs)
 	} else {
-		created, err = h.db.AssignResourcesToUser(req.UserID, req.ResourceType, resourceIDs)
+		created, err = h.rbac.AssignResourcesToUser(req.UserID, req.ResourceType, resourceIDs)
 	}
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -372,7 +373,7 @@ func (h *RBACHandler) AssignResource(c *gin.Context) {
 }
 
 func (h *RBACHandler) ListResourceAssignments(c *gin.Context) {
-	rows, err := h.db.ListRBACResourceAssignments(c.Query("user_id"))
+	rows, err := h.rbac.ListRBACResourceAssignments(c.Query("user_id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -389,7 +390,7 @@ func (h *RBACHandler) ListAssignableResources(c *gin.Context) {
 	if offset < 0 {
 		offset = 0
 	}
-	resources, err := h.db.ListAssignableRBACResourcesPage(c.Query("type"), c.Query("q"), limit+1, offset)
+	resources, err := h.rbac.ListAssignableRBACResourcesPage(c.Query("type"), c.Query("q"), limit+1, offset)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -398,7 +399,7 @@ func (h *RBACHandler) ListAssignableResources(c *gin.Context) {
 	if hasMore {
 		resources = resources[:limit]
 	}
-	total, err := h.db.CountAssignableRBACResources(c.Query("type"), c.Query("q"))
+	total, err := h.rbac.CountAssignableRBACResources(c.Query("type"), c.Query("q"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -414,7 +415,7 @@ func (h *RBACHandler) ListAssignableResources(c *gin.Context) {
 
 func (h *RBACHandler) DeleteResourceAssignment(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
-	assignment, err := h.db.DeleteRBACResourceAssignmentWithDetails(id)
+	assignment, err := h.rbac.DeleteRBACResourceAssignmentWithDetails(id)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

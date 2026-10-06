@@ -102,7 +102,14 @@ import (
 // only ever touched those two tables. One of the twenty-two, LoadToolExecutionListPage, was the
 // dead one on the allow-list; deleted, with its two data-layer cases moved onto the live sibling
 // LoadToolExecutionListPageForAccess.
-const dbMethodCeiling = 109
+// 109 -> 68: the RBAC domain moved whole - the forty methods over accounts, roles, permissions,
+// assignments and the access questions, plus the ownership-column backfill the connection used to
+// run. Its vocabulary stays reachable through aliases in internal/database (one declaration in
+// store), so the ~140 call sites did not move with the SQL. Two boot helpers came back the other
+// way, which is why the drop is 40 rather than 41: migrateLegacyOwnerColumns (the projects /
+// conversations backfills whose DDL still boots from this file) and addColumnIfMissing.
+// 68 -> 71 re-measured after those two were re-added.
+const dbMethodCeiling = 71
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)
