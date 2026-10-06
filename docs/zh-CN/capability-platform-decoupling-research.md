@@ -1415,6 +1415,32 @@ store 只按原样把 `created_at` 文本和 JSON 传回去——绑定 `time.No
 `knowledge_base_items`（`manager.go` 剩下的 19 条里的大部分）——它们**同时存在于两个数据库文件**，
 所以 store 侧要先决定"每表 × 每库"的形状，别再制造第二套拼法。
 
+### P6 数据层第十片 —— `knowledge_embeddings` 的**同一件事两处实现**合成一处
+
+抽这张表之前先按类扫了一遍，结果不是"少一处 SQL"而是**一条规则两份实现**：
+- `internal/database.(*DB).migrateKnowledgeEmbeddingsColumns()`：给老库补 `sub_indexes` /
+  `embedding_model` / `embedding_dim`，`pragma_table_info` 守卫；
+- `internal/knowledge/schema_migrate.go: EnsureKnowledgeEmbeddingsSchema()`：**同样的三句 ALTER、
+  同样的守卫**，被 `indexer.go` 两处调用；旁边还挂着一个零调用方的
+  `ensureKnowledgeEmbeddingsSubIndexesColumn`（删）。
+谁先跑都不影响结果（都有守卫），但两份拼写意味着以后只改一处。
+现在 `internal/store/knowledge_embeddings.go` 是唯一入口：`EnsureSchema()`（建表 + 索引 + 补列）
+与 `EnsureColumns()`（只补列，表不存在时**按原样静默返回**，因为 indexer 构造早于建表），
+两条调用路径都换成它；`schema_migrate.go` 与 `migrateKnowledgeEmbeddingsColumns` 删除。
+
+真机复验（开 `knowledge.enabled`、独立 `data/knowledge.db`）：
+`knowledge_embeddings` 有 **9 列**（含补出来的三列）与 `idx_knowledge_embeddings_item_id`，
+`knowledge_base_items` / `knowledge_retrieval_logs` 同在，主库 `livecheck.db` 只有那张带外键的
+`knowledge_retrieval_logs`（正确：向量表不属于主库），日志里 `no such table`/建表失败/结构迁移
+**0 行**，索引补齐流程正常跑完。
+测试 4 条：建表幂等 + 索引存在、老表（6 列）补成新表形状且第二次是 no-op、表缺失时静默、无连接被拒。
+`internal/knowledge` 裸 SQL 计数：**manager.go 19 / indexer.go 3**（`schema_migrate.go` 那 3 条随文件消失，
+已从上限清单删除）；下一片就是把这 22 条按表搬进 store（向量读、相似度 JOIN、条目 CRUD）。
+
+**另一条纪律**（编译器帮我抓到的）：测试包里的 helper 名字必须全局唯一——
+我新写的 `columnExists` 与 `hitl_lifecycle_test.go` 里已有的同名函数冲突，
+`go vet` 立刻报 `redeclared in this block`；改成 `embeddingColumnExists` 才对。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

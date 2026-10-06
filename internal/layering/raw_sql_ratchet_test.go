@@ -21,9 +21,8 @@ import (
 // store lowers them; a new file appearing here is a new leak and fails without needing anyone to
 // remember the rule.
 var rawSQLByFile = map[string]int{
-	"internal/knowledge/manager.go":        19,
-	"internal/knowledge/schema_migrate.go": 3,
-	"internal/knowledge/indexer.go":        3,
+	"internal/knowledge/manager.go": 19,
+	"internal/knowledge/indexer.go": 3,
 }
 
 // rawSQLReceiver matches only a handle-shaped variable, so scope.guard.Prepare (a process guard) does

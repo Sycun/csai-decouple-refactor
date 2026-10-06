@@ -1629,20 +1629,11 @@ func (db *DB) initKnowledgeTables() error {
 		updated_at DATETIME NOT NULL
 	);`
 
-	// 创建知识库向量表
-	createKnowledgeEmbeddingsTable := `
-	CREATE TABLE IF NOT EXISTS knowledge_embeddings (
-		id TEXT PRIMARY KEY,
-		item_id TEXT NOT NULL,
-		chunk_index INTEGER NOT NULL,
-		chunk_text TEXT NOT NULL,
-		embedding TEXT NOT NULL,
-		sub_indexes TEXT NOT NULL DEFAULT '',
-		embedding_model TEXT NOT NULL DEFAULT '',
-		embedding_dim INTEGER NOT NULL DEFAULT 0,
-		created_at DATETIME NOT NULL,
-		FOREIGN KEY (item_id) REFERENCES knowledge_base_items(id) ON DELETE CASCADE
-	);`
+	// knowledge_embeddings 的建表、索引与三段列补写都在 store 里，两份历史实现（这里一处、
+	// internal/knowledge/schema_migrate.go 一处）合成一处。
+	if err := store.NewKnowledgeEmbeddings(db.DB).EnsureSchema(); err != nil {
+		return fmt.Errorf("创建knowledge_embeddings表失败: %w", err)
+	}
 
 	// knowledge_retrieval_logs 在独立知识库里不建外键（conversations/messages 可能不在这个库）。
 	// 两种拼法都由这张表的主人给出，见 internal/store/knowledge_retrieval.go。
@@ -1653,59 +1644,17 @@ func (db *DB) initKnowledgeTables() error {
 	// 创建索引
 	createIndexes := `
 	CREATE INDEX IF NOT EXISTS idx_knowledge_items_category ON knowledge_base_items(category);
-	CREATE INDEX IF NOT EXISTS idx_knowledge_embeddings_item_id ON knowledge_embeddings(item_id);
 	`
 
 	if _, err := db.Exec(createKnowledgeBaseItemsTable); err != nil {
 		return fmt.Errorf("创建knowledge_base_items表失败: %w", err)
 	}
 
-	if _, err := db.Exec(createKnowledgeEmbeddingsTable); err != nil {
-		return fmt.Errorf("创建knowledge_embeddings表失败: %w", err)
-	}
-
 	if _, err := db.Exec(createIndexes); err != nil {
 		return fmt.Errorf("创建索引失败: %w", err)
 	}
 
-	if err := db.migrateKnowledgeEmbeddingsColumns(); err != nil {
-		return fmt.Errorf("迁移 knowledge_embeddings 列失败: %w", err)
-	}
-
 	db.logger.Info("知识库数据库表初始化完成")
-	return nil
-}
-
-// migrateKnowledgeEmbeddingsColumns 为已有库补充 sub_indexes、embedding_model、embedding_dim。
-func (db *DB) migrateKnowledgeEmbeddingsColumns() error {
-	var n int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='knowledge_embeddings'`).Scan(&n); err != nil {
-		return err
-	}
-	if n == 0 {
-		return nil
-	}
-	migrations := []struct {
-		col  string
-		stmt string
-	}{
-		{"sub_indexes", `ALTER TABLE knowledge_embeddings ADD COLUMN sub_indexes TEXT NOT NULL DEFAULT ''`},
-		{"embedding_model", `ALTER TABLE knowledge_embeddings ADD COLUMN embedding_model TEXT NOT NULL DEFAULT ''`},
-		{"embedding_dim", `ALTER TABLE knowledge_embeddings ADD COLUMN embedding_dim INTEGER NOT NULL DEFAULT 0`},
-	}
-	for _, m := range migrations {
-		var colCount int
-		q := `SELECT COUNT(*) FROM pragma_table_info('knowledge_embeddings') WHERE name = ?`
-		if err := db.QueryRow(q, m.col).Scan(&colCount); err != nil {
-			return err
-		}
-		if colCount > 0 {
-			continue
-		}
-		if _, err := db.Exec(m.stmt); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 

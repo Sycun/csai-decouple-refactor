@@ -10,6 +10,7 @@ import (
 
 	"cyberstrike-ai/internal/config"
 
+	"cyberstrike-ai/internal/store"
 	fileloader "github.com/cloudwego/eino-ext/components/document/loader/file"
 	"github.com/cloudwego/eino/components/document"
 	"github.com/cloudwego/eino/components/indexer"
@@ -53,7 +54,7 @@ func NewIndexer(ctx context.Context, db *sql.DB, embedder *Embedder, logger *zap
 	if embedder == nil {
 		return nil, fmt.Errorf("embedder is nil")
 	}
-	if err := EnsureKnowledgeEmbeddingsSchema(db); err != nil {
+	if err := store.NewKnowledgeEmbeddings(db).EnsureColumns(); err != nil {
 		return nil, fmt.Errorf("knowledge_embeddings 结构迁移: %w", err)
 	}
 	if kcfg == nil {
@@ -108,7 +109,7 @@ func (idx *Indexer) RecompileIndexChain(ctx context.Context) error {
 	if idx == nil || idx.db == nil || idx.embedder == nil {
 		return fmt.Errorf("indexer 未初始化")
 	}
-	if err := EnsureKnowledgeEmbeddingsSchema(idx.db); err != nil {
+	if err := store.NewKnowledgeEmbeddings(idx.db).EnsureColumns(); err != nil {
 		return err
 	}
 	embedModel := idx.embedder.EmbeddingModelName()
