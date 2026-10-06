@@ -222,14 +222,14 @@ func runResetAdminPassword(cfg *config.Config) error {
 	}
 	defer func() { _ = db.Close() }()
 
-	admin, err := db.GetRBACUserByUsername("admin")
+	admin, err := database.NewRBAC(db).GetRBACUserByUsername("admin")
 	if err != nil {
 		return fmt.Errorf("built-in admin account was not found; start the service once to initialize it first: %w", err)
 	}
 	if !admin.IsBuiltin {
 		return fmt.Errorf("admin account is not built in; refusing to reset it")
 	}
-	if err := db.UpdateRBACAdminPassword(hash); err != nil {
+	if err := database.NewRBAC(db).UpdateRBACAdminPassword(hash); err != nil {
 		return err
 	}
 
