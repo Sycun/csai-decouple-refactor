@@ -1222,13 +1222,42 @@ CSAI_WRITE_OPENAPI_GOLDEN=1 go test ./internal/handler -run TestOpenAPIOperation
 netns/seccomp 级硬出网边界（插件仍走宿主侧 CONNECT 代理 + `StrictEgress`，这是代理白名单不是内核边界）；
 registry 服务端与气隙包导出。
 
+### P6 数据层第六片 —— `skill_stats` 回到它自己的 store（2026-10-06）
+
+`internal/database/skill_stats.go` 是 5 个挂在 `*DB` 上的方法 + 1 个**没有任何调用方**的
+`SaveSkillStats`。表的写入方有两个（skills 页面读、agent 运行循环累加），主人没有。
+本片按前五片的同一形状落地：
+
+- `internal/store/skill_stats.go`：`SkillStats` 只吃 `*sql.DB`；**DDL 一起搬过来**
+  （`EnsureSchema()` 幂等），因为「查一张别人建表」的 store 只算搬了一半。
+  启动由 `internal/app` 的 `ensureSkillStatsSchema(db)` 调用，与 `capability_unit_switches`
+  同一位置、同一条理由。
+- 两个 handler 各持 `*store.SkillStats`：`SkillsHandler.SetDB` 改为构造 store（nil `*database.DB`
+  仍是 nil store，方法答错误而不 panic）；`AgentHandler` 在构造里 `stats: newSkillStatsStore(db)`。
+  `database.SkillsStore` 整个接口与 `AgentStore` 里那一行随之删除。
+- **两处刻意偏离，都写进注释**：① 行扫描失败原来 `logger.Warn` + `continue`（那一行统计就静默消失），
+  现在 `return err` + `rows.Err()`——与漏洞域那一刀同一判据；② store 不带 logger，
+  原先「Exec 失败记 Error + 调用方再记一次」的重复日志少一条，错误仍原样回给调用方。
+  HTTP 侧的字面不变：500 的 `"数据库连接未配置"`、`"清空统计信息失败: "` 前缀、
+  `stats[].last_call_time` 的 `2006-01-02 15:04:05` 格式、无库时列表照样 200 且计数为 0。
+- 数字：`*database.DB` 方法 **358 → 353**；新增 `TestDatabaseSurfaceOnlyShrinks`
+  （只降门禁，基线钉在 353，遍历域 = `internal/database` 全部非测试文件，实测 27 个文件有方法），
+  归属门禁 `TestOwnedTablesAreOnlyWrittenFromThisPackage` 的表清单加 `skill_stats`；
+  两个门禁都双向探针验红（长一个 `*DB` 方法即红、在 handler 里写一条 `UPDATE skill_stats` 即红）。
+- 测试两层：store 侧 5 条真库用例（建表幂等、`+=` 累加、`COALESCE` 不擦时间戳、
+  NULL 时间戳回 `nil`、清空的作用域、无连接被拒）；handler 侧 2 条走真实 gin 路由的契约用例
+  （响应键集合与格式、按名清空后归零、全清文案、无库边界）。
+  **契约用例差点假装通过**：技能目录名不符合 skill 规范时，`ListSkillSummaries` 会静默跳过它，
+  于是 `total_skills: 0`、断言"看不见就等于没发生"——第一版就在这里红了一次。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
   共 5 个面 + 共享可见性子句，handler 裸 SQL **已归零**；**这一项已完成**：`internal/handler` 里
   **没有任何结构体再持有 `*database.DB` 或 `*sql.DB`**（19 → 0；18 个域换成各自的窄接口字段，
   另 1 个是没人读的死字段，直接删。见 §11「P6 数据层第五片」与 §12.1 表）；
-  `internal/database` 那 361 个方法本身也按域继续切）、
+  `internal/database` 那 361 个方法本身也按域继续切（**已交回 6 个面：skill_stats 是第六片，
+  现测 353 个方法，由 `TestDatabaseSurfaceOnlyShrinks` 钉成只降水位**）、
   `AgentHandler` 分解（**水位实测 + 门禁 + 六刀已落**：起点 130 方法/23 文件，
   现已搬到 **88 方法/21 文件**——中断队列读面 9 个方法进 `HITLQueue`、收尾链路 10 个方法进
   `runFinalizer`、11 个审批配置端点 + 它们读的配置状态进 `HitlPolicy`、挂起审批的应答面 3 个端点
@@ -1333,7 +1362,7 @@ origin  https://github.com/AIPentest/CyberStrikeAI.git  # 上游父仓库，只�
 go list -f '{{.ImportPath}}: {{join .Imports " "}}' ./internal/... ./cmd/... > /tmp/deps.txt
 
 # DB 方法数 / 裸 SQL / 越层 import
-grep -rhE '^func \((db|d) \*DB\)' internal/database/*.go | grep -v _test | wc -l   # 361
+grep -rhE '^func \((db|d) \*DB\)' internal/database/*.go | grep -v _test | wc -l   # 361 起测，现 353（skill_stats 已交回 store，由 internal/layering 的只降门禁钉住）
 grep -rnE 'h\.db\.(Exec|Query|QueryRow|Begin)' internal/handler/*.go | grep -v _test | wc -l  # 32（原报告口径）
 # 49 = 重构前的 HTTP 层全部接收者；当前树为 0（见 §11「当前水位」）
 grep -rhoE '\b[a-z]+\.db\.(Exec|Query|QueryRow|Begin|Prepare)\(' $(ls internal/handler/*.go | grep -v _test) | wc -l

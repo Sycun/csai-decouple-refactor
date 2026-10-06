@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/handler"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/plugin"
@@ -298,4 +299,14 @@ func applyPersistedSwitches(table *plugin.Table, switches *store.CapabilitySwitc
 		logger.Info("已按保存的开关重新停用能力单元", zap.Int("units", applied))
 	}
 	return applied, notes
+}
+
+// ensureSkillStatsSchema creates the skill_stats table through the store that owns it. The data
+// layer used to create every table in one start-up sweep; a domain whose SQL lives elsewhere has to
+// take its schema with it, or the store queries a table nobody makes.
+func ensureSkillStatsSchema(db *database.DB) error {
+	if db == nil {
+		return nil
+	}
+	return store.NewSkillStats(db.DB).EnsureSchema()
 }

@@ -74,7 +74,14 @@ func classifyAssignment(value string) string {
 // knowledge.go is the counter-example worth keeping: its `db` field was never read, so the honest
 // fix was deleting the field and the constructor parameter rather than inventing a store for it.
 
-// narrowedStoreFloor is how many handler fields hold a consumer-shaped database interface today.
+// narrowedStoreFloor is how many handler domains are reached through *something narrower than the
+// whole connection* - a consumer-shaped database interface, or a per-table store from internal/store.
+// It only goes up; a drop means a domain was widened back to the god object.
+//
+// A domain that graduates from an interface field to a `*store.X` field must still count - and must
+// count once, not as a loss. skill_stats is the first: its handler field used to be
+// `database.SkillsStore` and is now `*store.SkillStats`, which is the same migration taken one step
+// further (one table, one owner, its own schema), so the detector sums both shapes.
 // It only goes up; a drop means a domain was widened back to the god object.
 //
 // The detector used to guess "is this a narrowed surface?" from the type's *name*
@@ -88,7 +95,13 @@ func classifyAssignment(value string) string {
 // embedded field has no assignment key to check).
 const narrowedStoreFloor = 19
 
-const narrowedAssignmentFloor = 19
+// narrowedAssignmentFloor counts how many *interface* assignments the shape scan inspects. It is a
+// coverage guard, not a progress ratchet: its job is to fail when the scanner stops seeing fields it
+// used to see. skill_stats left that surface - its handler field is a *store.SkillStats now - and an
+// owned store needs no Narrow rule, because the typed-nil leak this gate hunts is specific to
+// interfaces: `var s *store.SkillStats = nil` is nil, and no assignment can make it a non-nil value
+// holding nil. So the floor tracks the interface count (18) rather than pretending to be immutable.
+const narrowedAssignmentFloor = 18
 
 // narrowedInterfaceFloor keeps a broken interface scan from turning the floors above into a green
 // no-op: internal/database declares 22 interfaces across stores.go and surfaces.go today.
@@ -118,6 +131,22 @@ func narrowedHandlerFields(root string) (map[string][]string, map[string][]strin
 		return nil, nil, len(interfaces), err
 	}
 	return named, embedded, len(interfaces), nil
+}
+
+// storeOwnedFields counts handler fields whose type is a per-table store from internal/store.
+func storeOwnedFields(byFile map[string]map[string]int) (int, []string) {
+	total := 0
+	var list []string
+	for file, types := range byFile {
+		for text, count := range types {
+			if strings.HasPrefix(text, "*store.") {
+				total += count
+				list = append(list, file+"="+text)
+			}
+		}
+	}
+	sort.Strings(list)
+	return total, list
 }
 
 func TestHandlerLayerHoldsNoGodObject(t *testing.T) {
@@ -151,13 +180,17 @@ func TestHandlerLayerHoldsNoGodObject(t *testing.T) {
 		narrowed += len(names)
 		narrowedList = append(narrowedList, file+"="+strings.Join(names, ","))
 	}
-	if narrowed < narrowedStoreFloor {
-		t.Fatalf("only %d handler fields hold a narrowed database interface (floor %d): a handler was "+
-			"widened back to *database.DB", narrowed, narrowedStoreFloor)
-	}
+	storeOwned, storeList := storeOwnedFields(byFile)
 	sort.Strings(narrowedList)
-	t.Logf("transport layer: %d structs hold *database.DB, %d fields hold their own store interface, "+
-		"%d struct fields scanned (started 19/0)", len(concrete), narrowed, fields)
+	sort.Strings(storeList)
+	if narrowed+storeOwned < narrowedStoreFloor {
+		t.Fatalf("only %d handler domains are narrowed (%d database interfaces + %d owned stores, floor %d): "+
+			"a handler was widened back to *database.DB. Interfaces: %v. Stores: %v",
+			narrowed+storeOwned, narrowed, storeOwned, narrowedStoreFloor, narrowedList, storeList)
+	}
+	t.Logf("transport layer: %d structs hold *database.DB, %d fields hold a narrowed database interface, "+
+		"%d hold their own table store, %d struct fields scanned (started 19/0)",
+		len(concrete), narrowed, storeOwned, fields)
 
 	if len(concrete) > 0 {
 		sort.Strings(concrete)
@@ -196,9 +229,14 @@ func TestNarrowedFieldsAreOnlyAssignedThroughNarrow(t *testing.T) {
 	for _, names := range named {
 		fields += len(names)
 	}
-	if fields < narrowedStoreFloor {
-		t.Fatalf("only %d handler fields hold a database interface (floor %d): a domain was widened "+
-			"back to *database.DB", fields, narrowedStoreFloor)
+	byFileType, err := FieldTypesByFile(root, "internal/handler")
+	if err != nil {
+		t.Fatalf("store field scan: %v", err)
+	}
+	storeOwned, _ := storeOwnedFields(byFileType)
+	if fields+storeOwned < narrowedStoreFloor {
+		t.Fatalf("only %d handler domains are narrowed (%d interfaces + %d owned stores, floor %d): "+
+			"a domain was widened back to *database.DB", fields+storeOwned, fields, storeOwned, narrowedStoreFloor)
 	}
 
 	violations := []string{}

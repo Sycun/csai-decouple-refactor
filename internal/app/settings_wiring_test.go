@@ -35,6 +35,7 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	bootToolRebuilds := 0
 	mcpProvisioned := 0
 	pluginUnitsDeclared := 0
+	skillStatsSchema := 0
 	pluginCalls := 0
 	pluginWithoutToolLayer := 0
 	pluginWithoutMCPProvisioner := 0
@@ -75,6 +76,10 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 						// builds from config.yaml. Without this call the server is in the table and
 						// in the console after a restart while nothing connects to it.
 						mcpProvisioned++
+					case "ensureSkillStatsSchema":
+						// The store owns its schema: without this call the table nobody creates
+						// would only appear on installations that predate the cut.
+						skillStatsSchema++
 					case "declarePackPluginUnits":
 						// A pack's plugin unit must come back *declared* rather than enabled: the
 						// host holds no domain at start-up, so a manifest that says enabled would
@@ -168,6 +173,10 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	if mcpProvisioned < 1 {
 		t.Fatalf("provisionDeclaredServers is never called at boot: a pack's MCP server would be in " +
 			"the table and in the console but absent from the live manager until the pack is reinstalled")
+	}
+	if skillStatsSchema < 1 {
+		t.Fatalf("ensureSkillStatsSchema is never called at boot: skill_stats moved out of the data " +
+			"layer's start-up sweep, and a store whose table nobody creates fails only on a fresh database")
 	}
 	if pluginUnitsDeclared < 1 {
 		t.Fatalf("declarePackPluginUnits is never called at boot: a pack whose manifest says enabled " +

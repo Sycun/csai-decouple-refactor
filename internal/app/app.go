@@ -553,6 +553,10 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	if err := unitSwitches.EnsureSchema(); err != nil {
 		log.Logger.Warn("初始化能力单元开关表失败，本次启动的开关不会持久化", zap.Error(err))
 	}
+	// skill_stats left the connection wrapper, so the store that owns the table creates it.
+	if err := ensureSkillStatsSchema(db); err != nil {
+		log.Logger.Warn("初始化 skill_stats 表失败", zap.Error(err))
+	}
 	switchesApplied, switchNotes := applyPersistedSwitches(pluginTable, unitSwitches, log.Logger)
 	if len(switchNotes) > 0 {
 		log.Logger.Warn("部分能力单元开关无法恢复", zap.Strings("notes", switchNotes))

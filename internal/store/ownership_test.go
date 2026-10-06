@@ -19,7 +19,7 @@ import (
 // a database, they are not a second write path.
 func TestOwnedTablesAreOnlyWrittenFromThisPackage(t *testing.T) {
 	root := moduleRoot(t)
-	owned := []string{"hitl_interrupts", "hitl_conversation_configs", "notification_reads_by_user"}
+	owned := []string{"hitl_interrupts", "hitl_conversation_configs", "notification_reads_by_user", "skill_stats"}
 	pattern := regexp.MustCompile(`(?i)\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+` + `(` + strings.Join(owned, "|") + `)`)
 
 	var offenders []string

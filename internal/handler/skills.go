@@ -11,6 +11,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/skillpackage"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -21,7 +22,7 @@ type SkillsHandler struct {
 	config     *config.Config
 	configPath string
 	logger     *zap.Logger
-	db         database.SkillsStore // 数据库连接（遗留统计；MCP list/read 已移除）
+	stats      *store.SkillStats // skill_stats 表的主人；统计读写都走它
 	audit      *audit.Service
 }
 
@@ -51,11 +52,22 @@ func (h *SkillsHandler) skillsRootAbs() string {
 	return skillsDir
 }
 
-// SetDB 设置数据库连接（用于获取调用统计）
+// SetDB points the handler at the skill_stats table.
+//
+// A nil *database.DB stays a nil store rather than becoming a non-nil interface holding nil: every
+// reader below guards the field, and that guard is what makes a server started without a database
+// answer "no statistics yet" instead of panicking.
 func (h *SkillsHandler) SetDB(db *database.DB) {
-	// Narrow, not a plain assignment: h.db is now an interface, and assigning a nil *DB would
-	// store a non-nil interface whose methods panic - the opposite of the guards below.
-	h.db = database.Narrow[database.SkillsStore](db)
+	h.stats = newSkillStatsStore(db)
+}
+
+// newSkillStatsStore is the one way a handler comes by the skill_stats table: a wiring without a
+// database keeps a nil store, whose methods answer an error instead of panicking on a nil receiver.
+func newSkillStatsStore(db *database.DB) *store.SkillStats {
+	if db == nil {
+		return nil
+	}
+	return store.NewSkillStats(db.DB)
 }
 
 // GetSkills 获取所有skills列表（支持分页和搜索）
@@ -532,17 +544,17 @@ func (h *SkillsHandler) GetSkillStats(c *gin.Context) {
 	skillsDir := h.skillsRootAbs()
 
 	// 从数据库加载调用统计
-	var skillStatsMap map[string]*database.SkillStats
-	if h.db != nil {
-		dbStats, err := h.db.LoadSkillStats()
+	var skillStatsMap map[string]*store.SkillCallStats
+	if h.stats != nil {
+		dbStats, err := h.stats.Load()
 		if err != nil {
 			h.logger.Warn("从数据库加载Skills统计信息失败", zap.Error(err))
-			skillStatsMap = make(map[string]*database.SkillStats)
+			skillStatsMap = make(map[string]*store.SkillCallStats)
 		} else {
 			skillStatsMap = dbStats
 		}
 	} else {
-		skillStatsMap = make(map[string]*database.SkillStats)
+		skillStatsMap = make(map[string]*store.SkillCallStats)
 	}
 
 	// 构建统计信息（包含所有skills，即使没有调用记录）
@@ -554,7 +566,7 @@ func (h *SkillsHandler) GetSkillStats(c *gin.Context) {
 	for _, skillName := range skillList {
 		stat, exists := skillStatsMap[skillName]
 		if !exists {
-			stat = &database.SkillStats{
+			stat = &store.SkillCallStats{
 				SkillName:    skillName,
 				TotalCalls:   0,
 				SuccessCalls: 0,
@@ -592,12 +604,12 @@ func (h *SkillsHandler) GetSkillStats(c *gin.Context) {
 
 // ClearSkillStats 清空所有Skills统计信息
 func (h *SkillsHandler) ClearSkillStats(c *gin.Context) {
-	if h.db == nil {
+	if h.stats == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库连接未配置"})
 		return
 	}
 
-	if err := h.db.ClearSkillStats(); err != nil {
+	if err := h.stats.Clear(); err != nil {
 		h.logger.Error("清空Skills统计信息失败", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "清空统计信息失败: " + err.Error()})
 		return
@@ -617,12 +629,12 @@ func (h *SkillsHandler) ClearSkillStatsByName(c *gin.Context) {
 		return
 	}
 
-	if h.db == nil {
+	if h.stats == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "数据库连接未配置"})
 		return
 	}
 
-	if err := h.db.ClearSkillStatsByName(skillName); err != nil {
+	if err := h.stats.ClearSkill(skillName); err != nil {
 		h.logger.Error("清空指定skill统计信息失败", zap.String("skill", skillName), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "清空统计信息失败: " + err.Error()})
 		return

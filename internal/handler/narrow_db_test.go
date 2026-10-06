@@ -3,6 +3,7 @@ package handler
 import (
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"cyberstrike-ai/internal/config"
@@ -49,16 +50,46 @@ var narrowedHandlers = []struct {
 	{"RobotHandler", func(db *database.DB) interface{} { return NewRobotHandler(&config.Config{}, db, nil, zap.NewNop()) }},
 	{"WebShellHandler", func(db *database.DB) interface{} { return NewWebShellHandler(zap.NewNop(), db) }},
 	{"ChatUploadsHandler", func(db *database.DB) interface{} { return NewChatUploadsHandler(zap.NewNop(), db) }},
-	{"SkillsHandler", func(db *database.DB) interface{} {
-		h := NewSkillsHandler(&config.Config{}, "", zap.NewNop())
-		h.SetDB(db)
-		return h
-	}},
 	{"ConfigHandler", func(db *database.DB) interface{} {
 		h := &ConfigHandler{logger: zap.NewNop()}
 		h.SetDB(db)
 		return h
 	}},
+}
+
+// storeOwnedHandlers are the domains that went one step further than a consumer interface: their
+// handler holds a per-table store from internal/store, which owns the SQL and the schema of exactly
+// one table. The same nil-path invariant applies and is easier to satisfy - a store is a pointer, so
+// a nil database cannot turn into a non-nil value holding nil - which is precisely why the guard is
+// still worth running: a store built from a live connection must not come back nil either.
+var storeOwnedHandlers = []struct {
+	name  string
+	field string
+	build func(db *database.DB) interface{}
+}{
+	{"SkillsHandler", "stats", func(db *database.DB) interface{} {
+		h := NewSkillsHandler(&config.Config{}, "", zap.NewNop())
+		h.SetDB(db)
+		return h
+	}},
+}
+
+// storeField returns a named field and requires it to be a pointer to a store from internal/store.
+func storeField(t *testing.T, built interface{}, name string) reflect.Value {
+	t.Helper()
+	value := reflect.ValueOf(built)
+	if value.Kind() != reflect.Ptr || value.Elem().Kind() != reflect.Struct {
+		t.Fatalf("%T is not a pointer to a struct", built)
+	}
+	field := value.Elem().FieldByName(name)
+	if !field.IsValid() {
+		t.Fatalf("%T has no %s field: the store moved, update this list", value.Type(), name)
+	}
+	if field.Kind() != reflect.Ptr || !strings.HasPrefix(field.Type().String(), "*store.") {
+		t.Fatalf("%T.%s is %s, not a *store.* pointer: this domain is not owned by a table store",
+			value.Type(), name, field.Type())
+	}
+	return field
 }
 
 // storageField returns the handler's `db` field, failing when the field is not an interface -
@@ -81,8 +112,9 @@ func storageField(t *testing.T, built interface{}) reflect.Value {
 }
 
 func TestNarrowedStorageStaysNilWithoutADatabase(t *testing.T) {
-	if len(narrowedHandlers) < 19 {
-		t.Fatalf("only %d narrowed handlers listed, the inventory is stale", len(narrowedHandlers))
+	if len(narrowedHandlers)+len(storeOwnedHandlers) < 19 {
+		t.Fatalf("only %d narrowed + %d store-owned handlers listed, the inventory is stale (19 domains "+
+			"left the god object)", len(narrowedHandlers), len(storeOwnedHandlers))
 	}
 	for _, entry := range narrowedHandlers {
 		field := storageField(t, entry.build(nil))
@@ -90,6 +122,12 @@ func TestNarrowedStorageStaysNilWithoutADatabase(t *testing.T) {
 			t.Errorf("%s built with a nil *database.DB holds a non-nil %s - the typed-nil leak: every "+
 				"h.db == nil guard in that handler would take the wrong branch (use database.Narrow)",
 				entry.name, field.Type())
+		}
+	}
+	for _, entry := range storeOwnedHandlers {
+		field := storeField(t, entry.build(nil), entry.field)
+		if !field.IsNil() {
+			t.Errorf("%s built with a nil *database.DB holds a non-nil %s", entry.name, field.Type())
 		}
 	}
 }
@@ -108,6 +146,12 @@ func TestNarrowedStorageKeepsALiveDatabase(t *testing.T) {
 		if field.IsNil() {
 			t.Errorf("%s dropped a live *database.DB to nil: the handler would answer 'database unavailable' "+
 				"for a working deployment", entry.name)
+		}
+	}
+	for _, entry := range storeOwnedHandlers {
+		field := storeField(t, entry.build(db), entry.field)
+		if field.IsNil() {
+			t.Errorf("%s did not get its table store from a live *database.DB", entry.name)
 		}
 	}
 }

@@ -185,6 +185,8 @@ func discardPlanningIfEchoesToolResult(respPlan *responsePlanAgg, toolData inter
 type AgentHandler struct {
 	agent *agent.Agent
 	db    database.AgentStore
+	// skillStats is the skill_stats table, reached through its store rather than the connection wrapper.
+	stats *store.SkillStats
 	// hitlStore 是 hitl_interrupts 的域存储：HTTP 层不再在这个表上裸写 SQL。
 	hitlStore *store.HITL
 	// hitlQueue 是中断队列的读取/权限/审计日志面，从本 handler 里搬出去的 9 个方法住在
@@ -332,6 +334,7 @@ func NewAgentHandler(agent *agent.Agent, db *database.DB, cfg *config.Config, lo
 	handler := &AgentHandler{
 		agent:            agent,
 		db:               database.Narrow[database.AgentStore](db),
+		stats:            newSkillStatsStore(db),
 		hitlStore:        newHITLStore(db),
 		hitlQueue:        newHITLQueue(database.Narrow[database.AgentStore](db), newHITLStore(db), cfg, hitlManager),
 		sessions:         newSessionStore(db),
@@ -1356,7 +1359,7 @@ func (h *AgentHandler) createProgressCallback(runCtx context.Context, cancelRun 
 							failedCalls = 1
 						}
 						now := time.Now()
-						if err := h.db.UpdateSkillStats(skillName, 1, successCalls, failedCalls, &now); err != nil {
+						if err := h.stats.Add(skillName, 1, successCalls, failedCalls, &now); err != nil {
 							h.logger.Warn("更新Skills调用统计失败", zap.Error(err), zap.String("skill", skillName))
 						}
 					}

@@ -49,7 +49,6 @@ type AgentStore interface {
 	SetResourceOwner(resourceType, resourceID, userID string) error
 	UpdateAssistantMessageFinalize(messageID, content string, mcpExecutionIDs []string, reasoningContent string) error
 	UpdateProcessDetailContent(id, message string, data interface{}) error
-	UpdateSkillStats(skillName string, totalCalls, successCalls, failedCalls int, lastCallTime *time.Time) error
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 	Exec(query string, args ...any) (sql.Result, error)
 	Query(query string, args ...any) (*sql.Rows, error)
@@ -339,15 +338,6 @@ type RobotStore interface {
 }
 
 var _ RobotStore = (*DB)(nil)
-
-// SkillsStore is the persistence surface required by SkillsHandler.
-type SkillsStore interface {
-	ClearSkillStats() error
-	ClearSkillStatsByName(skillName string) error
-	LoadSkillStats() (map[string]*SkillStats, error)
-}
-
-var _ SkillsStore = (*DB)(nil)
 
 // VulnerabilityStore is the persistence surface required by VulnerabilityHandler.
 type VulnerabilityStore interface {
