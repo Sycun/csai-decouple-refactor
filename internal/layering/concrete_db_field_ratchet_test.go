@@ -101,7 +101,7 @@ const narrowedStoreFloor = 19
 // owned store needs no Narrow rule, because the typed-nil leak this gate hunts is specific to
 // interfaces: `var s *store.SkillStats = nil` is nil, and no assignment can make it a non-nil value
 // holding nil. So the floor tracks the interface count (18) rather than pretending to be immutable.
-const narrowedAssignmentFloor = 18
+const narrowedAssignmentFloor = 17
 
 // narrowedInterfaceFloor keeps a broken interface scan from turning the floors above into a green
 // no-op: internal/database declares 22 interfaces across stores.go and surfaces.go today.

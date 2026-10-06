@@ -34,11 +34,6 @@ var narrowedHandlers = []struct {
 	{"VulnerabilityHandler", func(db *database.DB) interface{} { return NewVulnerabilityHandler(db, zap.NewNop(), nil) }},
 	{"ConversationHandler", func(db *database.DB) interface{} { return NewConversationHandler(db, zap.NewNop()) }},
 	{"MonitorHandler", func(db *database.DB) interface{} { return NewMonitorHandler(nil, nil, db, zap.NewNop()) }},
-	{"BatchTaskManager", func(db *database.DB) interface{} {
-		m := NewBatchTaskManager(zap.NewNop())
-		m.SetDB(db)
-		return m
-	}},
 	{"AgentHandler", func(db *database.DB) interface{} {
 		return NewAgentHandler(nil, db, &config.Config{}, zap.NewNop())
 	}},
@@ -73,6 +68,11 @@ var storeOwnedHandlers = []struct {
 		return h
 	}},
 	{"AssetHandler", "assets", func(db *database.DB) interface{} { return NewAssetHandler(db, zap.NewNop()) }},
+	{"BatchTaskManager", "batch", func(db *database.DB) interface{} {
+		m := NewBatchTaskManager(zap.NewNop())
+		m.SetDB(db)
+		return m
+	}},
 }
 
 // storeField returns a named field and requires it to be a pointer to a store from internal/store.

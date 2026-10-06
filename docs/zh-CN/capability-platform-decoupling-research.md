@@ -2797,6 +2797,38 @@ C2 三张列表都认的哨兵，而 `assetWhere` 只是把它当成一个匹配
 SQLite 因为 `idx_batch_task_queues_title` 占用而**拒绝** DROP `title` 这一列，
 所以"title 缺列时先建索引会失败"这一支只能由存储层的真·老库夹具去证，两条互补）。
 
+### P6 第三十四刀 —— 批量任务的 22 条转发删掉，"这个队列还在吗"交回队列的主人
+
+照第三十二刀的写法收口：`BatchTaskManager` 原来那个 `db database.BatchTaskStore` 字段换成
+**`batch *store.BatchTasks`**，`database.BatchTaskStore` 这整个接口（22 条成员，全是这两张表的）与
+22 条一行转发一起删除。**水位 213 → 191**。
+
+**一处必须先处理的"逃逸接收者"**：`audit.ResourceExistenceSource` 的七条存在性查询里有一条
+`GetBatchQueue`——审计页问"被引用的批量队列还在不在"，此前是顺着连接包装问的。这张表的主人已经是
+`store.BatchTasks`，所以这一条不能留在 `*DB` 上，也不能被"顺手保留一条转发"糊过去：
+按同文件里 `FindingLookup` / `WebshellLookup` 已有的先例，**新切一个 `BatchQueueLookup`** 由
+`*store.BatchTasks` 亲自答，`AuditHandler` 加 `batches` 字段（`database.NewBatchTasks(db)`），
+`ApplyResourceAvailability` 多收一个参数；没有挂上时（nil）沿用既有的 **"availability unknown"**
+而不是"这个资源没了"。`database.ResourceExistence` 同步减掉这一条。
+
+**顺带暴露的一条旧注释错误**：`SetDB` 上面写着「`m.db` 现在是接口，存 nil *DB 会让十处
+`if m.db != nil` 走错分支」，而实际数下来是 **12 处**（`m.db` 的判空点 13 个）。搬的时候把这些守卫
+一起改名为 `m.batch`，并把注释改成它真正依赖的事实：`database.NewBatchTasks` 对 nil 连接**返回 nil store**
+（与 `database.Narrow` 的 nil→nil 同一条规矩），所以判空仍然成立。
+探针验过这条不是摆设：把构造函数改成"nil 连接返回非 nil 的空壳 store" →
+`BatchTaskManager built with a nil *database.DB holds a non-nil *store.BatchTasks`，撤回复绿。
+
+**测试清单跟着搬家**：`narrow_db_test.go` 里 `BatchTaskManager` 从 `narrowedHandlers`
+（字段必须是接口）移到 `storeOwnedHandlers`（字段必须是 `*store.*` 且带 nil→nil 双向断言），
+`BatchTaskStore` 这个类型在测试里再无引用——**没有 fake 实现过它**，7 处测试调用点全部本来就用真库
+（`m.SetDB(db)` / `NewBatchTasks(db)`），所以这次换类型没有把任何一条测试降级成对假件的断言。
+
+**三条只降门禁的数字按实测重钉**（都是"扫描还在读"的反空跑下限，不是目标值）：
+`dbMethodCeiling` 213 → **191**；导出方法地板 180 → **158**（实测正好 158，减掉的 22 条全是这批转发）；
+`narrowedAssignmentFloor` 18 → **17**（少的那一条就是 `m.db = Narrow[...]`）；
+`consumerSurfaceMemberFloor` 180 → **162**（`BatchTaskStore` 连同它描述的 22 个成员一起消失，
+消费者面少了一个域）。`gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

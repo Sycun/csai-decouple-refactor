@@ -91,7 +91,6 @@ var _ AttackChainStore = (*DB)(nil)
 // one thing. The findings lookup is absent for the same reason - it is store.Vulnerabilities.Get.
 type ResourceExistence interface {
 	ConversationExists(id string) (bool, error)
-	GetBatchQueue(queueID string) (*store.BatchTaskQueueRow, error)
 	GetC2Listener(id string) (*C2Listener, error)
 	GetC2Session(id string) (*C2Session, error)
 	GetC2Task(id string) (*C2Task, error)
@@ -100,33 +99,8 @@ type ResourceExistence interface {
 
 var _ ResourceExistence = (*DB)(nil)
 
-// BatchTaskStore is the persistence surface required by BatchTaskManager.
-type BatchTaskStore interface {
-	AddBatchTask(queueID, taskID, message string) error
-	CancelPendingBatchTasks(queueID string, completedAt time.Time) error
-	CountBatchQueuesForAccess(status, keyword, userID, scope string) (int, error)
-	CreateBatchQueue(queueID string, title string, role string, agentMode string, scheduleMode string, cronExpr string, nextRunAt *time.Time, projectID string, concurrency int, tasks []map[string]interface{}, hitlPolicies ...string) error
-	DeleteBatchQueue(queueID string) error
-	DeleteBatchTask(queueID, taskID string) error
-	GetAllBatchQueues() ([]*store.BatchTaskQueueRow, error)
-	GetBatchQueue(queueID string) (*store.BatchTaskQueueRow, error)
-	GetBatchTasks(queueID string) ([]*store.BatchTaskRow, error)
-	ListBatchQueuesForAccess(limit, offset int, status, keyword, userID, scope string) ([]*store.BatchTaskQueueRow, error)
-	PrepareBatchSingleTaskRun(queueID, taskID string, taskIndex int, resetTask, resumeQueue bool) error
-	RecordBatchQueueScheduledTriggerStart(queueID string, at time.Time) error
-	ResetBatchQueueForRerun(queueID string) error
-	SetBatchQueueLastRunError(queueID, msg string) error
-	SetBatchQueueLastScheduleError(queueID, msg string) error
-	UpdateBatchQueueCurrentIndex(queueID string, currentIndex int) error
-	UpdateBatchQueueMetadata(queueID, title, role, agentMode string, concurrency int, hitlPolicies ...string) error
-	UpdateBatchQueueSchedule(queueID, scheduleMode, cronExpr string, nextRunAt *time.Time) error
-	UpdateBatchQueueScheduleEnabled(queueID string, enabled bool) error
-	UpdateBatchQueueStatus(queueID, status string) error
-	UpdateBatchTaskMessage(queueID, taskID, message string) error
-	UpdateBatchTaskStatus(queueID, taskID, status string, conversationID, result, errorMsg string) error
-}
-
-var _ BatchTaskStore = (*DB)(nil)
+// BatchTaskStore 已删除：批量任务两张表的 22 个方法全部由 store.BatchTasks 亲自答，
+// 消费者（BatchTaskManager）现在直接持有那个 store。
 
 // ChatUploadsStore is the persistence surface required by ChatUploadsHandler.
 type ChatUploadsStore interface {

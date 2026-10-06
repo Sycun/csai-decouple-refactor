@@ -33,14 +33,14 @@ func TestBatchHITLPolicyPersistence(t *testing.T) {
 	if err := reloaded.UpdateQueueMetadata(q.ID, "renamed", "", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	row, err := db.GetBatchQueue(q.ID)
+	row, err := database.NewBatchTasks(db).GetBatchQueue(q.ID)
 	if err != nil || row.HITLPolicy != "audit_agent" {
 		t.Fatalf("unrelated edit lost policy: %+v, %v", row, err)
 	}
 	if err := reloaded.UpdateQueueMetadata(q.ID, "renamed", "", "", nil, ""); err != nil {
 		t.Fatal(err)
 	}
-	row, err = db.GetBatchQueue(q.ID)
+	row, err = database.NewBatchTasks(db).GetBatchQueue(q.ID)
 	if err != nil || row.HITLPolicy != "" {
 		t.Fatalf("reset failed: %+v, %v", row, err)
 	}

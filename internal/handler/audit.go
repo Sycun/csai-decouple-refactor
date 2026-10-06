@@ -19,6 +19,7 @@ type AuditHandler struct {
 	db        database.ResourceExistence // 只剩"被审计的资源还在不在"那七条查询
 	findings  audit.FindingLookup        // 漏洞那条存在性检查在 store.Vulnerabilities 里，不在这七条里
 	webshells audit.WebshellLookup       // WebShell 那条存在性检查在 store.Webshell 里，同理
+	batches   *store.BatchTasks          // 批量队列那条同理：读的是 store.BatchTasks，不是连接包装
 	audit     *audit.Service
 	logger    *zap.Logger
 }
@@ -32,6 +33,7 @@ func NewAuditHandler(db *database.DB, auditSvc *audit.Service, logger *zap.Logge
 		db:        database.Narrow[database.ResourceExistence](db),
 		findings:  newFindingLookup(db),
 		webshells: database.NewWebshell(db),
+		batches:   database.NewBatchTasks(db),
 		audit:     auditSvc,
 		logger:    logger,
 	}
@@ -134,7 +136,7 @@ func (h *AuditHandler) GetLog(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
 		return
 	}
-	audit.ApplyResourceAvailability(h.db, h.findings, h.webshells, row)
+	audit.ApplyResourceAvailability(h.db, h.findings, h.webshells, h.batches, row)
 	c.JSON(http.StatusOK, gin.H{"log": row})
 }
 

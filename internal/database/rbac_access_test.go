@@ -377,15 +377,15 @@ func TestRBACWebshellAndBatchListAccess(t *testing.T) {
 		t.Fatalf("unbound webshells = %#v, want only %s", webshells, ws4.ID)
 	}
 
-	if err := db.CreateBatchQueue("q_visible", "visible", "", "eino_single", "manual", "", nil, "", 1, []map[string]interface{}{{"id": "t1", "message": "a"}}); err != nil {
+	if err := NewBatchTasks(db).CreateBatchQueue("q_visible", "visible", "", "eino_single", "manual", "", nil, "", 1, []map[string]interface{}{{"id": "t1", "message": "a"}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateBatchQueue("q_hidden", "hidden", "", "eino_single", "manual", "", nil, "", 1, []map[string]interface{}{{"id": "t2", "message": "b"}}); err != nil {
+	if err := NewBatchTasks(db).CreateBatchQueue("q_hidden", "hidden", "", "eino_single", "manual", "", nil, "", 1, []map[string]interface{}{{"id": "t2", "message": "b"}}); err != nil {
 		t.Fatal(err)
 	}
 	_ = db.SetResourceOwner("batch_task", "q_visible", "u1")
 	_ = db.SetResourceOwner("batch_task", "q_hidden", "u2")
-	queues, err := db.ListBatchQueuesForAccess(50, 0, "all", "", "u1", store.ScopeOwn)
+	queues, err := NewBatchTasks(db).ListBatchQueuesForAccess(50, 0, "all", "", "u1", store.ScopeOwn)
 	if err != nil {
 		t.Fatal(err)
 	}

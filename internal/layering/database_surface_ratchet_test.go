@@ -78,7 +78,11 @@ import (
 // rows, the schedule stamps, the rerun reset and the single-task prepare - with both tables' DDL and
 // their three indexes. Twenty-two one-line delegations hold the manager and the handlers, so the drop
 // is migrateBatchTaskQueuesTable, the private backfill the table's owner now runs itself.
-const dbMethodCeiling = 213
+// 191: the batch run ledger stopped reaching these tables through the connection at all. Twenty-two
+// one-line delegations are gone, BatchTaskManager holds *store.BatchTasks as its own field, and the
+// audit "is this queue still there" lookup went to the queue's owner the same way the finding and
+// WebShell lookups did - which is why the drop is 22 rather than 0.
+const dbMethodCeiling = 191
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

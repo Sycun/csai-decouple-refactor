@@ -30,11 +30,16 @@ var auditActionsResourceRemoved = map[string]bool{
 // in - internal/database/stores.go keeps ResourceExistence aligned with it.
 type ResourceExistenceSource interface {
 	ConversationExists(id string) (bool, error)
-	GetBatchQueue(queueID string) (*store.BatchTaskQueueRow, error)
 	GetC2Listener(id string) (*database.C2Listener, error)
 	GetC2Session(id string) (*database.C2Session, error)
 	GetC2Task(id string) (*database.C2Task, error)
 	GetToolExecution(id string) (*mcp.ToolExecution, error)
+}
+
+// BatchQueueLookup is the batch queue answer split out for the same reason as the two below: that
+// read is store.BatchTasks.GetBatchQueue now, not a method on the connection wrapper.
+type BatchQueueLookup interface {
+	GetBatchQueue(queueID string) (*store.BatchTaskQueueRow, error)
 }
 
 // FindingLookup is the findings answer split out, because that read is store.Vulnerabilities.Get now
@@ -55,7 +60,7 @@ type WebshellLookup interface {
 // db is an interface, so callers must pass one built by database.Narrow: a nil *database.DB stored
 // in an interface is not nil, and the guard below would then fall through into method calls on a nil
 // receiver instead of reporting "availability unknown".
-func ApplyResourceAvailability(db ResourceExistenceSource, findings FindingLookup, webshells WebshellLookup, log *store.AuditLog) {
+func ApplyResourceAvailability(db ResourceExistenceSource, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, log *store.AuditLog) {
 	if log == nil || strings.TrimSpace(log.ResourceID) == "" {
 		return
 	}
@@ -67,13 +72,13 @@ func ApplyResourceAvailability(db ResourceExistenceSource, findings FindingLooku
 	if db == nil {
 		return
 	}
-	available, known := resourceStillExists(db, findings, webshells, log.ResourceType, log.ResourceID)
+	available, known := resourceStillExists(db, findings, webshells, batches, log.ResourceType, log.ResourceID)
 	if known {
 		log.ResourceAvailable = &available
 	}
 }
 
-func resourceStillExists(db ResourceExistenceSource, findings FindingLookup, webshells WebshellLookup, resourceType, resourceID string) (bool, bool) {
+func resourceStillExists(db ResourceExistenceSource, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, resourceType, resourceID string) (bool, bool) {
 	resourceID = strings.TrimSpace(resourceID)
 	if resourceID == "" {
 		return false, false
@@ -100,7 +105,10 @@ func resourceStillExists(db ResourceExistenceSource, findings FindingLookup, web
 		}
 		return true, true
 	case "batch_queue":
-		_, err := db.GetBatchQueue(resourceID)
+		if batches == nil {
+			return false, false
+		}
+		_, err := batches.GetBatchQueue(resourceID)
 		return err == nil, true
 	case "c2_listener":
 		_, err := db.GetC2Listener(resourceID)

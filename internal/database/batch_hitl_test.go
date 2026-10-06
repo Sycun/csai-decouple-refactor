@@ -13,7 +13,7 @@ func TestBatchHITLLegacyMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := db.CreateBatchQueue("legacy", "test", "", "eino_single", "manual", "", nil, "", 1, nil); err != nil {
+	if err := NewBatchTasks(db).CreateBatchQueue("legacy", "test", "", "eino_single", "manual", "", nil, "", 1, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec("ALTER TABLE batch_task_queues DROP COLUMN hitl_policy"); err != nil {
@@ -27,7 +27,7 @@ func TestBatchHITLLegacyMigration(t *testing.T) {
 	if err := batches.MigrateQueueColumns(); err != nil {
 		t.Fatal(err)
 	}
-	row, err := db.GetBatchQueue("legacy")
+	row, err := NewBatchTasks(db).GetBatchQueue("legacy")
 	if err != nil {
 		t.Fatal(err)
 	}
