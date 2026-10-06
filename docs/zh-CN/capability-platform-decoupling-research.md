@@ -1877,6 +1877,45 @@ GROUP BY 循环、`GetVulnerabilityFilterOptionsForAccess` 的 `collect` 仍是
 `IS NOT NULL` 过滤，**升级形状进不去**，所以不是同一个缺陷；要改的动机是"少一个吞错的循环"，
 属于第二十一刀后半搬迁时顺手做，不能算作已修。
 
+### P6 第二十一刀（中）—— 搬之前先把这 9 条路由的线上形状钉死
+
+漏洞域 11 个方法里 handler 用到 9 个，而这 9 条路由**此前没有任何 HTTP 级测试**
+（`internal/handler` 只有告警订阅与通知两条测试）。
+裸 SQL 计数只能证明数据层不再写语句；**响应形状有没有变，只有在真实 router 上才证得出来**。
+所以搬迁前先补特征化测试（characterization test）：`internal/handler/vulnerability_contract_test.go`,
+**8 个用例**，全部对着 `internal/app/routes_vulnerability.go` 那 9 条路径 + 真库（`database.NewDB`，
+零 mock）跑，钉的内容包括：
+
+- 列表信封恰好 5 个 key（`vulnerabilities`/`total`/`page`/`page_size`/`total_pages`）、
+  `created_at DESC` 的顺序、`page` 与 `offset` 两种寻址各自算出的页码、`limit` 越界钳到 **20**、
+  **空结果是 `null` 而不是 `[]`**（`var vulnerabilities []*store.Vulnerability` 是 nil slice），
+  `q=` 命中一条时 `total` 与列表同步为 1。
+- 详情恰好 16 个 key，并**点名 5 个带 `omitempty` 的字段**（`project_id`、`conversation_tag`、
+  `task_tag`、`task_id`、`task_queue_id`）在无值时必须缺席；另用一条有 tag 的记录反向证明它们会回来。
+- 可达性：owner-scope 只看见自己的那条；**无 session 的调用列表为空、stats total=0、
+  filter-options 七个空清单**（失败闭合）。同时**如实钉住一处既有行为**：详情读**没有任何访问判定**，
+  任何已登录主体都能按 id 读到别人的漏洞——这是现状不是本片要改的策略（§10 决策项 10 记的就是这一族）。
+- 写侧边界：缺 title 400、坏 JSON 400、在别人的对话下创建 403、创建成功后本人可见、
+  PUT 是**合并**不是覆盖（未提交字段保留原值）、关联到别人的项目 403、关联到自己的项目 200 且回读得到、
+  未知 id 的 PUT 404；DELETE 未知 id **200**（记录本就不存在，重复删除也 200）、
+  批量删除零命中回 `"当前筛选条件下没有可删除的漏洞"` 且 `deleted=0`、有命中回 `"批量删除成功"`,
+  且无身份的调用者删不掉任何东西。
+- 统计与建议项的 key 集合（`total`/`by_severity`/`by_status`；
+  `vulnerability_ids`/`conversation_ids`/`project_ids`/`task_ids`/`queue_ids`/`conversation_tags`/`task_tags`）、
+  建议项按 `created_at DESC` 排序、无 tag 的对话不产出空串建议项。
+- 导出的 `group_by`/`mode` 各自 400、空集回 `total:0, files:[]`、
+  summary 一份合稿且**分组键**分别是「对话 id」与「对话 tag」、正文含 `` 漏洞ID: `e1` ``，
+  `group_by=task` 且记录没有任务时落到 `unassigned-task` 组且文件名被 sanitize。
+
+**探针（注入即红 / 撤销即绿）**：① 把列表的 `ORDER BY created_at DESC` 改成 `ASC` →
+`order = [old mid new], want newest first`；② 把 handler 的 limit 钳位 20 改成 25 →
+`clamped page_size = 25, want 20`。两处恢复后全绿。
+**一个命名坑照旧记录**：本包的 `c2_sse_contract_test.go` 已有 `keysOf`，新文件里的同名 helper
+直接编译失败——测试包内的 helper 必须带域前缀（改名 `jsonKeys`）。
+
+这套测试的作用是把第二十一刀后半（9 个方法进 `store.Vulnerabilities`）**变成一个不许动的靶心**：
+搬迁提交之后这 8 个用例**一行都不许改**，绿了才算搬对。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
