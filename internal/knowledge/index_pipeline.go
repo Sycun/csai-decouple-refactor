@@ -2,11 +2,11 @@ package knowledge
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strings"
 
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/cloudwego/eino/components/document"
 	"github.com/cloudwego/eino/compose"
@@ -31,15 +31,15 @@ func normalizeChunkStrategy(s string) string {
 func buildKnowledgeIndexChain(
 	ctx context.Context,
 	indexingCfg *config.IndexingConfig,
-	db *sql.DB,
+	vectors *store.KnowledgeEmbeddings,
 	recursive document.Transformer,
 	embeddingModel string,
 ) (compose.Runnable[[]*schema.Document, []string], error) {
 	if recursive == nil {
 		return nil, fmt.Errorf("recursive transformer is nil")
 	}
-	if db == nil {
-		return nil, fmt.Errorf("db is nil")
+	if vectors == nil {
+		return nil, fmt.Errorf("knowledge embeddings store is nil")
 	}
 	strategy := normalizeChunkStrategy("markdown_then_recursive")
 	batch := 64
@@ -52,7 +52,7 @@ func buildKnowledgeIndexChain(
 		maxChunks = indexingCfg.MaxChunksPerItem
 	}
 
-	si := NewSQLiteIndexer(db, batch, embeddingModel)
+	si := NewSQLiteIndexer(vectors, batch, embeddingModel)
 	ch := compose.NewChain[[]*schema.Document, []string]()
 	if strategy != "recursive" {
 		md, err := newMarkdownHeaderSplitter(ctx)

@@ -1617,20 +1617,13 @@ func NewKnowledgeDB(dbPath string, logger *zap.Logger) (*DB, error) {
 
 // initKnowledgeTables 初始化知识库数据库表（只包含知识库相关的表）
 func (db *DB) initKnowledgeTables() error {
-	// 创建知识库项表
-	createKnowledgeBaseItemsTable := `
-	CREATE TABLE IF NOT EXISTS knowledge_base_items (
-		id TEXT PRIMARY KEY,
-		category TEXT NOT NULL,
-		title TEXT NOT NULL,
-		file_path TEXT NOT NULL,
-		content TEXT,
-		created_at DATETIME NOT NULL,
-		updated_at DATETIME NOT NULL
-	);`
+	// knowledge_base_items 由它的 store 建；必须在向量表之前，后者对外键指向它。
+	if err := store.NewKnowledgeItems(db.DB).EnsureSchema(); err != nil {
+		return fmt.Errorf("创建knowledge_base_items表失败: %w", err)
+	}
 
-	// knowledge_embeddings 的建表、索引与三段列补写都在 store 里，两份历史实现（这里一处、
-	// internal/knowledge/schema_migrate.go 一处）合成一处。
+	// knowledge_embeddings 的建表、索引与三段列补写都在 store 里：这张表曾经有两份结构定义，
+	// 一处在知识库数据库的启动清扫里，一处在知识库包自己的列补写里，两条规则各写三遍 ALTER。
 	if err := store.NewKnowledgeEmbeddings(db.DB).EnsureSchema(); err != nil {
 		return fmt.Errorf("创建knowledge_embeddings表失败: %w", err)
 	}
@@ -1639,19 +1632,6 @@ func (db *DB) initKnowledgeTables() error {
 	// 两种拼法都由这张表的主人给出，见 internal/store/knowledge_retrieval.go。
 	if err := store.NewKnowledgeRetrieval(db.DB).EnsureStandaloneSchema(); err != nil {
 		return fmt.Errorf("创建knowledge_retrieval_logs表失败: %w", err)
-	}
-
-	// 创建索引
-	createIndexes := `
-	CREATE INDEX IF NOT EXISTS idx_knowledge_items_category ON knowledge_base_items(category);
-	`
-
-	if _, err := db.Exec(createKnowledgeBaseItemsTable); err != nil {
-		return fmt.Errorf("创建knowledge_base_items表失败: %w", err)
-	}
-
-	if _, err := db.Exec(createIndexes); err != nil {
-		return fmt.Errorf("创建索引失败: %w", err)
 	}
 
 	db.logger.Info("知识库数据库表初始化完成")

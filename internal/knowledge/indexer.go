@@ -21,7 +21,8 @@ import (
 
 // Indexer 使用 Eino Compose 索引链（Markdown/递归分块、Lambda  enrich、SQLite 索引）与嵌入写入。
 type Indexer struct {
-	db          *sql.DB
+	items       *store.KnowledgeItems // knowledge_base_items
+	vectors     *store.KnowledgeEmbeddings
 	embedder    *Embedder
 	logger      *zap.Logger
 	chunkSize   int
@@ -54,7 +55,8 @@ func NewIndexer(ctx context.Context, db *sql.DB, embedder *Embedder, logger *zap
 	if embedder == nil {
 		return nil, fmt.Errorf("embedder is nil")
 	}
-	if err := store.NewKnowledgeEmbeddings(db).EnsureColumns(); err != nil {
+	vectors := store.NewKnowledgeEmbeddings(db)
+	if err := vectors.EnsureColumns(); err != nil {
 		return nil, fmt.Errorf("knowledge_embeddings 结构迁移: %w", err)
 	}
 	if kcfg == nil {
@@ -77,7 +79,7 @@ func NewIndexer(ctx context.Context, db *sql.DB, embedder *Embedder, logger *zap
 		return nil, fmt.Errorf("eino recursive splitter: %w", err)
 	}
 
-	chain, err := buildKnowledgeIndexChain(ctx, indexingCfg, db, splitter, embedModel)
+	chain, err := buildKnowledgeIndexChain(ctx, indexingCfg, vectors, splitter, embedModel)
 	if err != nil {
 		return nil, fmt.Errorf("knowledge index chain: %w", err)
 	}
@@ -93,7 +95,8 @@ func NewIndexer(ctx context.Context, db *sql.DB, embedder *Embedder, logger *zap
 	}
 
 	return &Indexer{
-		db:          db,
+		items:       store.NewKnowledgeItems(db),
+		vectors:     vectors,
 		embedder:    embedder,
 		logger:      logger,
 		chunkSize:   chunkSize,
@@ -106,10 +109,10 @@ func NewIndexer(ctx context.Context, db *sql.DB, embedder *Embedder, logger *zap
 
 // RecompileIndexChain 在配置或嵌入模型变更后重建 Eino 索引链（无需重启进程）。
 func (idx *Indexer) RecompileIndexChain(ctx context.Context) error {
-	if idx == nil || idx.db == nil || idx.embedder == nil {
+	if idx == nil || idx.vectors == nil || idx.embedder == nil {
 		return fmt.Errorf("indexer 未初始化")
 	}
-	if err := store.NewKnowledgeEmbeddings(idx.db).EnsureColumns(); err != nil {
+	if err := idx.vectors.EnsureColumns(); err != nil {
 		return err
 	}
 	embedModel := idx.embedder.EmbeddingModelName()
@@ -117,7 +120,7 @@ func (idx *Indexer) RecompileIndexChain(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("eino recursive splitter: %w", err)
 	}
-	chain, err := buildKnowledgeIndexChain(ctx, idx.indexingCfg, idx.db, splitter, embedModel)
+	chain, err := buildKnowledgeIndexChain(ctx, idx.indexingCfg, idx.vectors, splitter, embedModel)
 	if err != nil {
 		return fmt.Errorf("knowledge index chain: %w", err)
 	}
@@ -134,13 +137,16 @@ func (idx *Indexer) IndexItem(ctx context.Context, itemID string) error {
 		return fmt.Errorf("嵌入器未初始化")
 	}
 
-	var content, category, title, filePath string
-	err := idx.db.QueryRow("SELECT content, category, title, file_path FROM knowledge_base_items WHERE id = ?", itemID).Scan(&content, &category, &title, &filePath)
+	row, found, err := idx.items.GetByID(itemID)
 	if err != nil {
 		return fmt.Errorf("获取知识项失败：%w", err)
 	}
+	if !found {
+		return fmt.Errorf("获取知识项失败：%w", sql.ErrNoRows)
+	}
+	content, category, title, filePath := row.Content, row.Category, row.Title, row.FilePath
 
-	if _, err := idx.db.Exec("DELETE FROM knowledge_embeddings WHERE item_id = ?", itemID); err != nil {
+	if err := idx.vectors.DeleteItem(itemID); err != nil {
 		return fmt.Errorf("删除旧向量失败：%w", err)
 	}
 
@@ -206,8 +212,7 @@ func (idx *Indexer) IndexItem(ctx context.Context, itemID string) error {
 
 // HasIndex 检查是否存在索引
 func (idx *Indexer) HasIndex() (bool, error) {
-	var count int
-	err := idx.db.QueryRow("SELECT COUNT(*) FROM knowledge_embeddings").Scan(&count)
+	count, err := idx.vectors.CountRows()
 	if err != nil {
 		return false, fmt.Errorf("检查索引失败：%w", err)
 	}
@@ -287,15 +292,9 @@ func (idx *Indexer) RunIndexMissing(ctx context.Context) error {
 func (idx *Indexer) runRebuildIndex(ctx context.Context) error {
 	idx.resetLastError()
 
-	rows, err := idx.db.QueryContext(ctx, "SELECT id FROM knowledge_base_items ORDER BY updated_at ASC, id ASC")
+	itemIDs, err := idx.items.AllIDs(ctx)
 	if err != nil {
 		return fmt.Errorf("查询知识项失败：%w", err)
-	}
-	defer rows.Close()
-
-	itemIDs, err := scanKnowledgeItemIDs(rows)
-	if err != nil {
-		return err
 	}
 
 	idx.setIndexRunTotal(len(itemIDs))
@@ -307,42 +306,15 @@ func (idx *Indexer) runRebuildIndex(ctx context.Context) error {
 func (idx *Indexer) runIndexMissing(ctx context.Context) error {
 	idx.resetLastError()
 
-	rows, err := idx.db.QueryContext(ctx, `
-		SELECT i.id
-		FROM knowledge_base_items i
-		LEFT JOIN knowledge_embeddings e ON e.item_id = i.id
-		WHERE e.item_id IS NULL
-		ORDER BY i.updated_at ASC, i.id ASC
-	`)
+	itemIDs, err := idx.items.WithoutVectors(ctx)
 	if err != nil {
 		return fmt.Errorf("查询未索引知识项失败：%w", err)
-	}
-	defer rows.Close()
-
-	itemIDs, err := scanKnowledgeItemIDs(rows)
-	if err != nil {
-		return fmt.Errorf("扫描未索引知识项 ID 失败：%w", err)
 	}
 
 	idx.setIndexRunTotal(len(itemIDs))
 	idx.logger.Info("开始补齐缺失索引", zap.Int("totalItems", len(itemIDs)))
 
 	return idx.indexItemIDs(ctx, itemIDs, "索引构建完成")
-}
-
-func scanKnowledgeItemIDs(rows *sql.Rows) ([]string, error) {
-	var itemIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("扫描知识项 ID 失败：%w", err)
-		}
-		itemIDs = append(itemIDs, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("扫描知识项 ID 失败：%w", err)
-	}
-	return itemIDs, nil
 }
 
 func (idx *Indexer) indexItemIDs(ctx context.Context, itemIDs []string, doneMessage string) error {

@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/cloudwego/eino/components/retriever"
 	"github.com/cloudwego/eino/schema"
@@ -20,7 +21,7 @@ import (
 // Retriever 检索器：SQLite 存向量 + Eino 嵌入，**纯向量检索**（余弦相似度、TopK、阈值），
 // 实现语义与 [retriever.Retriever] 适配层 [VectorEinoRetriever] 一致。
 type Retriever struct {
-	db       *sql.DB
+	vectors  *store.KnowledgeEmbeddings
 	embedder *Embedder
 	config   *RetrievalConfig
 	logger   *zap.Logger
@@ -42,10 +43,10 @@ type RetrievalConfig struct {
 	PostRetrieve        config.PostRetrieveConfig
 }
 
-// NewRetriever 创建新的检索器
+// NewRetriever 创建新的检索器。db 是知识库连接，只用来绑定向量表的 store。
 func NewRetriever(db *sql.DB, embedder *Embedder, config *RetrievalConfig, logger *zap.Logger) *Retriever {
 	return &Retriever{
-		db:       db,
+		vectors:  store.NewKnowledgeEmbeddings(db),
 		embedder: embedder,
 		config:   config,
 		logger:   logger,
@@ -168,24 +169,6 @@ func (r *Retriever) AsEinoRetriever() retriever.Retriever {
 	return r.activeEinoRetriever()
 }
 
-func (r *Retriever) knowledgeEmbeddingSelectSQL(riskType, subIndexFilter string) (string, []interface{}) {
-	q := `SELECT e.id, e.item_id, e.chunk_index, e.chunk_text, e.embedding, e.embedding_model, e.embedding_dim, i.category, i.title
-FROM knowledge_embeddings e
-JOIN knowledge_base_items i ON e.item_id = i.id
-WHERE 1=1`
-	var args []interface{}
-	if strings.TrimSpace(riskType) != "" {
-		q += ` AND TRIM(i.category) = TRIM(?) COLLATE NOCASE`
-		args = append(args, riskType)
-	}
-	if tag := strings.TrimSpace(subIndexFilter); tag != "" {
-		tag = strings.ToLower(strings.ReplaceAll(tag, " ", ""))
-		q += ` AND (TRIM(COALESCE(e.sub_indexes,'')) = '' OR INSTR(',' || LOWER(REPLACE(e.sub_indexes,' ','')) || ',', ',' || ? || ',') > 0)`
-		args = append(args, tag)
-	}
-	return q, args
-}
-
 // vectorSearch 纯向量检索：余弦相似度排序，按相似度阈值与 TopK 截断（无 BM25、无混合分、无邻块扩展）。
 func (r *Retriever) vectorSearch(ctx context.Context, req *SearchRequest) ([]*RetrievalResult, error) {
 	if req.Query == "" {
@@ -224,12 +207,10 @@ func (r *Retriever) vectorSearch(ctx context.Context, req *SearchRequest) ([]*Re
 		expectedModel = r.embedder.EmbeddingModelName()
 	}
 
-	sqlStr, sqlArgs := r.knowledgeEmbeddingSelectSQL(strings.TrimSpace(req.RiskType), subIdxFilter)
-	rows, err := r.db.QueryContext(ctx, sqlStr, sqlArgs...)
+	chunks, err := r.vectors.Searchable(ctx, strings.TrimSpace(req.RiskType), subIdxFilter)
 	if err != nil {
 		return nil, fmt.Errorf("查询向量失败: %w", err)
 	}
-	defer rows.Close()
 
 	type candidate struct {
 		chunk      *KnowledgeChunk
@@ -237,58 +218,40 @@ func (r *Retriever) vectorSearch(ctx context.Context, req *SearchRequest) ([]*Re
 		similarity float64
 	}
 
-	candidates := make([]candidate, 0)
-	rowNum := 0
-	for rows.Next() {
-		rowNum++
-		if rowNum%48 == 0 {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-			}
-		}
-
-		var chunkID, itemID, chunkText, embeddingJSON, category, title, rowModel string
-		var chunkIndex, rowDim int
-
-		if err := rows.Scan(&chunkID, &itemID, &chunkIndex, &chunkText, &embeddingJSON, &rowModel, &rowDim, &category, &title); err != nil {
-			r.logger.Warn("扫描向量失败", zap.Error(err))
-			continue
-		}
-
+	candidates := make([]candidate, 0, len(chunks))
+	for _, row := range chunks {
 		var embedding []float32
-		if err := json.Unmarshal([]byte(embeddingJSON), &embedding); err != nil {
+		if err := json.Unmarshal([]byte(row.Embedding), &embedding); err != nil {
 			r.logger.Warn("解析向量失败", zap.Error(err))
 			continue
 		}
 
-		if rowDim > 0 && len(embedding) != rowDim {
-			r.logger.Debug("跳过维度不一致的向量行", zap.String("chunkId", chunkID), zap.Int("rowDim", rowDim), zap.Int("got", len(embedding)))
+		if row.Dim > 0 && len(embedding) != row.Dim {
+			r.logger.Debug("跳过维度不一致的向量行", zap.String("chunkId", row.ID), zap.Int("rowDim", row.Dim), zap.Int("got", len(embedding)))
 			continue
 		}
 		if queryDim > 0 && len(embedding) != queryDim {
-			r.logger.Debug("跳过与查询维度不一致的向量", zap.String("chunkId", chunkID), zap.Int("queryDim", queryDim), zap.Int("got", len(embedding)))
+			r.logger.Debug("跳过与查询维度不一致的向量", zap.String("chunkId", row.ID), zap.Int("queryDim", queryDim), zap.Int("got", len(embedding)))
 			continue
 		}
-		if expectedModel != "" && strings.TrimSpace(rowModel) != "" && strings.TrimSpace(rowModel) != expectedModel {
-			r.logger.Debug("跳过嵌入模型不一致的行", zap.String("chunkId", chunkID), zap.String("rowModel", rowModel), zap.String("expected", expectedModel))
+		if expectedModel != "" && strings.TrimSpace(row.Model) != "" && strings.TrimSpace(row.Model) != expectedModel {
+			r.logger.Debug("跳过嵌入模型不一致的行", zap.String("chunkId", row.ID), zap.String("rowModel", row.Model), zap.String("expected", expectedModel))
 			continue
 		}
 
 		similarity := cosineSimilarity(queryEmbedding, embedding)
 		candidates = append(candidates, candidate{
 			chunk: &KnowledgeChunk{
-				ID:         chunkID,
-				ItemID:     itemID,
-				ChunkIndex: chunkIndex,
-				ChunkText:  chunkText,
+				ID:         row.ID,
+				ItemID:     row.ItemID,
+				ChunkIndex: row.ChunkIndex,
+				ChunkText:  row.ChunkText,
 				Embedding:  embedding,
 			},
 			item: &KnowledgeItem{
-				ID:       itemID,
-				Category: category,
-				Title:    title,
+				ID:       row.ItemID,
+				Category: row.Category,
+				Title:    row.Title,
 			},
 			similarity: similarity,
 		})

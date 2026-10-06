@@ -1441,14 +1441,65 @@ store 只按原样把 `created_at` 文本和 JSON 传回去——绑定 `time.No
 我新写的 `columnExists` 与 `hitl_lifecycle_test.go` 里已有的同名函数冲突，
 `go vet` 立刻报 `redeclared in this block`；改成 `embeddingColumnExists` 才对。
 
+### P6 数据层第十一片 —— 分层裸 SQL **归零**，以及"债还挂着时门禁自证有效"这件事怎么收场
+
+这片把 `internal/knowledge` 剩下的 22 条语句按表搬完：**`knowledge_base_items` 17 个方法进
+`store.KnowledgeItems`**（第十一片的主体，条目行 CRUD + 分页 + 四列搜索 + 重建顺序），
+**向量侧 5 条进 `store.KnowledgeEmbeddings`**（批量写入、按条目删除、两个计数、检索用的那张
+`JOIN knowledge_base_items` 的相似度候选读）。两张表被一个 JOIN 绑在一起，所以一片里同时交回两个主人，
+否则归属门禁会在"只搬一半"时红。
+
+`Retriever`/`Indexer`/`Manager`/`SQLiteIndexer` 不再持有 `*sql.DB` 字段（构造签名不变，
+参数只用来绑 store），`buildKnowledgeIndexChain`/`NewSQLiteIndexer` 改收 store。
+eino 索引器原来在事务里逐条校验 meta，现在先算完整批再一次性写：**回滚语义没变**（任一条不合格
+整批不落库），错误串从 `insert chunk %d` 合成 `write %d chunks`（全仓无测试断言该串，已核）。
+检索侧只把 SQL 与扫描搬走，`json.Unmarshal`、维度/模型一致性判断、余弦、阈值截断留在原处——
+那些是检索的领域逻辑，不是行的形状。
+
+**store 真库测试抓出一个存量缺陷**：`knowledge_base_items.content` 是可空列，而 `GetByID` 与
+`ExistingAt` 把它扫进 `string`。老库里有 NULL 正文的行时，`convertAssign` 直接报
+`converting NULL to string is unsupported`，目录扫描以 `查询知识项失败` **整体失败**（不是"这一行不见了"，
+是整次扫描中断）。两处改 `sql.NullString`，NULL 读回 `""`。测试
+`TestKnowledgeItemsContentNullStaysReadable` 就是这条的回归钉子——它先红后绿，红的那次给的正是驱动错误串。
+
+**归零之后，门禁怎么继续证明自己？** 这一层的判据原本是"每个文件的条数 ≤ 上限"，而债现在是 0：
+空清单既可能是"干净"，也可能是"扫描器坏了"，两者输出一模一样。三件事补上这个空洞：
+1. **正向对照**（`rawSQLControls`，8 条样本语句）：每条必须被两个扫描器之一命中，否则测试直接失败并报
+   "this gate cannot see the SQL it claims to prevent"。
+2. **遍历域下限**（`rawSQLWalkFloor = 500`）：`internal/` + `cmd/` 下非测试 .go 共 552 个，
+   减去两个自有层里的 45 个，必须真扫到 507 个；扫不到就说"扫描器没在读目录"。
+3. **判据换成与名字无关的一条**：光按接收者名（`db|d|conn|sqlDB`）匹配会瞎。新增
+   `sqlTextAlone`——引号或反引号后面直接跟 `SELECT|INSERT INTO|UPDATE|DELETE FROM` 的**字符串字面量**
+   也算，无论它在哪个变量上执行。
+
+探针（每条都"注入即红、撤销即绿"）：
+- 往 `internal/knowledge` 塞一个生产文件，一条走 `db.Query("SELECT id FROM knowledge_base_items ...")`、
+  一条走**门禁原本不认识的名字** `sqlite.ExecContext(ctx, "UPDATE knowledge_embeddings ...")`
+  → `TestRawSQLIsOnlyWrittenTheLayersThatOwnIt` 报 `3 raw statement(s), a file not reviewed`，
+  `TestOwnedTablesAreOnlyWrittenFromThisPackage` 报 `FROM knowledge_base_items` 泄漏；两条都红，删文件都绿。
+- 把一条对照样本换成两边都不命中的 `mgr.sqlite.DoThing(1)` → 门禁立刻自杀式变红（对照组活着）。
+- 把遍历下限临时调到 999999 → 报 `the walk considered 507 production files`（覆盖断言活着）。
+
+**水位复测**：分层裸 SQL **0 条 / 0 个文件**（扫描过 507 个生产文件）；同一条 SQL 文本判据在
+`internal/database` 数到 **438** 处、`internal/store` **78** 处——这两层按定义是 SQL 的主人，
+所以"归零"指的是**它们之外**，不代表数据层已无 SQL；`*database.DB` 方法 **327**（上限从 328 收紧，
+见下）；`internal/store` 生产文件 **14 个**、包内测试 **99 条**（本次新增 11 + 补强 7）。
+
+**顺带抓到 ratchet 自己的一个口径漏洞**：收紧上限时我按上一次记录写 328，AST 计数器说 327。
+查两棵树的方法名集合差，发现少的是 `migrateKnowledgeEmbeddingsColumns`——它在**上一个已提交**的切片里
+被删，而"只降不升"的门禁对下降**只打 log 不失败**，所以一处已经落后的水位被带了进来。
+结论写进门禁注释：**下降只出现在日志里，所以每次写数字必须当场复测，不能抄上一条 commit 的**。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
   共 5 个面 + 共享可见性子句，handler 裸 SQL **已归零**；**这一项已完成**：`internal/handler` 里
   **没有任何结构体再持有 `*database.DB` 或 `*sql.DB`**（19 → 0；18 个域换成各自的窄接口字段，
   另 1 个是没人读的死字段，直接删。见 §11「P6 数据层第五片」与 §12.1 表）；
-  `internal/database` 那 361 个方法本身也按域继续切（**已交回 6 个面：skill_stats 是第六片，
-  现测 353 个方法，由 `TestDatabaseSurfaceOnlyShrinks` 钉成只降水位**）、
+  `internal/database` 那 361 个方法本身也按域继续切（**已交回 10 个面：skill_stats 是第六片，
+  `knowledge_base_items` + `knowledge_embeddings` 是第十一（合并算一片），现测 327 个方法，
+  由 `TestDatabaseSurfaceOnlyShrinks` 钉成只降水位**；**分层裸 SQL 已归零**——`internal/handler`
+  之后第二个持有 SQL 的 `internal/knowledge` 也交完了，见 §11「P6 数据层第十一片」）、
   `AgentHandler` 分解（**水位实测 + 门禁 + 六刀已落**：起点 130 方法/23 文件，
   现已搬到 **88 方法/21 文件**——中断队列读面 9 个方法进 `HITLQueue`、收尾链路 10 个方法进
   `runFinalizer`、11 个审批配置端点 + 它们读的配置状态进 `HitlPolicy`、挂起审批的应答面 3 个端点
@@ -1542,7 +1593,11 @@ origin  https://github.com/AIPentest/CyberStrikeAI.git  # 上游父仓库，只�
    后端 API 错误串未 i18n——口径与数字都要可复验：
    `grep -rhoE '"(error|message)": "[^"]*"' internal/handler/*.go | grep -c '[一-龥]'` = **391 条中文**
    （同一条命令去掉 `grep -c` 换 `-vc` = 132 条 ASCII）。属契约变更，要连同前端字典一起动。
-   再往后才是 `internal/database` 那 361 个方法按域继续切、Eino 收到 ≤1 包、session 事件溯源。
+   再往后才是 `internal/database` 那 327 个方法（**分层裸 SQL 已归零**：`internal/knowledge` 是
+   `internal/handler` 之后最后一个在两个自有层之外写 SQL 的包，见 §11「P6 数据层第十一片」；
+   剩下的 SQL 全在主人手里——`internal/database` 438 处、`internal/store` 78 处，
+   下一刀是把这个连接包装自己按域拆开，以及把 `database.DB` 里内嵌的 `*sql.DB` 收掉）、
+   Eino 收到 ≤1 包、session 事件溯源。
 3. 需要你插队的只有一件：**§10 决策项 1**（`agent:local-execute` 是否作为阻断项立即处理），
    它决定社区制品的攻击面；其余决策项可以在 P4/P5 动工前再定。
 
@@ -1553,7 +1608,10 @@ origin  https://github.com/AIPentest/CyberStrikeAI.git  # 上游父仓库，只�
 go list -f '{{.ImportPath}}: {{join .Imports " "}}' ./internal/... ./cmd/... > /tmp/deps.txt
 
 # DB 方法数 / 裸 SQL / 越层 import
-grep -rhE '^func \((db|d) \*DB\)' internal/database/*.go | grep -v _test | wc -l   # 361 起测，现 353（skill_stats 已交回 store，由 internal/layering 的只降门禁钉住）
+grep -rhE '^func \((db|d) \*DB\)' internal/database/*.go | grep -v _test | wc -l   # 361 起测，现 327（已交回 10 个域，由 internal/layering 的只降门禁钉住）
+# 分层裸 SQL（判据与接收者名字无关：字符串字面量以 SQL 开头就算）——两个自有层之外为 0
+grep -rhnE '["`][[:space:]]*(SELECT|INSERT INTO|UPDATE|DELETE FROM)\b' $(find internal cmd -name '*.go' ! -name '*_test.go' ! -path 'internal/database/*' ! -path 'internal/store/*') | wc -l   # 0
+# 同一条判据在两个自有层里：internal/database 438 处、internal/store 78 处（它们是 SQL 的主人，不是泄漏）
 grep -rnE 'h\.db\.(Exec|Query|QueryRow|Begin)' internal/handler/*.go | grep -v _test | wc -l  # 32（原报告口径）
 # 49 = 重构前的 HTTP 层全部接收者；当前树为 0（见 §11「当前水位」）
 grep -rhoE '\b[a-z]+\.db\.(Exec|Query|QueryRow|Begin|Prepare)\(' $(ls internal/handler/*.go | grep -v _test) | wc -l

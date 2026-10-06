@@ -18,8 +18,9 @@ import (
 
 // Manager 知识库管理器
 type Manager struct {
-	db        *sql.DB
-	retrieval *store.KnowledgeRetrieval // knowledge_retrieval_logs: 这张表只由 store 写
+	items     *store.KnowledgeItems      // knowledge_base_items
+	vectors   *store.KnowledgeEmbeddings // knowledge_embeddings
+	retrieval *store.KnowledgeRetrieval  // knowledge_retrieval_logs: 这张表只由 store 写
 	basePath  string
 	logger    *zap.Logger
 }
@@ -27,8 +28,9 @@ type Manager struct {
 // NewManager 创建新的知识库管理器
 func NewManager(db *sql.DB, basePath string, logger *zap.Logger) *Manager {
 	return &Manager{
+		items:     store.NewKnowledgeItems(db),
+		vectors:   store.NewKnowledgeEmbeddings(db),
 		retrieval: store.NewKnowledgeRetrieval(db),
-		db:        db,
 		basePath:  basePath,
 		logger:    logger,
 	}
@@ -83,22 +85,16 @@ func (m *Manager) ScanKnowledgeBase() ([]string, error) {
 		}
 
 		// 检查是否已存在
-		var existingID string
-		var existingContent string
-		var existingUpdatedAt time.Time
-		err = m.db.QueryRow(
-			"SELECT id, content, updated_at FROM knowledge_base_items WHERE file_path = ?",
-			path,
-		).Scan(&existingID, &existingContent, &existingUpdatedAt)
+		existingID, existingContent, _, found, err := m.items.ExistingAt(path)
+		if err != nil {
+			return fmt.Errorf("查询知识项失败: %w", err)
+		}
 
-		if err == sql.ErrNoRows {
+		if !found {
 			// 创建新项
 			id := uuid.New().String()
 			now := time.Now()
-			_, err = m.db.Exec(
-				"INSERT INTO knowledge_base_items (id, category, title, file_path, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-				id, category, title, path, string(content), now, now,
-			)
+			err = m.items.Insert(id, category, title, path, string(content), now)
 			if err != nil {
 				return fmt.Errorf("插入知识项失败: %w", err)
 			}
@@ -110,10 +106,7 @@ func (m *Manager) ScanKnowledgeBase() ([]string, error) {
 			contentChanged := existingContent != string(content)
 			if contentChanged {
 				// 更新现有项
-				_, err = m.db.Exec(
-					"UPDATE knowledge_base_items SET category = ?, title = ?, content = ?, updated_at = ? WHERE id = ?",
-					category, title, string(content), time.Now(), existingID,
-				)
+				err = m.items.UpdateContent(existingID, category, title, string(content), time.Now())
 				if err != nil {
 					return fmt.Errorf("更新知识项失败: %w", err)
 				}
@@ -123,8 +116,6 @@ func (m *Manager) ScanKnowledgeBase() ([]string, error) {
 			} else {
 				m.logger.Debug("知识项未变化，跳过", zap.String("id", existingID), zap.String("title", title))
 			}
-		} else {
-			return fmt.Errorf("查询知识项失败: %w", err)
 		}
 
 		return nil
@@ -139,21 +130,10 @@ func (m *Manager) ScanKnowledgeBase() ([]string, error) {
 
 // GetCategories 获取所有分类（风险类型）
 func (m *Manager) GetCategories() ([]string, error) {
-	rows, err := m.db.Query("SELECT DISTINCT category FROM knowledge_base_items ORDER BY category")
+	categories, err := m.items.Categories()
 	if err != nil {
 		return nil, fmt.Errorf("查询分类失败: %w", err)
 	}
-	defer rows.Close()
-
-	var categories []string
-	for rows.Next() {
-		var category string
-		if err := rows.Scan(&category); err != nil {
-			return nil, fmt.Errorf("扫描分类失败: %w", err)
-		}
-		categories = append(categories, category)
-	}
-
 	return categories, nil
 }
 
@@ -167,8 +147,7 @@ func (m *Manager) GetStats() (int, int, error) {
 	totalCategories := len(categories)
 
 	// 获取知识项总数
-	var totalItems int
-	err = m.db.QueryRow("SELECT COUNT(*) FROM knowledge_base_items").Scan(&totalItems)
+	totalItems, err := m.items.Count("")
 	if err != nil {
 		return totalCategories, 0, fmt.Errorf("获取知识项总数失败: %w", err)
 	}
@@ -181,29 +160,18 @@ func (m *Manager) GetStats() (int, int, error) {
 // offset: 偏移量（按分类偏移）
 func (m *Manager) GetCategoriesWithItems(limit, offset int) ([]*CategoryWithItems, int, error) {
 	// 首先获取所有分类（带数量统计）
-	rows, err := m.db.Query(`
-		SELECT category, COUNT(*) as item_count 
-		FROM knowledge_base_items 
-		GROUP BY category 
-		ORDER BY category
-	`)
-	if err != nil {
-		return nil, 0, fmt.Errorf("查询分类失败: %w", err)
-	}
-	defer rows.Close()
-
 	// 收集所有分类信息
 	type categoryInfo struct {
 		name      string
 		itemCount int
 	}
 	var allCategories []categoryInfo
-	for rows.Next() {
-		var info categoryInfo
-		if err := rows.Scan(&info.name, &info.itemCount); err != nil {
-			return nil, 0, fmt.Errorf("扫描分类失败: %w", err)
-		}
-		allCategories = append(allCategories, info)
+	counts, err := m.items.CategoriesWithCounts()
+	if err != nil {
+		return nil, 0, fmt.Errorf("查询分类失败: %w", err)
+	}
+	for _, entry := range counts {
+		allCategories = append(allCategories, categoryInfo{name: entry.Category, itemCount: entry.Count})
 	}
 
 	totalCategories := len(allCategories)
@@ -255,99 +223,19 @@ func (m *Manager) GetItems(category string) ([]*KnowledgeItem, error) {
 // offset: 偏移量
 // includeContent: 是否包含完整内容（false时只返回摘要）
 func (m *Manager) GetItemsWithOptions(category string, limit, offset int, includeContent bool) ([]*KnowledgeItem, error) {
-	var rows *sql.Rows
-	var err error
-
-	// 构建SQL查询
-	var query string
-	var args []interface{}
-
-	if includeContent {
-		query = "SELECT id, category, title, file_path, content, created_at, updated_at FROM knowledge_base_items"
-	} else {
-		query = "SELECT id, category, title, file_path, created_at, updated_at FROM knowledge_base_items"
-	}
-
-	if category != "" {
-		query += " WHERE category = ?"
-		args = append(args, category)
-	}
-
-	query += " ORDER BY category, title"
-
-	if limit > 0 {
-		query += " LIMIT ?"
-		args = append(args, limit)
-		if offset > 0 {
-			query += " OFFSET ?"
-			args = append(args, offset)
-		}
-	}
-
-	rows, err = m.db.Query(query, args...)
+	rows, err := m.items.List(store.ItemFilter{Category: category, Limit: limit, Offset: offset, IncludeContent: includeContent})
 	if err != nil {
 		return nil, fmt.Errorf("查询知识项失败: %w", err)
 	}
-	defer rows.Close()
 
-	var items []*KnowledgeItem
-	for rows.Next() {
-		item := &KnowledgeItem{}
-		var createdAt, updatedAt string
-
-		if includeContent {
-			if err := rows.Scan(&item.ID, &item.Category, &item.Title, &item.FilePath, &item.Content, &createdAt, &updatedAt); err != nil {
-				return nil, fmt.Errorf("扫描知识项失败: %w", err)
-			}
-		} else {
-			if err := rows.Scan(&item.ID, &item.Category, &item.Title, &item.FilePath, &createdAt, &updatedAt); err != nil {
-				return nil, fmt.Errorf("扫描知识项失败: %w", err)
-			}
-			// 不包含内容时，Content为空字符串
-			item.Content = ""
-		}
-
-		// 解析时间 - 支持多种格式
-		timeFormats := []string{
-			"2006-01-02 15:04:05.999999999-07:00",
-			"2006-01-02 15:04:05.999999999",
-			"2006-01-02T15:04:05.999999999Z07:00",
-			"2006-01-02T15:04:05Z",
-			"2006-01-02 15:04:05",
-			time.RFC3339,
-			time.RFC3339Nano,
-		}
-
-		// 解析创建时间
-		if createdAt != "" {
-			for _, format := range timeFormats {
-				parsed, err := time.Parse(format, createdAt)
-				if err == nil && !parsed.IsZero() {
-					item.CreatedAt = parsed
-					break
-				}
-			}
-		}
-
-		// 解析更新时间
-		if updatedAt != "" {
-			for _, format := range timeFormats {
-				parsed, err := time.Parse(format, updatedAt)
-				if err == nil && !parsed.IsZero() {
-					item.UpdatedAt = parsed
-					break
-				}
-			}
-		}
-
-		// 如果更新时间为空，使用创建时间
-		if item.UpdatedAt.IsZero() && !item.CreatedAt.IsZero() {
-			item.UpdatedAt = item.CreatedAt
-		}
-
-		items = append(items, item)
+	items := make([]*KnowledgeItem, 0, len(rows))
+	for _, row := range rows {
+		created, updated := parseItemTimes(row.CreatedAt, row.UpdatedAt)
+		items = append(items, &KnowledgeItem{
+			ID: row.ID, Category: row.Category, Title: row.Title, FilePath: row.FilePath,
+			Content: row.Content, CreatedAt: created, UpdatedAt: updated,
+		})
 	}
-
 	return items, nil
 }
 
@@ -357,9 +245,9 @@ func (m *Manager) GetItemsCount(category string) (int, error) {
 	var err error
 
 	if category != "" {
-		err = m.db.QueryRow("SELECT COUNT(*) FROM knowledge_base_items WHERE category = ?", category).Scan(&count)
+		count, err = m.items.Count(category)
 	} else {
-		err = m.db.QueryRow("SELECT COUNT(*) FROM knowledge_base_items").Scan(&count)
+		count, err = m.items.Count("")
 	}
 
 	if err != nil {
@@ -374,228 +262,59 @@ func (m *Manager) SearchItemsByKeyword(keyword string, category string) ([]*Know
 	if keyword == "" {
 		return nil, fmt.Errorf("搜索关键字不能为空")
 	}
-
-	// 构建SQL查询，使用LIKE进行关键字匹配（不区分大小写）
-	var query string
-	var args []interface{}
-
-	// SQLite的LIKE不区分大小写，使用COLLATE NOCASE或LOWER()函数
-	// 使用%keyword%进行模糊匹配
-	searchPattern := "%" + keyword + "%"
-
-	query = `
-		SELECT id, category, title, file_path, created_at, updated_at 
-		FROM knowledge_base_items 
-		WHERE (LOWER(title) LIKE LOWER(?) OR LOWER(category) LIKE LOWER(?) OR LOWER(file_path) LIKE LOWER(?) OR LOWER(content) LIKE LOWER(?))
-	`
-	args = append(args, searchPattern, searchPattern, searchPattern, searchPattern)
-
-	// 如果指定了分类，添加分类过滤
-	if category != "" {
-		query += " AND category = ?"
-		args = append(args, category)
-	}
-
-	query += " ORDER BY category, title"
-
-	rows, err := m.db.Query(query, args...)
+	rows, err := m.items.Search(keyword, category)
 	if err != nil {
 		return nil, fmt.Errorf("搜索知识项失败: %w", err)
 	}
-	defer rows.Close()
 
-	var items []*KnowledgeItemSummary
-	for rows.Next() {
-		item := &KnowledgeItemSummary{}
-		var createdAt, updatedAt string
-
-		if err := rows.Scan(&item.ID, &item.Category, &item.Title, &item.FilePath, &createdAt, &updatedAt); err != nil {
-			return nil, fmt.Errorf("扫描知识项失败: %w", err)
-		}
-
-		// 解析时间
-		timeFormats := []string{
-			"2006-01-02 15:04:05.999999999-07:00",
-			"2006-01-02 15:04:05.999999999",
-			"2006-01-02T15:04:05.999999999Z07:00",
-			"2006-01-02T15:04:05Z",
-			"2006-01-02 15:04:05",
-			time.RFC3339,
-			time.RFC3339Nano,
-		}
-
-		if createdAt != "" {
-			for _, format := range timeFormats {
-				parsed, err := time.Parse(format, createdAt)
-				if err == nil && !parsed.IsZero() {
-					item.CreatedAt = parsed
-					break
-				}
-			}
-		}
-
-		if updatedAt != "" {
-			for _, format := range timeFormats {
-				parsed, err := time.Parse(format, updatedAt)
-				if err == nil && !parsed.IsZero() {
-					item.UpdatedAt = parsed
-					break
-				}
-			}
-		}
-
-		if item.UpdatedAt.IsZero() && !item.CreatedAt.IsZero() {
-			item.UpdatedAt = item.CreatedAt
-		}
-
-		items = append(items, item)
+	items := make([]*KnowledgeItemSummary, 0, len(rows))
+	for _, row := range rows {
+		created, updated := parseItemTimes(row.CreatedAt, row.UpdatedAt)
+		items = append(items, &KnowledgeItemSummary{
+			ID: row.ID, Category: row.Category, Title: row.Title, FilePath: row.FilePath,
+			CreatedAt: created, UpdatedAt: updated,
+		})
 	}
-
 	return items, nil
 }
 
 // GetItemsSummary 获取知识项摘要列表（不包含完整内容，支持分页）
 func (m *Manager) GetItemsSummary(category string, limit, offset int) ([]*KnowledgeItemSummary, int, error) {
-	// 获取总数
 	total, err := m.GetItemsCount(category)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	// 获取列表数据（不包含内容）
-	var rows *sql.Rows
-	var query string
-	var args []interface{}
-
-	query = "SELECT id, category, title, file_path, created_at, updated_at FROM knowledge_base_items"
-
-	if category != "" {
-		query += " WHERE category = ?"
-		args = append(args, category)
-	}
-
-	query += " ORDER BY category, title"
-
-	if limit > 0 {
-		query += " LIMIT ?"
-		args = append(args, limit)
-		if offset > 0 {
-			query += " OFFSET ?"
-			args = append(args, offset)
-		}
-	}
-
-	rows, err = m.db.Query(query, args...)
+	rows, err := m.items.List(store.ItemFilter{Category: category, Limit: limit, Offset: offset})
 	if err != nil {
 		return nil, 0, fmt.Errorf("查询知识项失败: %w", err)
 	}
-	defer rows.Close()
 
-	var items []*KnowledgeItemSummary
-	for rows.Next() {
-		item := &KnowledgeItemSummary{}
-		var createdAt, updatedAt string
-
-		if err := rows.Scan(&item.ID, &item.Category, &item.Title, &item.FilePath, &createdAt, &updatedAt); err != nil {
-			return nil, 0, fmt.Errorf("扫描知识项失败: %w", err)
-		}
-
-		// 解析时间
-		timeFormats := []string{
-			"2006-01-02 15:04:05.999999999-07:00",
-			"2006-01-02 15:04:05.999999999",
-			"2006-01-02T15:04:05.999999999Z07:00",
-			"2006-01-02T15:04:05Z",
-			"2006-01-02 15:04:05",
-			time.RFC3339,
-			time.RFC3339Nano,
-		}
-
-		if createdAt != "" {
-			for _, format := range timeFormats {
-				parsed, err := time.Parse(format, createdAt)
-				if err == nil && !parsed.IsZero() {
-					item.CreatedAt = parsed
-					break
-				}
-			}
-		}
-
-		if updatedAt != "" {
-			for _, format := range timeFormats {
-				parsed, err := time.Parse(format, updatedAt)
-				if err == nil && !parsed.IsZero() {
-					item.UpdatedAt = parsed
-					break
-				}
-			}
-		}
-
-		if item.UpdatedAt.IsZero() && !item.CreatedAt.IsZero() {
-			item.UpdatedAt = item.CreatedAt
-		}
-
-		items = append(items, item)
+	items := make([]*KnowledgeItemSummary, 0, len(rows))
+	for _, row := range rows {
+		created, updated := parseItemTimes(row.CreatedAt, row.UpdatedAt)
+		items = append(items, &KnowledgeItemSummary{
+			ID: row.ID, Category: row.Category, Title: row.Title, FilePath: row.FilePath,
+			CreatedAt: created, UpdatedAt: updated,
+		})
 	}
-
 	return items, total, nil
 }
 
 // GetItem 获取单个知识项
 func (m *Manager) GetItem(id string) (*KnowledgeItem, error) {
-	item := &KnowledgeItem{}
-	var createdAt, updatedAt string
-	err := m.db.QueryRow(
-		"SELECT id, category, title, file_path, content, created_at, updated_at FROM knowledge_base_items WHERE id = ?",
-		id,
-	).Scan(&item.ID, &item.Category, &item.Title, &item.FilePath, &item.Content, &createdAt, &updatedAt)
-
-	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("知识项不存在")
-	}
+	row, found, err := m.items.GetByID(id)
 	if err != nil {
 		return nil, fmt.Errorf("查询知识项失败: %w", err)
 	}
-
-	// 解析时间 - 支持多种格式
-	timeFormats := []string{
-		"2006-01-02 15:04:05.999999999-07:00",
-		"2006-01-02 15:04:05.999999999",
-		"2006-01-02T15:04:05.999999999Z07:00",
-		"2006-01-02T15:04:05Z",
-		"2006-01-02 15:04:05",
-		time.RFC3339,
-		time.RFC3339Nano,
+	if !found {
+		return nil, fmt.Errorf("知识项不存在")
 	}
-
-	// 解析创建时间
-	if createdAt != "" {
-		for _, format := range timeFormats {
-			parsed, err := time.Parse(format, createdAt)
-			if err == nil && !parsed.IsZero() {
-				item.CreatedAt = parsed
-				break
-			}
-		}
-	}
-
-	// 解析更新时间
-	if updatedAt != "" {
-		for _, format := range timeFormats {
-			parsed, err := time.Parse(format, updatedAt)
-			if err == nil && !parsed.IsZero() {
-				item.UpdatedAt = parsed
-				break
-			}
-		}
-	}
-
-	// 如果更新时间为空，使用创建时间
-	if item.UpdatedAt.IsZero() && !item.CreatedAt.IsZero() {
-		item.UpdatedAt = item.CreatedAt
-	}
-
-	return item, nil
+	created, updated := parseItemTimes(row.CreatedAt, row.UpdatedAt)
+	return &KnowledgeItem{
+		ID: row.ID, Category: row.Category, Title: row.Title, FilePath: row.FilePath,
+		Content: row.Content, CreatedAt: created, UpdatedAt: updated,
+	}, nil
 }
 
 // CreateItem 创建知识项
@@ -624,10 +343,7 @@ func (m *Manager) CreateItem(category, title, content string) (*KnowledgeItem, e
 	}
 
 	// 插入数据库
-	_, err := m.db.Exec(
-		"INSERT INTO knowledge_base_items (id, category, title, file_path, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		id, category, title, filePath, content, now, now,
-	)
+	err := m.items.Insert(id, category, title, filePath, content, now)
 	if err != nil {
 		return nil, fmt.Errorf("插入知识项失败: %w", err)
 	}
@@ -687,18 +403,13 @@ func (m *Manager) UpdateItem(id, category, title, content string) (*KnowledgeIte
 		return nil, fmt.Errorf("写入文件失败: %w", err)
 	}
 
-	// 更新数据库
-	_, err = m.db.Exec(
-		"UPDATE knowledge_base_items SET category = ?, title = ?, file_path = ?, content = ?, updated_at = ? WHERE id = ?",
-		category, title, newFilePath, content, time.Now(), id,
-	)
+	err = m.items.Update(id, category, title, newFilePath, content, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("更新知识项失败: %w", err)
 	}
 
-	// 删除旧的向量嵌入（需要重新索引）
-	_, err = m.db.Exec("DELETE FROM knowledge_embeddings WHERE item_id = ?", id)
-	if err != nil {
+	// 改了正文的条目要重新索引，旧向量先删掉
+	if err := m.vectors.DeleteItem(id); err != nil {
 		m.logger.Warn("删除旧向量嵌入失败", zap.Error(err))
 	}
 
@@ -708,9 +419,11 @@ func (m *Manager) UpdateItem(id, category, title, content string) (*KnowledgeIte
 // DeleteItem 删除知识项
 func (m *Manager) DeleteItem(id string) error {
 	// 获取文件路径
-	var filePath string
-	err := m.db.QueryRow("SELECT file_path FROM knowledge_base_items WHERE id = ?", id).Scan(&filePath)
-	if err != nil {
+	filePath, found, err := m.items.FilePath(id)
+	if err != nil || !found {
+		if err == nil {
+			err = sql.ErrNoRows
+		}
 		return fmt.Errorf("查询知识项失败: %w", err)
 	}
 
@@ -720,7 +433,7 @@ func (m *Manager) DeleteItem(id string) error {
 	}
 
 	// 删除数据库记录（级联删除向量）
-	_, err = m.db.Exec("DELETE FROM knowledge_base_items WHERE id = ?", id)
+	err = m.items.Delete(id)
 	if err != nil {
 		return fmt.Errorf("删除知识项失败: %w", err)
 	}
@@ -768,18 +481,13 @@ func (m *Manager) LogRetrieval(conversationID, messageID, query, riskType string
 // GetIndexStatus 获取索引状态
 func (m *Manager) GetIndexStatus() (map[string]interface{}, error) {
 	// 获取总知识项数
-	var totalItems int
-	err := m.db.QueryRow("SELECT COUNT(*) FROM knowledge_base_items").Scan(&totalItems)
+	totalItems, err := m.items.Count("")
 	if err != nil {
 		return nil, fmt.Errorf("查询总知识项数失败: %w", err)
 	}
 
 	// 获取已索引的知识项数（有向量嵌入的）
-	var indexedItems int
-	err = m.db.QueryRow(`
-		SELECT COUNT(DISTINCT item_id) 
-		FROM knowledge_embeddings
-	`).Scan(&indexedItems)
+	indexedItems, err := m.vectors.IndexedItems()
 	if err != nil {
 		return nil, fmt.Errorf("查询已索引项数失败: %w", err)
 	}
@@ -869,4 +577,37 @@ func (m *Manager) DeleteRetrievalLog(id string) error {
 		return fmt.Errorf("检索日志不存在")
 	}
 	return nil
+}
+
+// itemTimeLayouts are every format knowledge rows have been written in over the releases of this
+// table; the loop over them used to be copied into each query function.
+var itemTimeLayouts = []string{
+	"2006-01-02 15:04:05.999999999-07:00",
+	"2006-01-02 15:04:05.999999999",
+	"2006-01-02T15:04:05.999999999Z07:00",
+	"2006-01-02T15:04:05Z",
+	"2006-01-02 15:04:05",
+	time.RFC3339,
+	time.RFC3339Nano,
+}
+
+// parseItemTimes reads two stored timestamps, falling back to created_at when updated_at is absent.
+func parseItemTimes(createdAt, updatedAt string) (time.Time, time.Time) {
+	var created, updated time.Time
+	for _, format := range itemTimeLayouts {
+		if parsed, err := time.Parse(format, createdAt); err == nil && !parsed.IsZero() {
+			created = parsed
+			break
+		}
+	}
+	for _, format := range itemTimeLayouts {
+		if parsed, err := time.Parse(format, updatedAt); err == nil && !parsed.IsZero() {
+			updated = parsed
+			break
+		}
+	}
+	if updated.IsZero() && !created.IsZero() {
+		updated = created
+	}
+	return created, updated
 }

@@ -10,27 +10,59 @@ import (
 	"testing"
 )
 
-// rawSQLByFile is the remaining reach of the embedded *sql.DB on internal/database.DB: every site
-// where a package outside the two layers that own SQL still executes a statement.
+// rawSQLByFile is the remaining reach of SQL outside the two layers that own it: every file where a
+// package still executes a statement.
 //
-// internal/database owns the schema-wide queries and internal/store owns per-domain tables, so both
-// are excluded from the count by definition: a store writing SQL is the design working, not leaking.
-// Everything else that reaches through a database handle is the god object still being reachable.
+// It is empty, and that is the point of the data-layer slice. internal/knowledge was the last owner
+// outside internal/database and internal/store holding its SQL inline (the vector rows on
+// knowledge_embeddings), and those statements are store.KnowledgeEmbeddings' now.
 //
-// The numbers are today's measurement, and each is a ceiling. Extracting knowledge's SQL into its own
-// store lowers them; a new file appearing here is a new leak and fails without needing anyone to
-// remember the rule.
-var rawSQLByFile = map[string]int{
-	"internal/knowledge/manager.go": 19,
-	"internal/knowledge/indexer.go": 3,
+// The map stays rather than the gate turning off, because a half-migrated table has to be listable
+// with a ceiling. Adding a file here is a review item; deleting one is progress.
+//
+// This axis being zero does not mean the SQL is gone: the same scan counts 448 statements still
+// written inside internal/database, which owns the schema-wide queries. Those are tracked by the
+// method ceiling in database_surface_ratchet_test.go, not here.
+var rawSQLByFile = map[string]int{}
+
+// rawSQLReceiver matches an executing call through a database-shaped handle. It is deliberately
+// narrow (a name), so scope.guard.Prepare, a process guard, does not read as SQL - which is why
+// sqlTextAlone exists next to it.
+var rawSQLReceiver = regexp.MustCompile(`\b(?:db|d|conn|sqlDB)\.(?:Exec|ExecContext|Query|QueryContext|QueryRow|QueryRowContext|Begin|BeginTx|Prepare|PrepareContext|MustExec)\(`)
+
+// sqlTextAlone catches a statement wherever it is written, however the handle is named: a string
+// literal that opens with SQL. Matching only on the receiver name is how a gate goes blind to the
+// next migration - the query someone builds in a helper called buildQuery and runs on mgr.sqlite.
+var sqlTextAlone = regexp.MustCompile("(?:[\"]|`)\\s*(?:SELECT\\b|INSERT\\b\\s+INTO\\b|UPDATE\\b|DELETE\\b\\s+FROM\\b)")
+
+// rawSQLControls prove both scanners fire. With an empty baseline, "found nothing" and "the scanner
+// is broken" look identical, so the scanner carries its own positive control instead of borrowing
+// evidence from real debt.
+var rawSQLControls = []string{
+	`db.Exec("DELETE FROM t WHERE id = ?", id)`,
+	`rows, err := db.QueryContext(ctx, q, args...)`,
+	`tx, err := db.BeginTx(ctx, nil)`,
+	`row := sqlDB.QueryRow("SELECT 1")`,
+	`c, err := conn.Prepare("SELECT 2")`,
+	"stmt := \"UPDATE t SET x = 1\"",
+	"q := `INSERT INTO t (a) VALUES (?)`",
+	"body := `SELECT id, name FROM t`",
 }
 
-// rawSQLReceiver matches only a handle-shaped variable, so scope.guard.Prepare (a process guard) does
-// not read as SQL.
-var rawSQLReceiver = regexp.MustCompile(`\b(?:db|d|conn|sqlDB)\.(?:Exec|Query|QueryRow|Begin|Prepare|MustExec)\(`)
+// rawSQLWalkFloor is a lower bound on the production files the walk must consider for the scan to
+// have any claim of covering the layer. 552 non-test .go files sit under internal/ and cmd/ today,
+// 45 of them inside the two owning layers, so 507 remain to be scanned.
+const rawSQLWalkFloor = 500
 
-func TestRawSQLOutsideDataAndStoreLayersOnlyShrinks(t *testing.T) {
+func TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt(t *testing.T) {
+	for _, control := range rawSQLControls {
+		if rawSQLReceiver.FindStringIndex(control) == nil && sqlTextAlone.FindStringIndex(control) == nil {
+			t.Fatalf("neither scanner matched the control %q: this gate cannot see the SQL it claims to prevent", control)
+		}
+	}
+
 	root := moduleRoot(t)
+	walked := 0
 	counted := 0
 	var offenders []string
 
@@ -52,11 +84,12 @@ func TestRawSQLOutsideDataAndStoreLayersOnlyShrinks(t *testing.T) {
 		if strings.HasPrefix(rel, "internal/database/") || strings.HasPrefix(rel, "internal/store/") {
 			return nil
 		}
+		walked++
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
 			return readErr
 		}
-		found := len(rawSQLReceiver.FindAllStringIndex(string(data), -1))
+		found := len(rawSQLReceiver.FindAllStringIndex(string(data), -1)) + len(sqlTextAlone.FindAllStringIndex(string(data), -1))
 		if found == 0 {
 			return nil
 		}
@@ -72,21 +105,19 @@ func TestRawSQLOutsideDataAndStoreLayersOnlyShrinks(t *testing.T) {
 		return nil
 	})
 
-	if counted < 1 || len(rawSQLByFile) < 1 {
-		t.Fatalf("the scan found %d files with raw SQL and the baseline lists %d: one of them is broken",
-			counted, len(rawSQLByFile))
+	// A broken walk reports an empty layer the same way a clean one does, so the coverage of the scan
+	// is asserted separately from its result.
+	if walked < rawSQLWalkFloor {
+		t.Fatalf("the walk considered %d production files, want at least %d: the scan is not reading internal/ and cmd/",
+			walked, rawSQLWalkFloor)
 	}
 	if len(offenders) > 0 {
 		sort.Strings(offenders)
-		t.Fatalf("SQL is being written through the database handle outside internal/store:\n%s\n"+
+		t.Fatalf("SQL is being written outside internal/store and internal/database:\n%s\n"+
 			"The destination is a store that owns those tables - see internal/store/skill_stats.go "+
 			"for the shape (SQL plus schema plus EnsureSchema, tested against a real database).",
 			strings.Join(offenders, "\n"))
 	}
-	total := 0
-	for _, n := range rawSQLByFile {
-		total += n
-	}
-	t.Logf("raw SQL outside the two owning layers: %d statements in %d files (next slice: internal/knowledge)",
-		total, len(rawSQLByFile))
+	t.Logf("raw SQL outside the two owning layers: %d statements in %d files, over %d production files scanned",
+		counted, len(rawSQLByFile), walked)
 }

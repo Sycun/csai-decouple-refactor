@@ -28,7 +28,11 @@ import (
 // (TestDatabaseSurfaceHasNoUnreachableMethods keeps that from happening again).
 // 337 -> 333: chat_upload_artifacts moved to its own store.
 // 333 -> 328: audit_logs moved to its own store.
-const dbMethodCeiling = 328
+// 328 -> 327: the embeddings column backfill left *database.DB for store.KnowledgeEmbeddings, and
+// migrateKnowledgeEmbeddingsColumns was deleted rather than relocated. That slice left the ceiling one
+// above the measurement, which a ratchet only mentions in a log line - so the descent trail below is
+// the record, and a number written here has to be re-measured rather than carried over.
+const dbMethodCeiling = 327
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

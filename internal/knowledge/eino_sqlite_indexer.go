@@ -2,10 +2,11 @@ package knowledge
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"cyberstrike-ai/internal/store"
 
 	"github.com/cloudwego/eino/callbacks"
 	"github.com/cloudwego/eino/components"
@@ -16,7 +17,7 @@ import (
 
 // SQLiteIndexer implements [indexer.Indexer] against knowledge_embeddings + existing schema.
 type SQLiteIndexer struct {
-	db             *sql.DB
+	vectors        *store.KnowledgeEmbeddings
 	batchSize      int
 	embeddingModel string
 }
@@ -24,8 +25,8 @@ type SQLiteIndexer struct {
 // NewSQLiteIndexer returns an indexer that writes chunk rows for one knowledge item per Store call.
 // batchSize is the embedding batch size; if <= 0, default 64 is used.
 // embeddingModel is persisted per row for retrieval-time consistency checks (may be empty).
-func NewSQLiteIndexer(db *sql.DB, batchSize int, embeddingModel string) *SQLiteIndexer {
-	return &SQLiteIndexer{db: db, batchSize: batchSize, embeddingModel: strings.TrimSpace(embeddingModel)}
+func NewSQLiteIndexer(vectors *store.KnowledgeEmbeddings, batchSize int, embeddingModel string) *SQLiteIndexer {
+	return &SQLiteIndexer{vectors: vectors, batchSize: batchSize, embeddingModel: strings.TrimSpace(embeddingModel)}
 }
 
 // GetType implements eino callback run info.
@@ -93,12 +94,7 @@ func (s *SQLiteIndexer) Store(ctx context.Context, docs []*schema.Document, opts
 		embedDim = len(allVecs[0])
 	}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("sqlite indexer: begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
+	chunks := make([]store.NewChunk, 0, len(docs))
 	ids = make([]string, 0, len(docs))
 	for i, d := range docs {
 		chunkID := uuid.New().String()
@@ -122,19 +118,21 @@ func (s *SQLiteIndexer) Store(ctx context.Context, docs []*schema.Document, opts
 		if jsonErr != nil {
 			return nil, fmt.Errorf("sqlite indexer: marshal embedding: %w", jsonErr)
 		}
-		_, err = tx.ExecContext(ctx,
-			`INSERT INTO knowledge_embeddings (id, item_id, chunk_index, chunk_text, embedding, sub_indexes, embedding_model, embedding_dim, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-			chunkID, itemID, chunkIdx, d.Content, string(embeddingJSON), subIdxStr, s.embeddingModel, embedDim,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("sqlite indexer: insert chunk %d: %w", i, err)
-		}
+		chunks = append(chunks, store.NewChunk{
+			ID:         chunkID,
+			ItemID:     itemID,
+			ChunkIndex: chunkIdx,
+			ChunkText:  d.Content,
+			Embedding:  string(embeddingJSON),
+			SubIndexes: subIdxStr,
+			Model:      s.embeddingModel,
+			Dim:        embedDim,
+		})
 		ids = append(ids, chunkID)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("sqlite indexer: commit: %w", err)
+	if err := s.vectors.InsertChunks(ctx, chunks); err != nil {
+		return nil, fmt.Errorf("sqlite indexer: write %d chunks: %w", len(chunks), err)
 	}
 	return ids, nil
 }
