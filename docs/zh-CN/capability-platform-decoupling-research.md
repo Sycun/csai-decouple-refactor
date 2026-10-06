@@ -2442,6 +2442,17 @@ deprecated 的边改回来**（边留在 `deprecated`）。这是原行为，这
 `internal/store` **20 个 store 构造器 / 25 个生产文件 / 178 条包内测试**；全仓测试函数 **1546**；
 `go build ./...`、`gofmt -l` 空、`go vet ./...`、`go test -count=1 ./...` 全绿。
 
+**DDL 搬家必须看的才是真机**：测试树里新编译的二进制 + **全新库** + 独立端口 18098 与独立 data/log
+（沙箱 `.livecheck-facts27c`，跑完按记录的 PID 37810 停掉并删除）。开机日志 **0 条 error、0 条 panic**；
+全新库里 `sqlite_master` 数得出**两张表与全部 6 条索引**（两张表都在主人手里建出来了，
+`idx_project_facts_*` 三条 + `idx_project_fact_edges_*` 三条）。
+走 store 的活路径再验一遍行为：建项目/三条事实（一条 body 带 `- 依赖事实: note.base`）/POST 加一条
+`supports` 边 → 单条删除与批量删除之后两条事实的 `related_vulnerability_id` **都回 `<cleared>`** →
+`include_link_counts=1` 三行都带计数 → deprecate `note.base` 后**两条出边同时变 deprecated** →
+删除某条事实只带走它自己那条边，另一条原样留着。
+**顺带学到的一条取数细节**：一次性 admin 口令的字符集含 `-`，用 `[A-Za-z0-9]+` 去抓会截断成前半截并
+拿到 401（这次就是这样）——按整行取。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
