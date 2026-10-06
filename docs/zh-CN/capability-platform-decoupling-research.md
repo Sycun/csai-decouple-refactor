@@ -1797,11 +1797,31 @@ Go 的 `Parse` 里布局的空格也匹配 `T`、`.999999999` 也匹配短小数
 声明消费者接口——`project.Store`/`agentfinalizer.Store`/`attackchain.Store`/`workflow.Store`，
 19 → 0）、Eino 收到 ≤1 包、
 session 事件溯源、逐文件 ES 模块、`internal/database` 剩下的 **306** 个方法继续按域切
-（下一刀应把 `vulnerability.go` + `vulnerability_alert.go` **一起**搬——提醒表的投递读返回整条
-`Vulnerability` 行结构，先搬提醒表会让 store 反向依赖数据层类型，理由见 §11「第十六刀」末尾）、
+（下一刀应把 `vulnerability.go` + `vulnerability_alert.go` **一起**搬，且必须先做下面三件铺垫，
+本晚试过拆开搬类型、结论是不成立，细节见本节末「漏洞域为什么搬不动」）、
 P4 硬网络边界、P4 内嵌 CPython、P5 registry / 气隙包 / 引爆自动化、
 以及 **§10 的 9 个决策项一个都没有被裁决**（其中 1、4、5、6 直接决定 P4/P5 的形态）。
 因此**目标未达成**，本表就是"还差什么"的清单。
+
+**漏洞域为什么搬不动（一次被撤销的尝试留下的清单）**
+本晚试过把 `database.Vulnerability`（行结构）与 `VulnerabilityListFilter` 先搬进 store、
+方法随后再搬。做到第三步编译就停住了，原因不是工作量而是**耦合形状**：
+1. `VulnerabilityListFilter.appendWhere`（约 55 行）是**类型的成员**，被
+   `ListVulnerabilities*` / `Count*` / `GetVulnerabilityStats*` / 导出这 **4 条查询**调用；
+   类型搬走后它只能变成 store 的非导出方法，留在数据层的那 4 条查询立刻 `cannot refer to
+   unexported method`。也就是说**过滤条件与它的 SQL 构造器不可分**，要么连着 4 条查询一起搬。
+2. 同一个文件里还定义着 `RBACListAccess` —— 那是 RBAC 域的类型，`VulnerabilityStore` 与
+   另外 5 个 handler 字段都在用它。它不同先走，漏洞域搬完就会把 RBAC 的类型留在 store 里。
+3. `appendVulnerabilityAccessFilter`（按 `RBACListAccess` 的四条可见性路径）与
+   `internal/store/access.go` 已有的那份是**同一条规则的第二种拼写**（`store.Vulnerability.RecentFindings`
+   用的是后一份）。搬过去必须像第十二片那样做**差分测试**再收成一份，不能抄第三份，也不能直接换。
+铺垫清单（按依赖顺序）：先把 `store.Vulnerability` 这个**store 类型改名成复数**
+（`Vulnerabilities`，行结构才好占用单数名）→ `RBACListAccess` 进 store（或先并进 `store.Access`）→
+`appendVulnerabilityAccessFilter` 与 store 子句做差分并归一 → 最后 11 + 8 个方法一次搬完。
+改动面：`internal/database/vulnerability.go` 532 行、`vulnerability_alert.go` 205 行、
+`handler/vulnerability.go` 10 处、`app/vulnerability_tools.go` 8 处、`handler/openapi.go` 3 处、
+`app/vulnerability_alert_route.go` 3 处、`audit/resource_availability.go` 1 处、`stores.go` 3 个接口，
+以及三处测试夹具。搬完才能把 `robot_user_bindings` 补进归属清单（现在为这条 JOIN 故意没认领）。
 
 ### 12.2 交付方式：二开分叉，任务结束推自己的 fork，不提 PR
 
