@@ -1,11 +1,11 @@
 package project
 
 import (
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 )
 
 // ApplyFactOutgoingLinks 替换某事实的出边（links 为 nil 时不修改）。
-func ApplyFactOutgoingLinks(db Store, projectID, sourceFactKey, sourceConversationID string, links []database.ProjectFactEdgeInput) error {
+func ApplyFactOutgoingLinks(db Store, projectID, sourceFactKey, sourceConversationID string, links []store.ProjectFactEdgeInput) error {
 	if links == nil {
 		return nil
 	}
@@ -13,7 +13,7 @@ func ApplyFactOutgoingLinks(db Store, projectID, sourceFactKey, sourceConversati
 }
 
 // ResolveFactLinkInputs 合并 links 数组与 links_text 文本（数组优先）。
-func ResolveFactLinkInputs(links []database.ProjectFactEdgeFromInput, linksText string) ([]database.ProjectFactEdgeFromInput, error) {
+func ResolveFactLinkInputs(links []store.ProjectFactEdgeFromInput, linksText string) ([]store.ProjectFactEdgeFromInput, error) {
 	if len(links) > 0 {
 		return links, nil
 	}
@@ -21,7 +21,7 @@ func ResolveFactLinkInputs(links []database.ProjectFactEdgeFromInput, linksText 
 }
 
 // ApplyFactIncomingLinks 替换某事实的入边（links 为 nil 时不修改）。
-func ApplyFactIncomingLinks(db Store, projectID, targetFactKey string, links []database.ProjectFactEdgeFromInput) error {
+func ApplyFactIncomingLinks(db Store, projectID, targetFactKey string, links []store.ProjectFactEdgeFromInput) error {
 	if links == nil {
 		return nil
 	}
@@ -29,7 +29,7 @@ func ApplyFactIncomingLinks(db Store, projectID, targetFactKey string, links []d
 }
 
 // PersistFactIncomingLinks 写入入边并可选同步当前事实 body「关联」段。
-func PersistFactIncomingLinks(db Store, projectID, targetFactKey string, links []database.ProjectFactEdgeFromInput, syncBody bool) error {
+func PersistFactIncomingLinks(db Store, projectID, targetFactKey string, links []store.ProjectFactEdgeFromInput, syncBody bool) error {
 	if links == nil {
 		return nil
 	}
@@ -61,7 +61,7 @@ func PersistFactLinksFromParsed(db Store, projectID, factKey, sourceConversation
 }
 
 // PersistFactOutgoingLinks 写入出边（图连线等低层 API；body 同步请用 PersistFactIncomingLinks）。
-func PersistFactOutgoingLinks(db Store, projectID, sourceFactKey, sourceConversationID string, links []database.ProjectFactEdgeInput, syncBody bool) error {
+func PersistFactOutgoingLinks(db Store, projectID, sourceFactKey, sourceConversationID string, links []store.ProjectFactEdgeInput, syncBody bool) error {
 	if links == nil {
 		return nil
 	}

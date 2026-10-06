@@ -1,6 +1,7 @@
 package database
 
 import (
+	"cyberstrike-ai/internal/store"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -45,17 +46,8 @@ func (db *DB) GetProjectStatsCounts(projectID string) (*ProjectStats, error) {
 	return stats, nil
 }
 
-// ProjectFactSparseRow is one fact's sparse-check input. It used to be an anonymous struct in the
-// return type, which cannot be named in a consumer-side interface - internal/project.Store needs
-// to mention this method, so the row type has to have a name.
-type ProjectFactSparseRow struct {
-	Category string
-	FactKey  string
-	Body     string
-}
-
 // ListProjectFactsForSparseCheck 返回用于待补全检测的事实字段（非 deprecated）。
-func (db *DB) ListProjectFactsForSparseCheck(projectID string) ([]ProjectFactSparseRow, error) {
+func (db *DB) ListProjectFactsForSparseCheck(projectID string) ([]store.ProjectFactSparseRow, error) {
 	rows, err := db.Query(
 		`SELECT category, fact_key, COALESCE(body,'') FROM project_facts WHERE project_id = ? AND confidence != 'deprecated'`,
 		projectID,
@@ -64,9 +56,9 @@ func (db *DB) ListProjectFactsForSparseCheck(projectID string) ([]ProjectFactSpa
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ProjectFactSparseRow
+	var out []store.ProjectFactSparseRow
 	for rows.Next() {
-		var row ProjectFactSparseRow
+		var row store.ProjectFactSparseRow
 		if err := rows.Scan(&row.Category, &row.FactKey, &row.Body); err != nil {
 			return nil, err
 		}

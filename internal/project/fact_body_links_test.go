@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -22,7 +23,7 @@ func TestParseLinksFromBodyDependsOn(t *testing.T) {
 func TestSyncBodyLinksSection(t *testing.T) {
 	t.Parallel()
 	body := "## 结论\nx\n\n## 关联\n- 依赖事实: old/key"
-	edges := []*database.ProjectFactEdge{{EdgeType: "discovered_on", SourceFactKey: "target/a"}}
+	edges := []*store.ProjectFactEdge{{EdgeType: "discovered_on", SourceFactKey: "target/a"}}
 	out := SyncBodyLinksSection(body, edges)
 	if !strings.Contains(out, "discovered_on: target/a") {
 		t.Fatalf("missing synced edge: %q", out)
@@ -46,14 +47,14 @@ func TestFactGraphIntegration(t *testing.T) {
 		{"target/root", "target", "root"},
 		{"finding/x", "finding", "finding x"},
 	} {
-		_, err := db.UpsertProjectFact(&database.ProjectFact{
+		_, err := db.UpsertProjectFact(&store.ProjectFact{
 			ProjectID: p.ID, FactKey: spec.key, Category: spec.cat, Summary: spec.summary, Confidence: "confirmed",
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := db.ReplaceIncomingProjectFactEdges(p.ID, "finding/x", []database.ProjectFactEdgeFromInput{
+	if err := db.ReplaceIncomingProjectFactEdges(p.ID, "finding/x", []store.ProjectFactEdgeFromInput{
 		{From: "target/root", Type: "discovered_on"},
 	}); err != nil {
 		t.Fatal(err)

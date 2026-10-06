@@ -1,6 +1,7 @@
 package database
 
 import (
+	"cyberstrike-ai/internal/store"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -8,84 +9,6 @@ import (
 
 	"github.com/google/uuid"
 )
-
-// ValidProjectFactEdgeTypes 项目事实图允许的边类型。
-var ValidProjectFactEdgeTypes = map[string]struct{}{
-	"depends_on":    {},
-	"leads_to":      {},
-	"enables":       {},
-	"exploits":      {},
-	"discovered_on": {},
-	"contains":      {},
-	"part_of":       {},
-	"supports":      {},
-}
-
-// ProjectFactEdge 项目事实关系边（source → target）。
-type ProjectFactEdge struct {
-	ID                   string    `json:"id"`
-	ProjectID            string    `json:"project_id"`
-	SourceFactKey        string    `json:"source_fact_key"`
-	TargetFactKey        string    `json:"target_fact_key"`
-	EdgeType             string    `json:"edge_type"`
-	Confidence           string    `json:"confidence"` // confirmed | tentative | deprecated
-	SourceConversationID string    `json:"source_conversation_id,omitempty"`
-	CreatedAt            time.Time `json:"created_at"`
-	UpdatedAt            time.Time `json:"updated_at"`
-}
-
-// ProjectFactEdgeInput 写入边时的输入（出边：source → To）。
-type ProjectFactEdgeInput struct {
-	To         string `json:"to"`
-	Type       string `json:"type"`
-	Confidence string `json:"confidence,omitempty"`
-}
-
-// ProjectFactEdgeFromInput 写入入边时的输入（From → 当前事实）。
-type ProjectFactEdgeFromInput struct {
-	From       string `json:"from"`
-	Type       string `json:"type"`
-	Confidence string `json:"confidence,omitempty"`
-}
-
-// ProjectFactGraphNode 图 API 节点。
-type ProjectFactGraphNode struct {
-	ID         string `json:"id"`
-	FactKey    string `json:"fact_key"`
-	Category   string `json:"category"`
-	Label      string `json:"label"`   // 图节点短标签（截断）
-	Summary    string `json:"summary"` // 完整摘要（侧栏等详情用）
-	Confidence string `json:"confidence"`
-	Type       string `json:"type"`
-	Pinned     bool   `json:"pinned"`
-}
-
-// ProjectFactGraphEdge 图 API 边。
-type ProjectFactGraphEdge struct {
-	ID         string `json:"id"`
-	Source     string `json:"source"`
-	Target     string `json:"target"`
-	Type       string `json:"type"`
-	Confidence string `json:"confidence"`
-}
-
-// ProjectFactGraph 项目事实图。
-type ProjectFactGraph struct {
-	Nodes []ProjectFactGraphNode `json:"nodes"`
-	Edges []ProjectFactGraphEdge `json:"edges"`
-}
-
-// ValidateProjectFactEdgeType 校验边类型。
-func ValidateProjectFactEdgeType(edgeType string) error {
-	edgeType = strings.TrimSpace(strings.ToLower(edgeType))
-	if edgeType == "" {
-		return fmt.Errorf("edge type 不能为空")
-	}
-	if _, ok := ValidProjectFactEdgeTypes[edgeType]; !ok {
-		return fmt.Errorf("无效的 edge type: %s", edgeType)
-	}
-	return nil
-}
 
 func normalizeEdgeConfidence(confidence string) string {
 	confidence = strings.TrimSpace(strings.ToLower(confidence))
@@ -98,7 +21,7 @@ func normalizeEdgeConfidence(confidence string) string {
 }
 
 // ListProjectFactEdgesByProject 列出项目全部边。
-func (db *DB) ListProjectFactEdgesByProject(projectID string) ([]*ProjectFactEdge, error) {
+func (db *DB) ListProjectFactEdgesByProject(projectID string) ([]*store.ProjectFactEdge, error) {
 	rows, err := db.Query(
 		`SELECT id, project_id, source_fact_key, target_fact_key, edge_type, confidence,
 		        COALESCE(source_conversation_id,''), created_at, updated_at
@@ -115,7 +38,7 @@ func (db *DB) ListProjectFactEdgesByProject(projectID string) ([]*ProjectFactEdg
 }
 
 // ListOutgoingProjectFactEdges 列出某事实的全部出边。
-func (db *DB) ListOutgoingProjectFactEdges(projectID, sourceFactKey string) ([]*ProjectFactEdge, error) {
+func (db *DB) ListOutgoingProjectFactEdges(projectID, sourceFactKey string) ([]*store.ProjectFactEdge, error) {
 	rows, err := db.Query(
 		`SELECT id, project_id, source_fact_key, target_fact_key, edge_type, confidence,
 		        COALESCE(source_conversation_id,''), created_at, updated_at
@@ -132,7 +55,7 @@ func (db *DB) ListOutgoingProjectFactEdges(projectID, sourceFactKey string) ([]*
 }
 
 // ListIncomingProjectFactEdges 列出某事实的全部入边。
-func (db *DB) ListIncomingProjectFactEdges(projectID, targetFactKey string) ([]*ProjectFactEdge, error) {
+func (db *DB) ListIncomingProjectFactEdges(projectID, targetFactKey string) ([]*store.ProjectFactEdge, error) {
 	rows, err := db.Query(
 		`SELECT id, project_id, source_fact_key, target_fact_key, edge_type, confidence,
 		        COALESCE(source_conversation_id,''), created_at, updated_at
@@ -149,7 +72,7 @@ func (db *DB) ListIncomingProjectFactEdges(projectID, targetFactKey string) ([]*
 }
 
 // ReplaceOutgoingProjectFactEdges 替换某事实的全部出边（links 省略时不调用）。
-func (db *DB) ReplaceOutgoingProjectFactEdges(projectID, sourceFactKey, sourceConversationID string, inputs []ProjectFactEdgeInput) error {
+func (db *DB) ReplaceOutgoingProjectFactEdges(projectID, sourceFactKey, sourceConversationID string, inputs []store.ProjectFactEdgeInput) error {
 	sourceFactKey = strings.TrimSpace(sourceFactKey)
 	if sourceFactKey == "" {
 		return fmt.Errorf("source_fact_key 不能为空")
@@ -165,16 +88,16 @@ func (db *DB) ReplaceOutgoingProjectFactEdges(projectID, sourceFactKey, sourceCo
 		if target == "" {
 			continue
 		}
-		if err := ValidateFactKey(target); err != nil {
+		if err := store.ValidateFactKey(target); err != nil {
 			return fmt.Errorf("target fact_key 无效 (%s): %w", target, err)
 		}
 		if target == sourceFactKey {
 			return fmt.Errorf("边不能指向自身: %s", sourceFactKey)
 		}
-		if err := ValidateProjectFactEdgeType(in.Type); err != nil {
+		if err := store.ValidateProjectFactEdgeType(in.Type); err != nil {
 			return err
 		}
-		edge := &ProjectFactEdge{
+		edge := &store.ProjectFactEdge{
 			ID:                   uuid.New().String(),
 			ProjectID:            projectID,
 			SourceFactKey:        sourceFactKey,
@@ -193,7 +116,7 @@ func (db *DB) ReplaceOutgoingProjectFactEdges(projectID, sourceFactKey, sourceCo
 }
 
 // ReplaceIncomingProjectFactEdges 替换某事实的全部入边（From 为来源 fact_key）。
-func (db *DB) ReplaceIncomingProjectFactEdges(projectID, targetFactKey string, inputs []ProjectFactEdgeFromInput) error {
+func (db *DB) ReplaceIncomingProjectFactEdges(projectID, targetFactKey string, inputs []store.ProjectFactEdgeFromInput) error {
 	targetFactKey = strings.TrimSpace(targetFactKey)
 	if targetFactKey == "" {
 		return fmt.Errorf("target_fact_key 不能为空")
@@ -209,20 +132,20 @@ func (db *DB) ReplaceIncomingProjectFactEdges(projectID, targetFactKey string, i
 		if source == "" {
 			continue
 		}
-		if err := ValidateFactKey(source); err != nil {
+		if err := store.ValidateFactKey(source); err != nil {
 			return fmt.Errorf("source fact_key 无效 (%s): %w", source, err)
 		}
 		if source == targetFactKey {
 			return fmt.Errorf("边不能指向自身: %s", targetFactKey)
 		}
-		if err := ValidateProjectFactEdgeType(in.Type); err != nil {
+		if err := store.ValidateProjectFactEdgeType(in.Type); err != nil {
 			return err
 		}
 		sourceConversationID := ""
 		if srcFact, err := db.GetProjectFactByKey(projectID, source); err == nil && srcFact != nil {
 			sourceConversationID = srcFact.SourceConversationID
 		}
-		edge := &ProjectFactEdge{
+		edge := &store.ProjectFactEdge{
 			ID:                   uuid.New().String(),
 			ProjectID:            projectID,
 			SourceFactKey:        source,
@@ -241,8 +164,8 @@ func (db *DB) ReplaceIncomingProjectFactEdges(projectID, targetFactKey string, i
 }
 
 // GetProjectFactEdge 按 ID 获取边。
-func (db *DB) GetProjectFactEdge(edgeID string) (*ProjectFactEdge, error) {
-	var e ProjectFactEdge
+func (db *DB) GetProjectFactEdge(edgeID string) (*store.ProjectFactEdge, error) {
+	var e store.ProjectFactEdge
 	var createdAt, updatedAt string
 	err := db.QueryRow(
 		`SELECT id, project_id, source_fact_key, target_fact_key, edge_type, confidence,
@@ -259,7 +182,7 @@ func (db *DB) GetProjectFactEdge(edgeID string) (*ProjectFactEdge, error) {
 }
 
 // AddProjectFactEdge 新增单条边（已存在则更新 confidence）。
-func (db *DB) AddProjectFactEdge(projectID string, in ProjectFactEdgeInput, sourceFactKey, sourceConversationID string) (*ProjectFactEdge, error) {
+func (db *DB) AddProjectFactEdge(projectID string, in store.ProjectFactEdgeInput, sourceFactKey, sourceConversationID string) (*store.ProjectFactEdge, error) {
 	sourceFactKey = strings.TrimSpace(sourceFactKey)
 	target := strings.TrimSpace(in.To)
 	if sourceFactKey == "" || target == "" {
@@ -268,14 +191,14 @@ func (db *DB) AddProjectFactEdge(projectID string, in ProjectFactEdgeInput, sour
 	if sourceFactKey == target {
 		return nil, fmt.Errorf("边不能指向自身")
 	}
-	if err := ValidateProjectFactEdgeType(in.Type); err != nil {
+	if err := store.ValidateProjectFactEdgeType(in.Type); err != nil {
 		return nil, err
 	}
-	if err := ValidateFactKey(target); err != nil {
+	if err := store.ValidateFactKey(target); err != nil {
 		return nil, err
 	}
 	now := time.Now()
-	e := &ProjectFactEdge{
+	e := &store.ProjectFactEdge{
 		ID:                   uuid.New().String(),
 		ProjectID:            projectID,
 		SourceFactKey:        sourceFactKey,
@@ -331,7 +254,7 @@ func (db *DB) DeleteProjectFactEdge(edgeID string) error {
 	return nil
 }
 
-func (db *DB) insertProjectFactEdge(e *ProjectFactEdge) error {
+func (db *DB) insertProjectFactEdge(e *store.ProjectFactEdge) error {
 	_, err := db.Exec(
 		`INSERT INTO project_fact_edges (
 			id, project_id, source_fact_key, target_fact_key, edge_type, confidence,
@@ -391,10 +314,10 @@ func (db *DB) DeprecateProjectFactEdgesForKey(projectID, factKey string) error {
 	return err
 }
 
-func scanProjectFactEdges(rows *sql.Rows) ([]*ProjectFactEdge, error) {
-	var out []*ProjectFactEdge
+func scanProjectFactEdges(rows *sql.Rows) ([]*store.ProjectFactEdge, error) {
+	var out []*store.ProjectFactEdge
 	for rows.Next() {
-		var e ProjectFactEdge
+		var e store.ProjectFactEdge
 		var createdAt, updatedAt string
 		if err := rows.Scan(
 			&e.ID, &e.ProjectID, &e.SourceFactKey, &e.TargetFactKey, &e.EdgeType, &e.Confidence,

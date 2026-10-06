@@ -11,6 +11,7 @@ import (
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/mcp/builtin"
 	"cyberstrike-ai/internal/project"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -129,7 +130,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 		if len([]rune(summary)) > cfg.Project.FactSummaryMaxRunesEffective() {
 			return textResult(fmt.Sprintf("错误: summary 过长（最多 %d 字）", cfg.Project.FactSummaryMaxRunesEffective()), true), nil
 		}
-		f := &database.ProjectFact{
+		f := &store.ProjectFact{
 			ProjectID:              projectID,
 			FactKey:                factKey,
 			Category:               strArg(args, "category"),
@@ -245,7 +246,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 		}
 		limit := intArg(args, "limit", 50)
 		offset := intArg(args, "offset", 0)
-		filter := database.ProjectFactListFilter{
+		filter := store.ProjectFactListFilter{
 			Category:   strArg(args, "category"),
 			Confidence: strArg(args, "confidence"),
 		}
@@ -284,7 +285,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 		if q == "" {
 			return textResult("错误: query 必填", true), nil
 		}
-		list, err := db.ListProjectFacts(projectID, database.ProjectFactListFilter{Search: q}, intArg(args, "limit", 30), intArg(args, "offset", 0))
+		list, err := db.ListProjectFacts(projectID, store.ProjectFactListFilter{Search: q}, intArg(args, "limit", 30), intArg(args, "offset", 0))
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}

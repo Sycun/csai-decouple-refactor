@@ -5,18 +5,18 @@ import (
 	"sort"
 	"strings"
 
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 )
 
 var factIndexEdgeTypeOrder = []string{
 	"discovered_on", "leads_to", "enables", "depends_on", "exploits", "contains", "part_of", "supports",
 }
 
-func filterIndexEdges(edges []*database.ProjectFactEdge) []*database.ProjectFactEdge {
+func filterIndexEdges(edges []*store.ProjectFactEdge) []*store.ProjectFactEdge {
 	if len(edges) == 0 {
 		return nil
 	}
-	out := make([]*database.ProjectFactEdge, 0, len(edges))
+	out := make([]*store.ProjectFactEdge, 0, len(edges))
 	for _, e := range edges {
 		if e == nil {
 			continue
@@ -25,7 +25,7 @@ func filterIndexEdges(edges []*database.ProjectFactEdge) []*database.ProjectFact
 			continue
 		}
 		edgeType := strings.ToLower(strings.TrimSpace(e.EdgeType))
-		if _, ok := database.ValidProjectFactEdgeTypes[edgeType]; !ok {
+		if _, ok := store.ValidProjectFactEdgeTypes[edgeType]; !ok {
 			continue
 		}
 		out = append(out, e)
@@ -41,19 +41,19 @@ func edgeConfidenceSuffix(confidence string) string {
 	return " (" + c + ")"
 }
 
-func formatRelationHintPart(e *database.ProjectFactEdge) string {
+func formatRelationHintPart(e *store.ProjectFactEdge) string {
 	return fmt.Sprintf("%s←%s%s", e.EdgeType, e.SourceFactKey, edgeConfidenceSuffix(e.Confidence))
 }
 
-func formatOutgoingHintPart(e *database.ProjectFactEdge) string {
+func formatOutgoingHintPart(e *store.ProjectFactEdge) string {
 	return fmt.Sprintf("%s→%s%s", e.EdgeType, e.TargetFactKey, edgeConfidenceSuffix(e.Confidence))
 }
 
-func formatIncomingHintPart(e *database.ProjectFactEdge) string {
+func formatIncomingHintPart(e *store.ProjectFactEdge) string {
 	return formatRelationHintPart(e)
 }
 
-func joinEdgeHintParts(edges []*database.ProjectFactEdge, formatter func(*database.ProjectFactEdge) string) string {
+func joinEdgeHintParts(edges []*store.ProjectFactEdge, formatter func(*store.ProjectFactEdge) string) string {
 	parts := make([]string, 0, len(edges))
 	for _, e := range edges {
 		parts = append(parts, formatter(e))
@@ -62,7 +62,7 @@ func joinEdgeHintParts(edges []*database.ProjectFactEdge, formatter func(*databa
 }
 
 // FormatOutgoingLinksHint 黑板索引用出边摘要（全部有效边类型，不截断）。
-func FormatOutgoingLinksHint(edges []*database.ProjectFactEdge) string {
+func FormatOutgoingLinksHint(edges []*store.ProjectFactEdge) string {
 	edges = filterIndexEdges(edges)
 	if len(edges) == 0 {
 		return ""
@@ -71,7 +71,7 @@ func FormatOutgoingLinksHint(edges []*database.ProjectFactEdge) string {
 }
 
 // FormatIncomingLinksHint 黑板索引用入边摘要（全部有效边类型，不截断）。
-func FormatIncomingLinksHint(edges []*database.ProjectFactEdge) string {
+func FormatIncomingLinksHint(edges []*store.ProjectFactEdge) string {
 	edges = filterIndexEdges(edges)
 	if len(edges) == 0 {
 		return ""
@@ -80,7 +80,7 @@ func FormatIncomingLinksHint(edges []*database.ProjectFactEdge) string {
 }
 
 // FormatFactIndexLinksHint 黑板索引行内关系边（from → 当前 fact，与 upsert links 一致）。
-func FormatFactIndexLinksHint(_ string, incoming []*database.ProjectFactEdge) string {
+func FormatFactIndexLinksHint(_ string, incoming []*store.ProjectFactEdge) string {
 	in := filterIndexEdges(incoming)
 	if len(in) == 0 {
 		return ""
@@ -88,9 +88,9 @@ func FormatFactIndexLinksHint(_ string, incoming []*database.ProjectFactEdge) st
 	return " {关系边: " + joinEdgeHintParts(in, formatRelationHintPart) + "}"
 }
 
-func indexEdgeGroupMaps(edges []*database.ProjectFactEdge) (outgoing, incoming map[string][]*database.ProjectFactEdge) {
-	outgoing = map[string][]*database.ProjectFactEdge{}
-	incoming = map[string][]*database.ProjectFactEdge{}
+func indexEdgeGroupMaps(edges []*store.ProjectFactEdge) (outgoing, incoming map[string][]*store.ProjectFactEdge) {
+	outgoing = map[string][]*store.ProjectFactEdge{}
+	incoming = map[string][]*store.ProjectFactEdge{}
 	for _, e := range filterIndexEdges(edges) {
 		outgoing[e.SourceFactKey] = append(outgoing[e.SourceFactKey], e)
 		incoming[e.TargetFactKey] = append(incoming[e.TargetFactKey], e)
@@ -98,11 +98,11 @@ func indexEdgeGroupMaps(edges []*database.ProjectFactEdge) (outgoing, incoming m
 	return outgoing, incoming
 }
 
-func relationOverviewLine(e *database.ProjectFactEdge) string {
+func relationOverviewLine(e *store.ProjectFactEdge) string {
 	return fmt.Sprintf("- %s → %s%s · %s", e.SourceFactKey, e.TargetFactKey, edgeConfidenceSuffix(e.Confidence), e.EdgeType)
 }
 
-func indexEdgeSortKey(e *database.ProjectFactEdge) (int, int, string) {
+func indexEdgeSortKey(e *store.ProjectFactEdge) (int, int, string) {
 	confRank := 0
 	if strings.EqualFold(strings.TrimSpace(e.Confidence), "tentative") {
 		confRank = 1
@@ -117,7 +117,7 @@ func indexEdgeSortKey(e *database.ProjectFactEdge) (int, int, string) {
 	return confRank, typeRank, e.SourceFactKey + ">" + e.TargetFactKey + ">" + e.EdgeType
 }
 
-func sortIndexOverviewEdges(edges []*database.ProjectFactEdge) {
+func sortIndexOverviewEdges(edges []*store.ProjectFactEdge) {
 	sort.SliceStable(edges, func(i, j int) bool {
 		ci, ti, ki := indexEdgeSortKey(edges[i])
 		cj, tj, kj := indexEdgeSortKey(edges[j])
@@ -132,7 +132,7 @@ func sortIndexOverviewEdges(edges []*database.ProjectFactEdge) {
 }
 
 // BuildFactPathOverviewSection 生成事实关系速览（全部有效边类型，不含 body）。
-func BuildFactPathOverviewSection(edges []*database.ProjectFactEdge, indexedKeys map[string]struct{}, maxRunes int) string {
+func BuildFactPathOverviewSection(edges []*store.ProjectFactEdge, indexedKeys map[string]struct{}, maxRunes int) string {
 	if maxRunes <= 0 {
 		return ""
 	}
@@ -140,7 +140,7 @@ func BuildFactPathOverviewSection(edges []*database.ProjectFactEdge, indexedKeys
 	if len(candidates) == 0 {
 		return ""
 	}
-	filtered := make([]*database.ProjectFactEdge, 0, len(candidates))
+	filtered := make([]*store.ProjectFactEdge, 0, len(candidates))
 	for _, e := range candidates {
 		if len(indexedKeys) > 0 {
 			if _, ok := indexedKeys[e.SourceFactKey]; !ok {
@@ -186,7 +186,7 @@ func BuildFactPathOverviewSection(edges []*database.ProjectFactEdge, indexedKeys
 	return b.String()
 }
 
-func factIndexSortPriority(f *database.ProjectFact) int {
+func factIndexSortPriority(f *store.ProjectFact) int {
 	if f == nil {
 		return 0
 	}
@@ -220,7 +220,7 @@ func factIndexSortPriority(f *database.ProjectFact) int {
 	return score
 }
 
-func sortFactsForIndex(facts []*database.ProjectFact) {
+func sortFactsForIndex(facts []*store.ProjectFact) {
 	sort.SliceStable(facts, func(i, j int) bool {
 		pi, pj := factIndexSortPriority(facts[i]), factIndexSortPriority(facts[j])
 		if pi != pj {

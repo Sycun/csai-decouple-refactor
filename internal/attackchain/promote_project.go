@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/project"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/google/uuid"
 )
@@ -15,11 +15,11 @@ var promoteSlugSanitizer = regexp.MustCompile(`[^a-z0-9._/-]+`)
 
 // PromoteToProjectResult 攻击链沉淀结果。
 type PromoteToProjectResult struct {
-	FactsCreated int                        `json:"facts_created"`
-	FactsUpdated int                        `json:"facts_updated"`
-	EdgesCreated int                        `json:"edges_created"`
-	FactKeys     []string                   `json:"fact_keys"`
-	Graph        *database.ProjectFactGraph `json:"graph,omitempty"`
+	FactsCreated int                     `json:"facts_created"`
+	FactsUpdated int                     `json:"facts_updated"`
+	EdgesCreated int                     `json:"edges_created"`
+	FactKeys     []string                `json:"fact_keys"`
+	Graph        *store.ProjectFactGraph `json:"graph,omitempty"`
 }
 
 // PromoteToProject 将对话攻击链沉淀为项目事实与边。
@@ -64,7 +64,7 @@ func PromoteToProject(db Store, chain ChainStore, projectID, conversationID stri
 		nodeToKey[node.ID] = key
 		category := mapPromoteNodeCategory(node.Type)
 		existing, getErr := db.GetProjectFactByKey(projectID, key)
-		f := &database.ProjectFact{
+		f := &store.ProjectFact{
 			ProjectID:            projectID,
 			FactKey:              key,
 			Category:             category,
@@ -100,7 +100,7 @@ func PromoteToProject(db Store, chain ChainStore, projectID, conversationID stri
 		}
 		edgeType := mapPromoteEdgeType(edge.Type)
 		incoming, _ := db.ListIncomingProjectFactEdges(projectID, tgtKey)
-		merged := project.MergeLinkFromInputsUnique(promoteFromEdgeInputsFromDB(incoming), []database.ProjectFactEdgeFromInput{{From: srcKey, Type: edgeType}})
+		merged := project.MergeLinkFromInputsUnique(promoteFromEdgeInputsFromDB(incoming), []store.ProjectFactEdgeFromInput{{From: srcKey, Type: edgeType}})
 		if err := db.ReplaceIncomingProjectFactEdges(projectID, tgtKey, merged); err != nil {
 			return nil, err
 		}
@@ -117,10 +117,10 @@ func PromoteToProject(db Store, chain ChainStore, projectID, conversationID stri
 	return res, nil
 }
 
-func promoteFromEdgeInputsFromDB(edges []*database.ProjectFactEdge) []database.ProjectFactEdgeFromInput {
-	out := make([]database.ProjectFactEdgeFromInput, 0, len(edges))
+func promoteFromEdgeInputsFromDB(edges []*store.ProjectFactEdge) []store.ProjectFactEdgeFromInput {
+	out := make([]store.ProjectFactEdgeFromInput, 0, len(edges))
 	for _, e := range edges {
-		out = append(out, database.ProjectFactEdgeFromInput{From: e.SourceFactKey, Type: e.EdgeType, Confidence: e.Confidence})
+		out = append(out, store.ProjectFactEdgeFromInput{From: e.SourceFactKey, Type: e.EdgeType, Confidence: e.Confidence})
 	}
 	return out
 }

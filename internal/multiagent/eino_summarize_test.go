@@ -10,6 +10,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/project"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/adk/middlewares/summarization"
@@ -604,7 +605,7 @@ func TestRefreshFactIndexInMessages(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = db.UpsertProjectFact(&database.ProjectFact{
+	_, err = db.UpsertProjectFact(&store.ProjectFact{
 		ProjectID: proj.ID,
 		FactKey:   "target/host",
 		Category:  "target",

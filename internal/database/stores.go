@@ -236,7 +236,7 @@ var _ OpenAPIStore = (*DB)(nil)
 type ProjectStore interface {
 	ProjectFactStore
 	AttackChainLedger
-	AddProjectFactEdge(projectID string, in ProjectFactEdgeInput, sourceFactKey, sourceConversationID string) (*ProjectFactEdge, error)
+	AddProjectFactEdge(projectID string, in store.ProjectFactEdgeInput, sourceFactKey, sourceConversationID string) (*store.ProjectFactEdge, error)
 	AssignResourceToUser(userID, resourceType, resourceID string) error
 	CountConversationsByProjectID(projectID string) (int, error)
 	CountProjectsForAccess(status, search, userID, scope string) (int, error)
@@ -247,20 +247,20 @@ type ProjectStore interface {
 	DeprecateProjectFact(projectID, factKey string) error
 	GetProject(id string) (*Project, error)
 	GetProjectDashboardSummaryForAccess(factLimit int, userID, scope string) (*ProjectDashboardSummary, error)
-	GetProjectFact(id string) (*ProjectFact, error)
-	GetProjectFactByKey(projectID, factKey string) (*ProjectFact, error)
-	GetProjectFactEdge(edgeID string) (*ProjectFactEdge, error)
+	GetProjectFact(id string) (*store.ProjectFact, error)
+	GetProjectFactByKey(projectID, factKey string) (*store.ProjectFact, error)
+	GetProjectFactEdge(edgeID string) (*store.ProjectFactEdge, error)
 	ListConversationsByProjectID(projectID string, limit, offset int) ([]*Conversation, error)
-	ListIncomingProjectFactEdges(projectID, targetFactKey string) ([]*ProjectFactEdge, error)
-	ListOutgoingProjectFactEdges(projectID, sourceFactKey string) ([]*ProjectFactEdge, error)
-	ListProjectFactEdgesByProject(projectID string) ([]*ProjectFactEdge, error)
-	ListProjectFacts(projectID string, filter ProjectFactListFilter, limit, offset int) ([]*ProjectFact, error)
+	ListIncomingProjectFactEdges(projectID, targetFactKey string) ([]*store.ProjectFactEdge, error)
+	ListOutgoingProjectFactEdges(projectID, sourceFactKey string) ([]*store.ProjectFactEdge, error)
+	ListProjectFactEdgesByProject(projectID string) ([]*store.ProjectFactEdge, error)
+	ListProjectFacts(projectID string, filter store.ProjectFactListFilter, limit, offset int) ([]*store.ProjectFact, error)
 	ListProjectsForAccess(status, search string, limit, offset int, userID, scope string) ([]*Project, error)
 	RenameProjectFactKeyEdges(projectID, oldKey, newKey string) error
 	RestoreProjectFact(projectID, factKey, confidence string) error
 	SetResourceOwner(resourceType, resourceID, userID string) error
 	UpdateProject(p *Project) error
-	UpsertProjectFact(f *ProjectFact) (*ProjectFact, error)
+	UpsertProjectFact(f *store.ProjectFact) (*store.ProjectFact, error)
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 

@@ -1,6 +1,9 @@
 package database
 
-import "cyberstrike-ai/internal/mcp"
+import (
+	"cyberstrike-ai/internal/mcp"
+	"cyberstrike-ai/internal/store"
+)
 
 // The two surfaces below are declared here rather than in the packages that consume them, because
 // those packages import this one and the reverse would be a cycle. Each consumer keeps a
@@ -15,16 +18,16 @@ type ProjectFactStore interface {
 	CreateProject(p *Project) (*Project, error)
 	GetProject(id string) (*Project, error)
 	GetProjectStatsCounts(projectID string) (*ProjectStats, error)
-	ListProjectFactsForSparseCheck(projectID string) ([]ProjectFactSparseRow, error)
-	ListProjectFactsForIndex(projectID string, includeDeprecated bool) ([]*ProjectFact, error)
-	ListProjectFacts(projectID string, filter ProjectFactListFilter, limit, offset int) ([]*ProjectFact, error)
-	GetProjectFactByKey(projectID, factKey string) (*ProjectFact, error)
-	UpsertProjectFact(f *ProjectFact) (*ProjectFact, error)
-	ListProjectFactEdgesByProject(projectID string) ([]*ProjectFactEdge, error)
-	ListIncomingProjectFactEdges(projectID, targetFactKey string) ([]*ProjectFactEdge, error)
-	ReplaceOutgoingProjectFactEdges(projectID, sourceFactKey, sourceConversationID string, inputs []ProjectFactEdgeInput) error
-	ReplaceIncomingProjectFactEdges(projectID, targetFactKey string, inputs []ProjectFactEdgeFromInput) error
-	AddProjectFactEdge(projectID string, in ProjectFactEdgeInput, sourceFactKey, sourceConversationID string) (*ProjectFactEdge, error)
+	ListProjectFactsForSparseCheck(projectID string) ([]store.ProjectFactSparseRow, error)
+	ListProjectFactsForIndex(projectID string, includeDeprecated bool) ([]*store.ProjectFact, error)
+	ListProjectFacts(projectID string, filter store.ProjectFactListFilter, limit, offset int) ([]*store.ProjectFact, error)
+	GetProjectFactByKey(projectID, factKey string) (*store.ProjectFact, error)
+	UpsertProjectFact(f *store.ProjectFact) (*store.ProjectFact, error)
+	ListProjectFactEdgesByProject(projectID string) ([]*store.ProjectFactEdge, error)
+	ListIncomingProjectFactEdges(projectID, targetFactKey string) ([]*store.ProjectFactEdge, error)
+	ReplaceOutgoingProjectFactEdges(projectID, sourceFactKey, sourceConversationID string, inputs []store.ProjectFactEdgeInput) error
+	ReplaceIncomingProjectFactEdges(projectID, targetFactKey string, inputs []store.ProjectFactEdgeFromInput) error
+	AddProjectFactEdge(projectID string, in store.ProjectFactEdgeInput, sourceFactKey, sourceConversationID string) (*store.ProjectFactEdge, error)
 }
 
 var _ ProjectFactStore = (*DB)(nil)
@@ -53,7 +56,7 @@ type AttackChainLedger interface {
 	GetMessages(conversationID string) ([]Message, error)
 	GetProcessDetailsByConversation(conversationID string) (map[string][]ProcessDetail, error)
 	GetProject(id string) (*Project, error)
-	GetProjectFactByKey(projectID, factKey string) (*ProjectFact, error)
+	GetProjectFactByKey(projectID, factKey string) (*store.ProjectFact, error)
 }
 
 var _ AttackChainLedger = (*DB)(nil)

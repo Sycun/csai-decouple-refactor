@@ -2328,6 +2328,50 @@ want the pinned fact first even though it is the oldest row`，撤销即绿）�
 两条都记在这里、并留在测试注释里当"改之前的照片"。第二十七刀（二）搬完 store 之后再单独立一个 commit 修，
 修的时候这两条断言就是要跟着改语义的那两处——它们的存在就是为了让那次改动看得见。
 
+### P6 第二十七刀（二）—— 黑板的**词汇**先迁户口：13 个声明进 `internal/store/facts.go`，SQL 还留在原主手里
+
+这是第二十刀对漏洞行结构做过的那步铺垫，这次的对象是黑板：**9 个行/输入类型 + 2 个校验器 + 1 个私有
+正则 + 1 个边类型集合**（`ProjectFact`、`ProjectFactListFilter`、`ProjectFactSparseRow`、`factKeyPattern`、
+`ValidateFactKey`、`ValidProjectFactEdgeTypes`、`ProjectFactEdge`、`ProjectFactEdgeInput`、
+`ProjectFactEdgeFromInput`、`ValidateProjectFactEdgeType`、`ProjectFactGraphNode`、`ProjectFactGraphEdge`、
+`ProjectFactGraph`）。写这些行的 **20 个方法、两张表、6 条索引都还没动**——这一片只搬"行长什么样"。
+
+**为什么先搬词汇**：一个类型声明两次就是两份契约。行结构由连接包装拥有时，HTTP 侧序列化的是 store 视角的
+字段、数据侧填的是它自己的字段，漂移表现为"JSON 里某个字段悄悄没了"。所以词汇先迁，SQL 随后迁，
+最后用一条门禁保证词汇不会再长出第二个家。
+
+**证明是逐字节比对，不是"看起来一样"**：脚本从 `git show HEAD:` 取那 13 个声明的**原文整块**（含上方注释），
+与新文件里的块对齐（制表符归一后）比对 → **13/13 完全一致**。第一次有 1 块不一致被抓出来：我把
+`ProjectFactSparseRow` 的注释重写成了一句中文，而原注释记着"为什么它必须是个有名字的类型"
+（匿名结构体没法在消费者侧接口里点名）——**那条信息被弄丢了**，已按原文取回。规则照旧：搬声明连注释一起搬，
+注释不是可以自由重写的东西。
+调用点那一侧由编译器兜底（`database.X → store.X` 的**限定名**替换，带词边界，不会误伤
+`ProjectFactStore` 这类更长的名字），复现核对：`git diff -U0 | grep -E '^[+-][[:space:]]*//'` 只有那 13 块
+注释的删除，没有别处的散文被改。
+
+**新门禁** `TestFactVocabularyHasOneHome`（`internal/store/ownership_test.go`）：按**声明位置**
+（列 0 的 `type|var|func NAME`）在 internal+cmd 的**生产文件**里找这 13 个名字，要求每个都**恰好**出现在
+`internal/store/facts.go`。两个方向都探过：在 `database/project.go` 补一个 `type ProjectFact struct{…}` →
+`ProjectFact: also declared in internal/database/project.go`；把 store 里的 `ProjectFactGraph` 改名 →
+`ProjectFactGraph: declared nowhere`（**"扫不到"必须是红而不是绿**，这条就是从第二十五刀那两次假绿灯学来的）。
+
+**脚本自伤一次，照旧如实记**：补 import 的那步用的是"`store\.[A-Z]` 出现过就加 import"，于是把**注释里提到
+`store.X`** 的 4 个包（settings / artifact / layering / multiagent 的测试、以及 `internal/store` 自己的
+3 个测试文件——自我 import 直接成环）也加了进去。`go build ./...` 看不见测试文件，是 `go vet ./...` 把它们
+报出来的；清干净后 vet 退出码 0。**规矩**：脚本改 import 之后必须跑 `go vet ./...`（它才编译测试），
+不能只跑 `go build`。
+
+**这一片之后剩下的（就是下一片）**：把 20 个方法与两张表的 DDL 从 `internal/database` 搬进
+`store.Facts`。真正的阻塞点已经摸清并记在这儿——`database.ProjectFactStore` 这**一个**接口里同时装着
+项目行的方法（`CreateProject`/`GetProject`/`GetProjectStatsCounts`/`ListProjectFactsForSparseCheck`）与
+事实/边的方法，而它被 **4 个**消费者接口内嵌（`ProjectStore`、`AgentStore`、`WorkflowStore`、
+`AttackChainLedger`），`internal/project.Store` 又是它的别名。所以那一刀必须先**把这个接口劈成两半**
+（项目行 vs 黑板账本），否则要么 agent/workflow/attackchain 三条链一起断，要么就得给它们各发一个 facts 字段。
+这也是为什么它是"下一片"而不是今晚的顺手事。
+
+**顺带的账**：`*database.DB` 仍 **262**（本片不动方法）；`internal/store` 生产文件 **22 → 23**、
+包内测试函数 **168 → 169**；`go vet ./...` 与 `go test -count=1 ./internal/...` 全绿。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

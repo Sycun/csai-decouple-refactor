@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/projectprompt"
+	"cyberstrike-ai/internal/store"
 )
 
 // PathGraphCategories 攻击路径视图包含的事实分类。
@@ -85,7 +85,7 @@ func truncateGraphLabel(summary string, maxRunes int) string {
 }
 
 // BuildProjectFactGraph 构建项目事实图（nodes + edges）。
-func BuildProjectFactGraph(db Store, projectID string, view string, excludeDeprecated bool) (*database.ProjectFactGraph, error) {
+func BuildProjectFactGraph(db Store, projectID string, view string, excludeDeprecated bool) (*store.ProjectFactGraph, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database 未初始化")
 	}
@@ -99,7 +99,7 @@ func BuildProjectFactGraph(db Store, projectID string, view string, excludeDepre
 		view = "path"
 	}
 
-	filter := database.ProjectFactListFilter{}
+	filter := store.ProjectFactListFilter{}
 	if excludeDeprecated {
 		filter.ExcludeDeprecated = true
 	}
@@ -116,7 +116,7 @@ func BuildProjectFactGraph(db Store, projectID string, view string, excludeDepre
 		edges = filterDeprecatedEdges(edges)
 	}
 
-	factByKey := make(map[string]*database.ProjectFact, len(facts))
+	factByKey := make(map[string]*store.ProjectFact, len(facts))
 	for _, f := range facts {
 		factByKey[f.FactKey] = f
 	}
@@ -166,10 +166,10 @@ func BuildProjectFactGraph(db Store, projectID string, view string, excludeDepre
 		}
 	}
 
-	nodes := make([]database.ProjectFactGraphNode, 0, len(nodeKeys))
+	nodes := make([]store.ProjectFactGraphNode, 0, len(nodeKeys))
 	for key := range nodeKeys {
 		if f, ok := factByKey[key]; ok {
-			nodes = append(nodes, database.ProjectFactGraphNode{
+			nodes = append(nodes, store.ProjectFactGraphNode{
 				ID:         f.FactKey,
 				FactKey:    f.FactKey,
 				Category:   f.Category,
@@ -181,7 +181,7 @@ func BuildProjectFactGraph(db Store, projectID string, view string, excludeDepre
 			})
 			continue
 		}
-		nodes = append(nodes, database.ProjectFactGraphNode{
+		nodes = append(nodes, store.ProjectFactGraphNode{
 			ID:         key,
 			FactKey:    key,
 			Category:   "missing",
@@ -192,7 +192,7 @@ func BuildProjectFactGraph(db Store, projectID string, view string, excludeDepre
 		})
 	}
 
-	graphEdges := make([]database.ProjectFactGraphEdge, 0, len(edges))
+	graphEdges := make([]store.ProjectFactGraphEdge, 0, len(edges))
 	for _, e := range edges {
 		if pathMode {
 			if _, ok := nodeKeys[e.SourceFactKey]; !ok {
@@ -209,7 +209,7 @@ func BuildProjectFactGraph(db Store, projectID string, view string, excludeDepre
 				continue
 			}
 		}
-		graphEdges = append(graphEdges, database.ProjectFactGraphEdge{
+		graphEdges = append(graphEdges, store.ProjectFactGraphEdge{
 			ID:         e.ID,
 			Source:     e.SourceFactKey,
 			Target:     e.TargetFactKey,
@@ -236,7 +236,7 @@ func BuildProjectFactGraph(db Store, projectID string, view string, excludeDepre
 			} else {
 				label += " " + vid
 			}
-			nodes = append(nodes, database.ProjectFactGraphNode{
+			nodes = append(nodes, store.ProjectFactGraphNode{
 				ID:         vulnNodeID,
 				FactKey:    vulnNodeID,
 				Category:   "vuln",
@@ -246,7 +246,7 @@ func BuildProjectFactGraph(db Store, projectID string, view string, excludeDepre
 				Pinned:     false,
 			})
 		}
-		graphEdges = append(graphEdges, database.ProjectFactGraphEdge{
+		graphEdges = append(graphEdges, store.ProjectFactGraphEdge{
 			ID:         "vuln-link:" + f.FactKey + ":" + vid,
 			Source:     f.FactKey,
 			Target:     vulnNodeID,
@@ -255,7 +255,7 @@ func BuildProjectFactGraph(db Store, projectID string, view string, excludeDepre
 		})
 	}
 
-	return &database.ProjectFactGraph{Nodes: nodes, Edges: graphEdges}, nil
+	return &store.ProjectFactGraph{Nodes: nodes, Edges: graphEdges}, nil
 }
 
 func min(a, b int) int {
@@ -294,8 +294,8 @@ func isDependencyGraphFact(category, factKey string) bool {
 	return strings.HasPrefix(key, "auth/") || strings.HasPrefix(key, "infra/") || strings.HasPrefix(key, "business/")
 }
 
-func filterDeprecatedEdges(edges []*database.ProjectFactEdge) []*database.ProjectFactEdge {
-	out := make([]*database.ProjectFactEdge, 0, len(edges))
+func filterDeprecatedEdges(edges []*store.ProjectFactEdge) []*store.ProjectFactEdge {
+	out := make([]*store.ProjectFactEdge, 0, len(edges))
 	for _, e := range edges {
 		if strings.EqualFold(strings.TrimSpace(e.Confidence), "deprecated") {
 			continue
@@ -307,7 +307,7 @@ func filterDeprecatedEdges(edges []*database.ProjectFactEdge) []*database.Projec
 
 // ParsedFactLinks 解析 links 参数（from → 当前 fact）。
 type ParsedFactLinks struct {
-	Incoming []database.ProjectFactEdgeFromInput
+	Incoming []store.ProjectFactEdgeFromInput
 }
 
 // ParseFactLinkInputs 从 MCP links 参数解析；空数组表示清空全部入边。
@@ -321,7 +321,7 @@ func ParseFactLinkInputs(raw interface{}) (*ParsedFactLinks, error) {
 	}
 	if len(items) == 0 {
 		return &ParsedFactLinks{
-			Incoming: []database.ProjectFactEdgeFromInput{},
+			Incoming: []store.ProjectFactEdgeFromInput{},
 		}, nil
 	}
 	parsed := &ParsedFactLinks{}
@@ -341,7 +341,7 @@ func ParseFactLinkInputs(raw interface{}) (*ParsedFactLinks, error) {
 			return nil, fmt.Errorf("links[%d] 须含 type", i)
 		}
 		conf, _ := m["confidence"].(string)
-		parsed.Incoming = append(parsed.Incoming, database.ProjectFactEdgeFromInput{
+		parsed.Incoming = append(parsed.Incoming, store.ProjectFactEdgeFromInput{
 			From: from, Type: edgeType, Confidence: strings.TrimSpace(conf),
 		})
 	}
@@ -349,22 +349,22 @@ func ParseFactLinkInputs(raw interface{}) (*ParsedFactLinks, error) {
 }
 
 // ParseFactLinksText 解析 UI 文本：`type: source_fact_key` 每行一条（from 语义）。
-func ParseFactLinksText(text string) ([]database.ProjectFactEdgeFromInput, error) {
+func ParseFactLinksText(text string) ([]store.ProjectFactEdgeFromInput, error) {
 	return ParseFactIncomingLinksText(text)
 }
 
 // FormatFactLinksText 将入边格式化为 UI 文本。
-func FormatFactLinksText(edges []*database.ProjectFactEdge) string {
+func FormatFactLinksText(edges []*store.ProjectFactEdge) string {
 	return FormatFactIncomingLinksText(edges)
 }
 
 // ParseFactIncomingLinksText 解析 UI 入边文本：`type: source_fact_key` 每行一条。
-func ParseFactIncomingLinksText(text string) ([]database.ProjectFactEdgeFromInput, error) {
+func ParseFactIncomingLinksText(text string) ([]store.ProjectFactEdgeFromInput, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil, nil
 	}
-	var out []database.ProjectFactEdgeFromInput
+	var out []store.ProjectFactEdgeFromInput
 	for i, line := range strings.Split(text, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -379,13 +379,13 @@ func ParseFactIncomingLinksText(text string) ([]database.ProjectFactEdgeFromInpu
 		if edgeType == "" || source == "" {
 			return nil, fmt.Errorf("第 %d 行 type 或 fact_key 为空", i+1)
 		}
-		out = append(out, database.ProjectFactEdgeFromInput{From: source, Type: edgeType})
+		out = append(out, store.ProjectFactEdgeFromInput{From: source, Type: edgeType})
 	}
 	return out, nil
 }
 
 // FormatFactIncomingLinksText 将入边格式化为 UI 文本。
-func FormatFactIncomingLinksText(edges []*database.ProjectFactEdge) string {
+func FormatFactIncomingLinksText(edges []*store.ProjectFactEdge) string {
 	if len(edges) == 0 {
 		return ""
 	}

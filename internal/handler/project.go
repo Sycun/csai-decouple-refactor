@@ -278,7 +278,7 @@ func factLinksFromRequest(links []factLinkRequest, linksText *string) (*project.
 			if edgeType == "" {
 				return nil, fmt.Errorf("links[%d] 须含 type", i)
 			}
-			parsed.Incoming = append(parsed.Incoming, database.ProjectFactEdgeFromInput{
+			parsed.Incoming = append(parsed.Incoming, store.ProjectFactEdgeFromInput{
 				From: from, Type: edgeType, Confidence: strings.TrimSpace(l.Confidence),
 			})
 		}
@@ -291,17 +291,17 @@ func factLinksFromRequest(links []factLinkRequest, linksText *string) (*project.
 		}
 		return &project.ParsedFactLinks{Incoming: in}, nil
 	}
-	return &project.ParsedFactLinks{Incoming: []database.ProjectFactEdgeFromInput{}}, nil
+	return &project.ParsedFactLinks{Incoming: []store.ProjectFactEdgeFromInput{}}, nil
 }
 
 type factWithLinksResponse struct {
-	*database.ProjectFact
-	OutgoingLinks []*database.ProjectFactEdge `json:"outgoing_links,omitempty"`
-	IncomingLinks []*database.ProjectFactEdge `json:"incoming_links,omitempty"`
-	LinkCounts    *project.LinkCounts         `json:"link_counts,omitempty"`
+	*store.ProjectFact
+	OutgoingLinks []*store.ProjectFactEdge `json:"outgoing_links,omitempty"`
+	IncomingLinks []*store.ProjectFactEdge `json:"incoming_links,omitempty"`
+	LinkCounts    *project.LinkCounts      `json:"link_counts,omitempty"`
 }
 
-func (h *ProjectHandler) applyFactLinksAfterUpsert(projectID string, fact *database.ProjectFact, links []factLinkRequest, linksText *string, explicitLinks, parseBody bool) error {
+func (h *ProjectHandler) applyFactLinksAfterUpsert(projectID string, fact *store.ProjectFact, links []factLinkRequest, linksText *string, explicitLinks, parseBody bool) error {
 	if explicitLinks {
 		parsed, err := factLinksFromRequest(links, linksText)
 		if err != nil {
@@ -319,7 +319,7 @@ func (h *ProjectHandler) applyFactLinksAfterUpsert(projectID string, fact *datab
 	return nil
 }
 
-func (h *ProjectHandler) factResponseWithLinks(projectID string, f *database.ProjectFact, includeLinks bool) interface{} {
+func (h *ProjectHandler) factResponseWithLinks(projectID string, f *store.ProjectFact, includeLinks bool) interface{} {
 	if !includeLinks || f == nil {
 		return f
 	}
@@ -347,7 +347,7 @@ func (h *ProjectHandler) ListFacts(c *gin.Context) {
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
 	offset, _ := strconv.Atoi(c.Query("offset"))
-	filter := database.ProjectFactListFilter{
+	filter := store.ProjectFactListFilter{
 		Category:               c.Query("category"),
 		Confidence:             c.Query("confidence"),
 		Search:                 c.Query("search"),
@@ -362,10 +362,10 @@ func (h *ProjectHandler) ListFacts(c *gin.Context) {
 		return
 	}
 	if list == nil {
-		list = []*database.ProjectFact{}
+		list = []*store.ProjectFact{}
 	}
 	if sparseOnly := c.Query("sparse_only"); sparseOnly == "1" || sparseOnly == "true" {
-		filtered := make([]*database.ProjectFact, 0, len(list))
+		filtered := make([]*store.ProjectFact, 0, len(list))
 		for _, f := range list {
 			if project.IsSparseFactBody(f.Category, f.FactKey, f.Body) {
 				filtered = append(filtered, f)
@@ -413,10 +413,10 @@ func (h *ProjectHandler) GetFactGraph(c *gin.Context) {
 		return
 	}
 	if graph.Nodes == nil {
-		graph.Nodes = []database.ProjectFactGraphNode{}
+		graph.Nodes = []store.ProjectFactGraphNode{}
 	}
 	if graph.Edges == nil {
-		graph.Edges = []database.ProjectFactGraphEdge{}
+		graph.Edges = []store.ProjectFactGraphEdge{}
 	}
 	c.JSON(http.StatusOK, graph)
 }
@@ -429,7 +429,7 @@ func (h *ProjectHandler) CreateFact(c *gin.Context) {
 		return
 	}
 	projectID := c.Param("id")
-	f := &database.ProjectFact{
+	f := &store.ProjectFact{
 		ProjectID:              projectID,
 		FactKey:                req.FactKey,
 		Category:               req.Category,
@@ -589,7 +589,7 @@ func (h *ProjectHandler) ListFactEdges(c *gin.Context) {
 		return
 	}
 	if edges == nil {
-		edges = []*database.ProjectFactEdge{}
+		edges = []*store.ProjectFactEdge{}
 	}
 	c.JSON(http.StatusOK, edges)
 }
@@ -602,7 +602,7 @@ func (h *ProjectHandler) CreateFactEdge(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	edge, err := h.db.AddProjectFactEdge(projectID, database.ProjectFactEdgeInput{
+	edge, err := h.db.AddProjectFactEdge(projectID, store.ProjectFactEdgeInput{
 		To:         req.TargetFactKey,
 		Type:       req.EdgeType,
 		Confidence: req.Confidence,

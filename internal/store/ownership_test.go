@@ -330,6 +330,62 @@ func TestProjectFactsHasOneWriter(t *testing.T) {
 	}
 }
 
+// factVocabulary is the project blackboard's row and input shapes, plus the two validators that
+// decide what a legal key or edge type is. They are declared once, here, and every consumer names
+// this package - which is the point of the check.
+var factVocabulary = []string{
+	"ProjectFact", "ProjectFactListFilter", "ProjectFactSparseRow", "factKeyPattern", "ValidateFactKey",
+	"ValidProjectFactEdgeTypes", "ProjectFactEdge", "ProjectFactEdgeInput", "ProjectFactEdgeFromInput",
+	"ValidateProjectFactEdgeType", "ProjectFactGraphNode", "ProjectFactGraphEdge", "ProjectFactGraph",
+}
+
+// TestFactVocabularyHasOneHome keeps a second row shape from appearing.
+//
+// A type declared twice is two contracts: the data layer would answer with its own struct while the
+// HTTP layer serialises this one, and the drift only shows up as a JSON field that quietly disappears.
+// The name is matched at its declaration (`type`/`var`/`func` at column 0) rather than by import,
+// because a package may mention these names in prose and the store must not be the only place that
+// does. Every name has to be found, so a scan that finds nothing cannot pass.
+func TestFactVocabularyHasOneHome(t *testing.T) {
+	root := moduleRoot(t)
+	const home = "internal/store/facts.go"
+
+	homes := map[string][]string{}
+	for _, dir := range []string{"internal", "cmd"} {
+		for path := range productionGoFiles(t, filepath.Join(root, dir)) {
+			rel := mustRel(t, root, path)
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", rel, err)
+			}
+			for _, name := range factVocabulary {
+				declared := regexp.MustCompile(`(?m)^(?:type|var|func) ` + name + `\b`)
+				if declared.Match(data) {
+					homes[name] = append(homes[name], rel)
+				}
+			}
+		}
+	}
+
+	var offenders []string
+	for _, name := range factVocabulary {
+		at := homes[name]
+		if len(at) == 0 {
+			offenders = append(offenders, name+": declared nowhere")
+			continue
+		}
+		for _, file := range at {
+			if file != home {
+				offenders = append(offenders, name+": also declared in "+file)
+			}
+		}
+	}
+	if len(offenders) > 0 {
+		sort.Strings(offenders)
+		t.Fatalf("the project blackboard's vocabulary is not declared in exactly one place (%s): %v", home, offenders)
+	}
+}
+
 type writeHit struct {
 	table     string
 	statement string

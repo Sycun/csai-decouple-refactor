@@ -8,13 +8,14 @@ import (
 
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
 
 func TestFormatIncomingLinksHint(t *testing.T) {
 	t.Parallel()
-	hint := FormatIncomingLinksHint([]*database.ProjectFactEdge{
+	hint := FormatIncomingLinksHint([]*store.ProjectFactEdge{
 		{EdgeType: "discovered_on", SourceFactKey: "finding/x", Confidence: "tentative"},
 	})
 	if !strings.Contains(hint, "入边:") {
@@ -30,9 +31,9 @@ func TestFormatIncomingLinksHint(t *testing.T) {
 
 func TestFormatIncomingLinksHint_allEdges(t *testing.T) {
 	t.Parallel()
-	edges := make([]*database.ProjectFactEdge, 0, 5)
+	edges := make([]*store.ProjectFactEdge, 0, 5)
 	for i := 1; i <= 5; i++ {
-		edges = append(edges, &database.ProjectFactEdge{
+		edges = append(edges, &store.ProjectFactEdge{
 			EdgeType:      "discovered_on",
 			SourceFactKey: fmt.Sprintf("finding/f%d", i),
 			Confidence:    "tentative",
@@ -51,7 +52,7 @@ func TestFormatIncomingLinksHint_allEdges(t *testing.T) {
 
 func TestFormatFactIndexLinksHint_incomingOnly(t *testing.T) {
 	t.Parallel()
-	in := []*database.ProjectFactEdge{
+	in := []*store.ProjectFactEdge{
 		{EdgeType: "discovered_on", SourceFactKey: "target/dev", Confidence: "tentative"},
 		{EdgeType: "exploits", SourceFactKey: "exploit/rce", Confidence: "confirmed"},
 	}
@@ -72,7 +73,7 @@ func TestFormatFactIndexLinksHint_incomingOnly(t *testing.T) {
 
 func TestFormatFactIndexLinksHint_includesAuxiliaryEdgeTypes(t *testing.T) {
 	t.Parallel()
-	in := []*database.ProjectFactEdge{{EdgeType: "supports", SourceFactKey: "note/log"}}
+	in := []*store.ProjectFactEdge{{EdgeType: "supports", SourceFactKey: "note/log"}}
 	hint := FormatFactIndexLinksHint("finding/x", in)
 	if !strings.Contains(hint, "supports←note/log") {
 		t.Fatalf("supports edge should be included: %q", hint)
@@ -81,7 +82,7 @@ func TestFormatFactIndexLinksHint_includesAuxiliaryEdgeTypes(t *testing.T) {
 
 func TestBuildFactPathOverviewSection(t *testing.T) {
 	t.Parallel()
-	edges := []*database.ProjectFactEdge{
+	edges := []*store.ProjectFactEdge{
 		{EdgeType: "discovered_on", SourceFactKey: "target/dev", TargetFactKey: "finding/sqli", Confidence: "tentative"},
 		{EdgeType: "exploits", SourceFactKey: "exploit/rce", TargetFactKey: "finding/sqli", Confidence: "confirmed"},
 		{EdgeType: "supports", SourceFactKey: "note/log", TargetFactKey: "finding/sqli"},
@@ -117,7 +118,7 @@ func TestBuildFactIndexBlock_withLinksAndPathOverview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.UpsertProjectFact(&database.ProjectFact{
+	_, err = db.UpsertProjectFact(&store.ProjectFact{
 		ProjectID:  proj.ID,
 		FactKey:    "target/dev",
 		Category:   "target",
@@ -127,7 +128,7 @@ func TestBuildFactIndexBlock_withLinksAndPathOverview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.UpsertProjectFact(&database.ProjectFact{
+	_, err = db.UpsertProjectFact(&store.ProjectFact{
 		ProjectID:  proj.ID,
 		FactKey:    "finding/sqli",
 		Category:   "finding",
@@ -137,7 +138,7 @@ func TestBuildFactIndexBlock_withLinksAndPathOverview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.AddProjectFactEdge(proj.ID, database.ProjectFactEdgeInput{
+	_, err = db.AddProjectFactEdge(proj.ID, store.ProjectFactEdgeInput{
 		To:   "finding/sqli",
 		Type: "discovered_on",
 	}, "target/dev", "")

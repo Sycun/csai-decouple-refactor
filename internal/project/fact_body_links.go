@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 )
 
 var (
@@ -16,19 +16,19 @@ var (
 )
 
 // ParseLinksFromBody 从 body「关联」段落解析 from 语义的关系边（无显式 links 时的兜底）。
-func ParseLinksFromBody(body string) []database.ProjectFactEdgeFromInput {
+func ParseLinksFromBody(body string) []store.ProjectFactEdgeFromInput {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return nil
 	}
 	seen := map[string]struct{}{}
-	var out []database.ProjectFactEdgeFromInput
+	var out []store.ProjectFactEdgeFromInput
 	add := func(key, edgeType string) {
 		key = strings.TrimSpace(key)
 		if key == "" {
 			return
 		}
-		if err := database.ValidateFactKey(key); err != nil {
+		if err := store.ValidateFactKey(key); err != nil {
 			return
 		}
 		sig := edgeType + "\x00" + key
@@ -36,7 +36,7 @@ func ParseLinksFromBody(body string) []database.ProjectFactEdgeFromInput {
 			return
 		}
 		seen[sig] = struct{}{}
-		out = append(out, database.ProjectFactEdgeFromInput{From: key, Type: edgeType})
+		out = append(out, store.ProjectFactEdgeFromInput{From: key, Type: edgeType})
 	}
 	for _, m := range bodyDepFactLine.FindAllStringSubmatch(body, -1) {
 		if len(m) > 1 {
@@ -61,7 +61,7 @@ func ParseLinksFromBody(body string) []database.ProjectFactEdgeFromInput {
 		}
 		edgeType = strings.TrimSpace(edgeType)
 		source = strings.TrimSpace(source)
-		if err := database.ValidateProjectFactEdgeType(edgeType); err != nil {
+		if err := store.ValidateProjectFactEdgeType(edgeType); err != nil {
 			continue
 		}
 		add(source, edgeType)
@@ -106,7 +106,7 @@ func extractBodySyncLinksBlock(body string) string {
 }
 
 // SyncBodyLinksSection 将入边镜像写入 body 的「关联」段（人读用；结构化以 links 为准）。
-func SyncBodyLinksSection(body string, edges []*database.ProjectFactEdge) string {
+func SyncBodyLinksSection(body string, edges []*store.ProjectFactEdge) string {
 	body = strings.TrimSpace(body)
 	block := formatBodySyncLinksBlock(edges)
 	if block == "" {
@@ -171,7 +171,7 @@ func SyncBodyLinksSection(body string, edges []*database.ProjectFactEdge) string
 	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
-func formatBodySyncLinksBlock(edges []*database.ProjectFactEdge) string {
+func formatBodySyncLinksBlock(edges []*store.ProjectFactEdge) string {
 	if len(edges) == 0 {
 		return fmt.Sprintf("- %s:\n  （暂无）", bodySyncLinksHead)
 	}
@@ -186,7 +186,7 @@ func formatBodySyncLinksBlock(edges []*database.ProjectFactEdge) string {
 }
 
 // ResolveFactLinksForUpsert 合并显式 links、links_text 与 body 解析结果。
-func ResolveFactLinksForUpsert(explicit []database.ProjectFactEdgeFromInput, linksText *string, body string, explicitSet bool) ([]database.ProjectFactEdgeFromInput, bool, error) {
+func ResolveFactLinksForUpsert(explicit []store.ProjectFactEdgeFromInput, linksText *string, body string, explicitSet bool) ([]store.ProjectFactEdgeFromInput, bool, error) {
 	if explicitSet {
 		if len(explicit) > 0 {
 			return explicit, true, nil
@@ -197,11 +197,11 @@ func ResolveFactLinksForUpsert(explicit []database.ProjectFactEdgeFromInput, lin
 				return nil, true, err
 			}
 			if parsed == nil {
-				return []database.ProjectFactEdgeFromInput{}, true, nil
+				return []store.ProjectFactEdgeFromInput{}, true, nil
 			}
 			return parsed, true, nil
 		}
-		return []database.ProjectFactEdgeFromInput{}, true, nil
+		return []store.ProjectFactEdgeFromInput{}, true, nil
 	}
 	if parsed := ParseLinksFromBody(body); len(parsed) > 0 {
 		return parsed, true, nil
@@ -210,19 +210,19 @@ func ResolveFactLinksForUpsert(explicit []database.ProjectFactEdgeFromInput, lin
 }
 
 // MergeLinkFromInputsUnique 合并多组 from 入边输入并去重。
-func MergeLinkFromInputsUnique(groups ...[]database.ProjectFactEdgeFromInput) []database.ProjectFactEdgeFromInput {
+func MergeLinkFromInputsUnique(groups ...[]store.ProjectFactEdgeFromInput) []store.ProjectFactEdgeFromInput {
 	seen := map[string]struct{}{}
-	var out []database.ProjectFactEdgeFromInput
+	var out []store.ProjectFactEdgeFromInput
 	for _, g := range groups {
 		for _, in := range g {
 			sig := in.Type + "\x00" + in.From
 			if _, ok := seen[sig]; ok {
 				continue
 			}
-			if err := database.ValidateProjectFactEdgeType(in.Type); err != nil {
+			if err := store.ValidateProjectFactEdgeType(in.Type); err != nil {
 				continue
 			}
-			if err := database.ValidateFactKey(in.From); err != nil {
+			if err := store.ValidateFactKey(in.From); err != nil {
 				continue
 			}
 			seen[sig] = struct{}{}
@@ -233,19 +233,19 @@ func MergeLinkFromInputsUnique(groups ...[]database.ProjectFactEdgeFromInput) []
 }
 
 // MergeLinkInputsUnique 合并多组 link 输入并去重（内部出边写入用）。
-func MergeLinkInputsUnique(groups ...[]database.ProjectFactEdgeInput) []database.ProjectFactEdgeInput {
+func MergeLinkInputsUnique(groups ...[]store.ProjectFactEdgeInput) []store.ProjectFactEdgeInput {
 	seen := map[string]struct{}{}
-	var out []database.ProjectFactEdgeInput
+	var out []store.ProjectFactEdgeInput
 	for _, g := range groups {
 		for _, in := range g {
 			sig := in.Type + "\x00" + in.To
 			if _, ok := seen[sig]; ok {
 				continue
 			}
-			if err := database.ValidateProjectFactEdgeType(in.Type); err != nil {
+			if err := store.ValidateProjectFactEdgeType(in.Type); err != nil {
 				continue
 			}
-			if err := database.ValidateFactKey(in.To); err != nil {
+			if err := store.ValidateFactKey(in.To); err != nil {
 				continue
 			}
 			seen[sig] = struct{}{}

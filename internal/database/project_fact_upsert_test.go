@@ -1,6 +1,7 @@
 package database
 
 import (
+	"cyberstrike-ai/internal/store"
 	"path/filepath"
 	"testing"
 
@@ -21,7 +22,7 @@ func TestUpsertProjectFact_preservesBodyOnEmptyUpdate(t *testing.T) {
 	}
 
 	const body = "## 攻击链\n1. step\n```http\nGET / HTTP/1.1\n```\n"
-	_, err = db.UpsertProjectFact(&ProjectFact{
+	_, err = db.UpsertProjectFact(&store.ProjectFact{
 		ProjectID: proj.ID,
 		FactKey:   "finding/sqli-login",
 		Category:  "finding",
@@ -32,7 +33,7 @@ func TestUpsertProjectFact_preservesBodyOnEmptyUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	updated, err := db.UpsertProjectFact(&ProjectFact{
+	updated, err := db.UpsertProjectFact(&store.ProjectFact{
 		ProjectID: proj.ID,
 		FactKey:   "finding/sqli-login",
 		Summary:   "SQLi on /login (confirmed)",
@@ -70,7 +71,7 @@ func TestUpsertProjectFact_replacesBodyWhenProvided(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = db.UpsertProjectFact(&ProjectFact{
+	_, err = db.UpsertProjectFact(&store.ProjectFact{
 		ProjectID: proj.ID,
 		FactKey:   "target/primary",
 		Summary:   "v1",
@@ -81,7 +82,7 @@ func TestUpsertProjectFact_replacesBodyWhenProvided(t *testing.T) {
 	}
 
 	const newBody = "new body with evidence"
-	updated, err := db.UpsertProjectFact(&ProjectFact{
+	updated, err := db.UpsertProjectFact(&store.ProjectFact{
 		ProjectID: proj.ID,
 		FactKey:   "target/primary",
 		Summary:   "v2",
@@ -108,7 +109,7 @@ func TestRestoreProjectFact(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := "target/restore-me"
-	_, err = db.UpsertProjectFact(&ProjectFact{
+	_, err = db.UpsertProjectFact(&store.ProjectFact{
 		ProjectID:  proj.ID,
 		FactKey:    key,
 		Summary:    "s",

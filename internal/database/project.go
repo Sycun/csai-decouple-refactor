@@ -2,32 +2,15 @@ package database
 
 import (
 	"cyberstrike-ai/internal/sqltime"
+	"cyberstrike-ai/internal/store"
 	"database/sql"
 
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
-
-var factKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`)
-
-// ValidateFactKey 校验事实 key（项目内唯一标识）。
-func ValidateFactKey(key string) error {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return fmt.Errorf("fact_key 不能为空")
-	}
-	if len(key) > 128 {
-		return fmt.Errorf("fact_key 过长（最多 128 字符）")
-	}
-	if !factKeyPattern.MatchString(key) {
-		return fmt.Errorf("fact_key 格式无效，仅允许字母、数字及 . _ / -，且须以字母或数字开头（支持驼峰命名）")
-	}
-	return nil
-}
 
 // Project 渗透测试项目（跨对话共享黑板）。
 type Project struct {
@@ -39,32 +22,6 @@ type Project struct {
 	Pinned      bool      `json:"pinned"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-// ProjectFact 项目事实（黑板条目）。
-type ProjectFact struct {
-	ID                     string    `json:"id"`
-	ProjectID              string    `json:"project_id"`
-	FactKey                string    `json:"fact_key"`
-	Category               string    `json:"category"`
-	Summary                string    `json:"summary"`
-	Body                   string    `json:"body"`
-	Confidence             string    `json:"confidence"` // confirmed | tentative | deprecated
-	SourceConversationID   string    `json:"source_conversation_id,omitempty"`
-	SourceMessageID        string    `json:"source_message_id,omitempty"`
-	Pinned                 bool      `json:"pinned"`
-	RelatedVulnerabilityID string    `json:"related_vulnerability_id,omitempty"`
-	CreatedAt              time.Time `json:"created_at"`
-	UpdatedAt              time.Time `json:"updated_at"`
-}
-
-// ProjectFactListFilter 事实列表筛选。
-type ProjectFactListFilter struct {
-	Category               string
-	Confidence             string
-	Search                 string
-	RelatedVulnerabilityID string
-	ExcludeDeprecated      bool // 为 true 时排除 confidence=deprecated
 }
 
 // CreateProject 创建项目。
@@ -359,7 +316,7 @@ func (db *DB) SetConversationProjectID(conversationID, projectID string) error {
 }
 
 // ListProjectFactsForIndex 列出用于黑板索引注入的事实（不含 deprecated，除非 includeDeprecated）。
-func (db *DB) ListProjectFactsForIndex(projectID string, includeDeprecated bool) ([]*ProjectFact, error) {
+func (db *DB) ListProjectFactsForIndex(projectID string, includeDeprecated bool) ([]*store.ProjectFact, error) {
 	query := `SELECT id, project_id, fact_key, category, summary, COALESCE(body,''), confidence,
 		COALESCE(source_conversation_id,''), COALESCE(source_message_id,''), pinned,
 		COALESCE(related_vulnerability_id,''), created_at, updated_at
@@ -378,7 +335,7 @@ func (db *DB) ListProjectFactsForIndex(projectID string, includeDeprecated bool)
 }
 
 // ListProjectFacts 分页列出项目事实。
-func (db *DB) ListProjectFacts(projectID string, filter ProjectFactListFilter, limit, offset int) ([]*ProjectFact, error) {
+func (db *DB) ListProjectFacts(projectID string, filter store.ProjectFactListFilter, limit, offset int) ([]*store.ProjectFact, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -419,7 +376,7 @@ func (db *DB) ListProjectFacts(projectID string, filter ProjectFactListFilter, l
 }
 
 // GetProjectFactByKey 按 key 获取事实。
-func (db *DB) GetProjectFactByKey(projectID, factKey string) (*ProjectFact, error) {
+func (db *DB) GetProjectFactByKey(projectID, factKey string) (*store.ProjectFact, error) {
 	row := db.QueryRow(
 		`SELECT id, project_id, fact_key, category, summary, COALESCE(body,''), confidence,
 			COALESCE(source_conversation_id,''), COALESCE(source_message_id,''), pinned,
@@ -431,7 +388,7 @@ func (db *DB) GetProjectFactByKey(projectID, factKey string) (*ProjectFact, erro
 }
 
 // GetProjectFact 按 ID 获取事实。
-func (db *DB) GetProjectFact(id string) (*ProjectFact, error) {
+func (db *DB) GetProjectFact(id string) (*store.ProjectFact, error) {
 	row := db.QueryRow(
 		`SELECT id, project_id, fact_key, category, summary, COALESCE(body,''), confidence,
 			COALESCE(source_conversation_id,''), COALESCE(source_message_id,''), pinned,
@@ -450,8 +407,8 @@ func mergeFactBodyOnUpdate(incoming, existing string) string {
 }
 
 // UpsertProjectFact 创建或更新事实（按 project_id + fact_key）。
-func (db *DB) UpsertProjectFact(f *ProjectFact) (*ProjectFact, error) {
-	if err := ValidateFactKey(f.FactKey); err != nil {
+func (db *DB) UpsertProjectFact(f *store.ProjectFact) (*store.ProjectFact, error) {
+	if err := store.ValidateFactKey(f.FactKey); err != nil {
 		return nil, err
 	}
 	if strings.TrimSpace(f.Category) == "" {
@@ -566,8 +523,8 @@ func (db *DB) DeleteProjectFact(id string) error {
 	return err
 }
 
-func scanProjectFacts(rows *sql.Rows) ([]*ProjectFact, error) {
-	var out []*ProjectFact
+func scanProjectFacts(rows *sql.Rows) ([]*store.ProjectFact, error) {
+	var out []*store.ProjectFact
 	for rows.Next() {
 		f, err := scanProjectFactFromRows(rows)
 		if err != nil {
@@ -578,8 +535,8 @@ func scanProjectFacts(rows *sql.Rows) ([]*ProjectFact, error) {
 	return out, rows.Err()
 }
 
-func scanProjectFactRow(row *sql.Row) (*ProjectFact, error) {
-	var f ProjectFact
+func scanProjectFactRow(row *sql.Row) (*store.ProjectFact, error) {
+	var f store.ProjectFact
 	var pinned int
 	var createdAt, updatedAt string
 	err := row.Scan(
@@ -599,8 +556,8 @@ func scanProjectFactRow(row *sql.Row) (*ProjectFact, error) {
 	return &f, nil
 }
 
-func scanProjectFactFromRows(rows *sql.Rows) (*ProjectFact, error) {
-	var f ProjectFact
+func scanProjectFactFromRows(rows *sql.Rows) (*store.ProjectFact, error) {
+	var f store.ProjectFact
 	var pinned int
 	var createdAt, updatedAt string
 	err := rows.Scan(

@@ -3,6 +3,7 @@ package handler
 import (
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -51,9 +52,9 @@ func newFactContractRouter(h *ProjectHandler, session *security.Session) *gin.En
 	return router
 }
 
-func seedFact(t *testing.T, db *database.DB, projectID, key, category, summary, body, confidence string, pinned bool) *database.ProjectFact {
+func seedFact(t *testing.T, db *database.DB, projectID, key, category, summary, body, confidence string, pinned bool) *store.ProjectFact {
 	t.Helper()
-	fact, err := db.UpsertProjectFact(&database.ProjectFact{
+	fact, err := db.UpsertProjectFact(&store.ProjectFact{
 		ProjectID: projectID, FactKey: key, Category: category, Summary: summary, Body: body,
 		Confidence: confidence, Pinned: pinned,
 	})
@@ -185,7 +186,7 @@ func TestFactContractDetailByFactKeyAndLinkViews(t *testing.T) {
 
 	seedFact(t, db, project.ID, "note.source", "note", "source", "", "confirmed", false)
 	target := seedFact(t, db, project.ID, "note.target", "note", "target", "", "confirmed", false)
-	if _, err := db.AddProjectFactEdge(project.ID, database.ProjectFactEdgeInput{To: "note.target", Type: "leads_to", Confidence: "confirmed"}, "note.source", ""); err != nil {
+	if _, err := db.AddProjectFactEdge(project.ID, store.ProjectFactEdgeInput{To: "note.target", Type: "leads_to", Confidence: "confirmed"}, "note.source", ""); err != nil {
 		t.Fatalf("add edge: %v", err)
 	}
 
@@ -367,7 +368,7 @@ func TestFactContractDeleteDeprecateRestoreAnswers(t *testing.T) {
 
 	live := seedFact(t, db, project.ID, "note.live", "note", "live", "", "confirmed", false)
 	seedFact(t, db, project.ID, "note.linked", "note", "linked", "", "tentative", false)
-	if _, err := db.AddProjectFactEdge(project.ID, database.ProjectFactEdgeInput{To: "note.linked", Type: "depends_on"}, "note.live", ""); err != nil {
+	if _, err := db.AddProjectFactEdge(project.ID, store.ProjectFactEdgeInput{To: "note.linked", Type: "depends_on"}, "note.live", ""); err != nil {
 		t.Fatalf("add edge: %v", err)
 	}
 
