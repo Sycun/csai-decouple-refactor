@@ -65,6 +65,13 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 			mustNotChangeSQL: "workflow_",
 		},
 		{
+			storeConstructor: "NewAssets",
+			tablePrefix:      "assets",
+			anchorCall:       "createProjectsTable",
+			anchorReason:     "assets.project_id has a foreign key onto projects",
+			mustNotChangeSQL: "assets",
+		},
+		{
 			storeConstructor: "NewWebshell",
 			tablePrefix:      "webshell_connection",
 			anchorCall:       "createBatchTasksTable",

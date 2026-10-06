@@ -60,17 +60,17 @@ type AssetStore interface {
 	BatchTaskBelongsToQueue(taskID, queueID string) bool
 	DeleteAsset(id string, access store.Access) error
 	DeleteAssets(ids []string, access store.Access) (int, error)
-	GetAsset(id string, access store.Access) (*Asset, error)
+	GetAsset(id string, access store.Access) (*store.Asset, error)
 	GetAssetStats(access store.Access, requestedDays ...int) (map[string]interface{}, error)
 	GetProject(id string) (*Project, error)
-	ListAssets(limit, offset int, filter AssetListFilter, access store.Access) ([]*Asset, int, error)
-	ListAssetsForOperation(limit int, filter AssetListFilter, access store.Access) ([]*Asset, int, error)
+	ListAssets(limit, offset int, filter store.AssetListFilter, access store.Access) ([]*store.Asset, int, error)
+	ListAssetsForOperation(limit int, filter store.AssetListFilter, access store.Access) ([]*store.Asset, int, error)
 	MarkAssetScanned(id, conversationID, queueID, taskID string, access store.Access) error
-	MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, deleteAccess store.Access) (int, error)
-	UpdateAsset(id string, a *Asset, access store.Access) error
-	UpdateAssetsBulk(ids []string, patch AssetBulkPatch, access store.Access) (int, error)
+	MergeAssets(primary *store.Asset, duplicateIDs []string, writeAccess, deleteAccess store.Access) (int, error)
+	UpdateAsset(id string, a *store.Asset, access store.Access) error
+	UpdateAssetsBulk(ids []string, patch store.AssetBulkPatch, access store.Access) (int, error)
 	UpdateAssetsProject(ids []string, projectID string, access store.Access) (int, error)
-	UpsertAssets(assets []*Asset, ownerUserID string, allowGlobal ...bool) (AssetImportResult, error)
+	UpsertAssets(assets []*store.Asset, ownerUserID string, allowGlobal ...bool) (store.AssetImportResult, error)
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 

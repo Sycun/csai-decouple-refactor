@@ -37,7 +37,7 @@ func registerAssetTools(server *mcp.Server, db *database.DB, logger *zap.Logger)
 			return textResult("错误: "+err.Error(), true), nil
 		}
 		access, owner, global := assetAccessFromToolContext(ctx, "asset:write")
-		result, err := db.UpsertAssets([]*database.Asset{asset}, owner, global)
+		result, err := db.UpsertAssets([]*store.Asset{asset}, owner, global)
 		if err != nil {
 			logger.Error("Agent 保存资产失败", zap.Error(err))
 			return textResult("错误: "+err.Error(), true), nil
@@ -233,8 +233,8 @@ func assetQuerySchema() map[string]interface{} {
 	return map[string]interface{}{"type": "object", "properties": properties}
 }
 
-func assetFromCreateArgs(args map[string]interface{}) (*database.Asset, error) {
-	asset := &database.Asset{}
+func assetFromCreateArgs(args map[string]interface{}) (*store.Asset, error) {
+	asset := &store.Asset{}
 	if err := applyAssetPatch(asset, args); err != nil {
 		return nil, err
 	}
@@ -244,7 +244,7 @@ func assetFromCreateArgs(args map[string]interface{}) (*database.Asset, error) {
 	return asset, nil
 }
 
-func applyAssetPatch(asset *database.Asset, args map[string]interface{}) error {
+func applyAssetPatch(asset *store.Asset, args map[string]interface{}) error {
 	setString := func(key string, dst *string) {
 		if _, ok := args[key]; ok {
 			*dst = strings.TrimSpace(strArg(args, key))
@@ -285,8 +285,8 @@ func applyAssetPatch(asset *database.Asset, args map[string]interface{}) error {
 	return nil
 }
 
-func assetFilterFromToolArgs(args map[string]interface{}) (database.AssetListFilter, int, int, error) {
-	filter := database.AssetListFilter{
+func assetFilterFromToolArgs(args map[string]interface{}) (store.AssetListFilter, int, int, error) {
+	filter := store.AssetListFilter{
 		Search: strings.TrimSpace(strArg(args, "q")), ProjectID: strings.TrimSpace(strArg(args, "project_id")), Status: strings.ToLower(strings.TrimSpace(strArg(args, "status"))),
 		Protocol: strings.ToLower(strings.TrimSpace(strArg(args, "protocol"))), Source: strings.TrimSpace(strArg(args, "source")), Tag: strings.TrimSpace(strArg(args, "tag")),
 		Host: strings.TrimSpace(strArg(args, "host")), IP: strings.TrimSpace(strArg(args, "ip")), Domain: strings.TrimSpace(strArg(args, "domain")),
@@ -449,7 +449,7 @@ func agentAssetProjectScope(db *database.DB, ctx context.Context) (projectID str
 	return projectID, projectID != "", nil
 }
 
-func formatAssetListItem(asset *database.Asset) string {
+func formatAssetListItem(asset *store.Asset) string {
 	target := asset.Domain
 	if target == "" {
 		target = asset.IP
@@ -469,7 +469,7 @@ func formatAssetListItem(asset *database.Asset) string {
 
 // assetToolDetail keeps even a single unusually large imported record from
 // consuming the model context. The database and HTTP API retain full values.
-func assetToolDetail(asset *database.Asset) map[string]interface{} {
+func assetToolDetail(asset *store.Asset) map[string]interface{} {
 	if asset == nil {
 		return nil
 	}

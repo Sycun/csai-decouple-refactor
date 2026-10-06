@@ -65,7 +65,11 @@ import (
 // delegations behind. 259 -> 241: those delegations are gone too - the ledger half of the old
 // ProjectFactStore became its own interface, answered by *store.Facts, and every consumer that needed
 // it now holds that store as a field. Nothing on the connection wrapper can change these tables.
-const dbMethodCeiling = 232
+// 232 -> 231: the assets domain moved whole - the upsert, the six list/read/update/delete/merge
+// writes, the scan bookkeeping, the risk-cache refresh and the project unlink, with the table's DDL,
+// its thirteen late columns and its seven indexes. Seventeen one-line delegations hold the call
+// sites, so the drop is the one private migration that has no reason to be on a connection at all.
+const dbMethodCeiling = 231
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

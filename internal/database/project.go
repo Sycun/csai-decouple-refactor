@@ -227,7 +227,7 @@ func (db *DB) DeleteProject(id string) error {
 	if err := NewFindings(db).UnlinkProject(id); err != nil {
 		return fmt.Errorf("解除漏洞项目关联失败: %w", err)
 	}
-	if _, err := db.Exec(`UPDATE assets SET project_id = NULL WHERE project_id = ?`, id); err != nil {
+	if err := NewAssets(db).UnlinkProject(id); err != nil {
 		return fmt.Errorf("解除资产项目关联失败: %w", err)
 	}
 	if err := NewWebshell(db).UnlinkProject(id); err != nil {

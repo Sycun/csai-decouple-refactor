@@ -70,7 +70,7 @@ func TestAssetToolsCRUDQueryAndPageLimit(t *testing.T) {
 	if err != nil || result == nil || result.IsError {
 		t.Fatalf("create asset result=%#v err=%v", result, err)
 	}
-	assets, total, err := db.ListAssets(20, 0, database.AssetListFilter{}, store.Access{UserID: user.ID, Scope: database.RBACScopeAssigned})
+	assets, total, err := db.ListAssets(20, 0, store.AssetListFilter{}, store.Access{UserID: user.ID, Scope: database.RBACScopeAssigned})
 	if err != nil || total != 1 || len(assets) != 1 {
 		t.Fatalf("saved assets total=%d len=%d err=%v", total, len(assets), err)
 	}
@@ -151,7 +151,7 @@ func TestAssetReadToolsRespectConversationProjectScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assets := []*database.Asset{
+	assets := []*store.Asset{
 		{ProjectID: projectA.ID, IP: "192.0.2.10", Protocol: "https"},
 		{ProjectID: projectB.ID, IP: "192.0.2.20", Protocol: "https"},
 		{IP: "192.0.2.30", Protocol: "https"},

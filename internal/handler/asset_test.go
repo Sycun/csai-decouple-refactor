@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -30,16 +31,16 @@ func TestAssetListPaginatesWithinProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	assets := make([]*database.Asset, 0, 8)
+	assets := make([]*store.Asset, 0, 8)
 	for i := 1; i <= 7; i++ {
-		assets = append(assets, &database.Asset{
+		assets = append(assets, &store.Asset{
 			ProjectID: project.ID,
 			IP:        fmt.Sprintf("192.0.2.%d", i),
 			Port:      80,
 			Protocol:  "http",
 		})
 	}
-	assets = append(assets, &database.Asset{
+	assets = append(assets, &store.Asset{
 		ProjectID: otherProject.ID,
 		IP:        "198.51.100.1",
 		Port:      443,
@@ -59,11 +60,11 @@ func TestAssetListPaginatesWithinProject(t *testing.T) {
 		t.Fatalf("unexpected status %d: %s", response.Code, response.Body.String())
 	}
 	var payload struct {
-		Assets     []*database.Asset `json:"assets"`
-		Total      int               `json:"total"`
-		Page       int               `json:"page"`
-		PageSize   int               `json:"page_size"`
-		TotalPages int               `json:"total_pages"`
+		Assets     []*store.Asset `json:"assets"`
+		Total      int            `json:"total"`
+		Page       int            `json:"page"`
+		PageSize   int            `json:"page_size"`
+		TotalPages int            `json:"total_pages"`
 	}
 	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)

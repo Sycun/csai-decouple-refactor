@@ -18,8 +18,8 @@ func TestAssetURLNormalizationAndValidation(t *testing.T) {
 	}
 	defer db.Close()
 
-	asset := &Asset{Host: "https://例子.测试/path", Tags: []string{" prod ", "prod"}}
-	result, err := db.UpsertAssets([]*Asset{asset}, "")
+	asset := &store.Asset{Host: "https://例子.测试/path", Tags: []string{" prod ", "prod"}}
+	result, err := db.UpsertAssets([]*store.Asset{asset}, "")
 	if err != nil || result.Created != 1 {
 		t.Fatalf("URL asset was not created: result=%#v err=%v", result, err)
 	}
@@ -30,7 +30,7 @@ func TestAssetURLNormalizationAndValidation(t *testing.T) {
 		t.Fatalf("tags were not normalized: %#v", asset.Tags)
 	}
 
-	invalid := []*Asset{
+	invalid := []*store.Asset{
 		{IP: "999.1.1.1", Status: "active"},
 		{Domain: "bad_domain.example", Status: "active"},
 		{Domain: "example.com", Port: 70000, Status: "active"},
@@ -38,13 +38,13 @@ func TestAssetURLNormalizationAndValidation(t *testing.T) {
 		{Domain: "example.com", Status: "deleted"},
 	}
 	for _, candidate := range invalid {
-		if _, err := db.UpsertAssets([]*Asset{candidate}, ""); err == nil {
+		if _, err := db.UpsertAssets([]*store.Asset{candidate}, ""); err == nil {
 			t.Fatalf("invalid asset unexpectedly accepted: %#v", candidate)
 		}
 	}
 
 	for _, host := range []string{"123", "not a formal target", "https://", "https://user:password@example.com"} {
-		result, err := db.UpsertAssets([]*Asset{{Host: host}}, "")
+		result, err := db.UpsertAssets([]*store.Asset{{Host: host}}, "")
 		if err != nil || result.Created != 1 {
 			t.Fatalf("opaque asset address %q was not accepted: result=%#v err=%v", host, result, err)
 		}
@@ -57,7 +57,7 @@ func TestAssetValidationRejectsOversizedTags(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	_, err = db.UpsertAssets([]*Asset{{Domain: "example.com", Tags: []string{strings.Repeat("x", 65)}}}, "")
+	_, err = db.UpsertAssets([]*store.Asset{{Domain: "example.com", Tags: []string{strings.Repeat("x", 65)}}}, "")
 	if err == nil || !strings.Contains(err.Error(), "标签") {
 		t.Fatalf("expected tag validation error, got %v", err)
 	}
@@ -70,7 +70,7 @@ func TestFofaAssetIgnoresInvalidOptionalStructuredFields(t *testing.T) {
 	}
 	defer db.Close()
 
-	asset := &Asset{
+	asset := &store.Asset{
 		Host:     "https://203.0.113.59:8443",
 		IP:       "203.0.113.59",
 		Domain:   "provider_specific_invalid_domain_59",
@@ -78,7 +78,7 @@ func TestFofaAssetIgnoresInvalidOptionalStructuredFields(t *testing.T) {
 		Protocol: "https",
 		Source:   "fofa",
 	}
-	result, err := db.UpsertAssets([]*Asset{asset}, "")
+	result, err := db.UpsertAssets([]*store.Asset{asset}, "")
 	if err != nil || result.Created != 1 {
 		t.Fatalf("FOFA asset with dirty optional domain was not created: result=%#v err=%v", result, err)
 	}
@@ -94,17 +94,17 @@ func TestAssetUpsertDeduplicatesAndUpdates(t *testing.T) {
 	}
 	defer db.Close()
 
-	first := &Asset{Host: "https://example.com", Domain: "Example.COM", Port: 443, Protocol: "HTTPS", Title: "Old", Source: "fofa"}
-	result, err := db.UpsertAssets([]*Asset{first}, "user-a")
+	first := &store.Asset{Host: "https://example.com", Domain: "Example.COM", Port: 443, Protocol: "HTTPS", Title: "Old", Source: "fofa"}
+	result, err := db.UpsertAssets([]*store.Asset{first}, "user-a")
 	if err != nil || result.Created != 1 || result.Updated != 0 {
 		t.Fatalf("first upsert = %#v, %v", result, err)
 	}
-	second := &Asset{Domain: "example.com", Port: 443, Protocol: "https", Title: "New", Server: "nginx", Source: "fofa"}
-	result, err = db.UpsertAssets([]*Asset{second}, "user-a")
+	second := &store.Asset{Domain: "example.com", Port: 443, Protocol: "https", Title: "New", Server: "nginx", Source: "fofa"}
+	result, err = db.UpsertAssets([]*store.Asset{second}, "user-a")
 	if err != nil || result.Created != 0 || result.Updated != 1 {
 		t.Fatalf("second upsert = %#v, %v", result, err)
 	}
-	assets, total, err := db.ListAssets(20, 0, AssetListFilter{}, store.Access{Scope: RBACScopeAll})
+	assets, total, err := db.ListAssets(20, 0, store.AssetListFilter{}, store.Access{Scope: RBACScopeAll})
 	if err != nil || total != 1 || len(assets) != 1 {
 		t.Fatalf("list assets total=%d len=%d err=%v", total, len(assets), err)
 	}
@@ -139,18 +139,18 @@ func TestAssetAccessFiltersOwners(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO rbac_users (id,username,display_name,password_hash,enabled,is_builtin,created_at,updated_at) VALUES ('user-a','user-a','User A','hash',1,0,?,?)`, now, now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.UpsertAssets([]*Asset{{IP: "10.0.0.1", Port: 80, Protocol: "http"}}, "user-a"); err != nil {
+	if _, err := db.UpsertAssets([]*store.Asset{{IP: "10.0.0.1", Port: 80, Protocol: "http"}}, "user-a"); err != nil {
 		t.Fatal(err)
 	}
-	_, total, err := db.ListAssets(20, 0, AssetListFilter{}, store.Access{UserID: "user-b", Scope: RBACScopeAssigned})
+	_, total, err := db.ListAssets(20, 0, store.AssetListFilter{}, store.Access{UserID: "user-b", Scope: RBACScopeAssigned})
 	if err != nil || total != 0 {
 		t.Fatalf("unexpected cross-user assets: total=%d err=%v", total, err)
 	}
-	_, total, err = db.ListAssets(20, 0, AssetListFilter{}, store.Access{UserID: "user-a", Scope: RBACScopeOwn})
+	_, total, err = db.ListAssets(20, 0, store.AssetListFilter{}, store.Access{UserID: "user-a", Scope: RBACScopeOwn})
 	if err != nil || total != 1 {
 		t.Fatalf("owner cannot list asset: total=%d err=%v", total, err)
 	}
-	assets, _, err := db.ListAssets(1, 0, AssetListFilter{}, store.Access{UserID: "user-a", Scope: RBACScopeAssigned})
+	assets, _, err := db.ListAssets(1, 0, store.AssetListFilter{}, store.Access{UserID: "user-a", Scope: RBACScopeAssigned})
 	if err != nil || len(assets) != 1 || !db.UserCanAccessResource("user-a", RBACScopeAssigned, "asset", assets[0].ID) {
 		t.Fatalf("creator assignment missing: assets=%d err=%v", len(assets), err)
 	}
@@ -170,7 +170,7 @@ func TestAssetAccessFiltersOwners(t *testing.T) {
 	if err := db.UpdateAsset(asset.ID, asset, store.Access{Scope: RBACScopeAll}); err != nil {
 		t.Fatal(err)
 	}
-	projectAssets, total, err := db.ListAssets(20, 0, AssetListFilter{ProjectID: project.ID}, store.Access{UserID: "user-b", Scope: RBACScopeOwn})
+	projectAssets, total, err := db.ListAssets(20, 0, store.AssetListFilter{ProjectID: project.ID}, store.Access{UserID: "user-b", Scope: RBACScopeOwn})
 	if err != nil || total != 1 || len(projectAssets) != 1 || projectAssets[0].ProjectName != "Alpha" {
 		t.Fatalf("project-bound asset access failed: total=%d assets=%#v err=%v", total, projectAssets, err)
 	}
@@ -190,13 +190,13 @@ func TestUpdateAssetsProjectIsAtomicAndScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.UpsertAssets([]*Asset{
+	if _, err := db.UpsertAssets([]*store.Asset{
 		{IP: "192.0.2.1", Port: 80, Protocol: "http"},
 		{IP: "192.0.2.2", Port: 443, Protocol: "https"},
 	}, "owner-a"); err != nil {
 		t.Fatal(err)
 	}
-	assets, _, err := db.ListAssets(10, 0, AssetListFilter{}, store.Access{Scope: RBACScopeAll})
+	assets, _, err := db.ListAssets(10, 0, store.AssetListFilter{}, store.Access{Scope: RBACScopeAll})
 	if err != nil || len(assets) != 2 {
 		t.Fatalf("list assets: len=%d err=%v", len(assets), err)
 	}
@@ -237,7 +237,7 @@ func TestAssetAdvancedFiltersAndBulkMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := []*Asset{
+	input := []*store.Asset{
 		{ProjectID: project.ID, Domain: "critical.example.com", Port: 443, Protocol: "https", Country: "CN", ResponsiblePerson: "Alice", Department: "Security", BusinessSystem: "Portal", Environment: "production", Criticality: "critical", Tags: []string{"internet"}},
 		{ProjectID: project.ID, Domain: "dev.example.com", Port: 8080, Protocol: "http", Country: "US", Environment: "development", Criticality: "low"},
 	}
@@ -256,7 +256,7 @@ func TestAssetAdvancedFiltersAndBulkMetadata(t *testing.T) {
 	}
 
 	minVulns := 1
-	items, total, err := db.ListAssets(20, 0, AssetListFilter{
+	items, total, err := db.ListAssets(20, 0, store.AssetListFilter{
 		Status: "active", RiskLevel: "critical", MinVulnerabilities: &minVulns,
 		Country: "cn", Environment: "production", Criticality: "critical",
 		SortBy: "vulnerability_count", SortOrder: "desc",
@@ -271,7 +271,7 @@ func TestAssetAdvancedFiltersAndBulkMetadata(t *testing.T) {
 	status := "inactive"
 	owner := "Bob"
 	environment := "staging"
-	updated, err := db.UpdateAssetsBulk([]string{input[0].ID, input[1].ID}, AssetBulkPatch{
+	updated, err := db.UpdateAssetsBulk([]string{input[0].ID, input[1].ID}, store.AssetBulkPatch{
 		Status: &status, ResponsiblePerson: &owner, Environment: &environment,
 		AddTags: []string{"review"}, RemoveTags: []string{"internet"},
 	}, store.Access{Scope: RBACScopeAll})
@@ -296,11 +296,11 @@ func TestListAssetsForOperationAndBatchDelete(t *testing.T) {
 	}
 	defer db.Close()
 	for i := 1; i <= 3; i++ {
-		if _, err := db.UpsertAssets([]*Asset{{IP: "198.51.100." + strconv.Itoa(i), Port: 443, Protocol: "https", Tags: []string{"selected"}}}, "", true); err != nil {
+		if _, err := db.UpsertAssets([]*store.Asset{{IP: "198.51.100." + strconv.Itoa(i), Port: 443, Protocol: "https", Tags: []string{"selected"}}}, "", true); err != nil {
 			t.Fatal(err)
 		}
 	}
-	items, total, err := db.ListAssetsForOperation(10, AssetListFilter{Tag: "selected"}, store.Access{Scope: RBACScopeAll})
+	items, total, err := db.ListAssetsForOperation(10, store.AssetListFilter{Tag: "selected"}, store.Access{Scope: RBACScopeAll})
 	if err != nil || total != 3 || len(items) != 3 {
 		t.Fatalf("selection: total=%d len=%d err=%v", total, len(items), err)
 	}
@@ -320,7 +320,7 @@ func TestMergeAssetsIsAtomic(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	input := []*Asset{
+	input := []*store.Asset{
 		{Domain: "merge.example.com", Port: 80, Protocol: "http", Title: "Primary", Tags: []string{"one"}},
 		{Domain: "merge.example.com", Port: 443, Protocol: "https", ResponsiblePerson: "Alice", Tags: []string{"two"}},
 	}
@@ -337,7 +337,7 @@ func TestMergeAssetsIsAtomic(t *testing.T) {
 	if err != nil || merged != 1 {
 		t.Fatalf("merge: merged=%d err=%v", merged, err)
 	}
-	items, total, err := db.ListAssets(10, 0, AssetListFilter{}, store.Access{Scope: RBACScopeAll})
+	items, total, err := db.ListAssets(10, 0, store.AssetListFilter{}, store.Access{Scope: RBACScopeAll})
 	if err != nil || total != 1 || len(items) != 1 || items[0].ResponsiblePerson != "Alice" || len(items[0].Tags) != 2 {
 		t.Fatalf("unexpected merged asset: total=%d items=%#v err=%v", total, items, err)
 	}
@@ -360,10 +360,10 @@ func TestAssetScanLinkReturnsTimeAndRelatedVulnerabilities(t *testing.T) {
 	}
 	defer db.Close()
 
-	if _, err := db.UpsertAssets([]*Asset{{IP: "192.0.2.10", Port: 443, Protocol: "https"}}, ""); err != nil {
+	if _, err := db.UpsertAssets([]*store.Asset{{IP: "192.0.2.10", Port: 443, Protocol: "https"}}, ""); err != nil {
 		t.Fatal(err)
 	}
-	assets, _, err := db.ListAssets(10, 0, AssetListFilter{}, store.Access{Scope: RBACScopeAll})
+	assets, _, err := db.ListAssets(10, 0, store.AssetListFilter{}, store.Access{Scope: RBACScopeAll})
 	if err != nil || len(assets) != 1 {
 		t.Fatalf("list assets: len=%d err=%v", len(assets), err)
 	}
@@ -408,7 +408,7 @@ func TestAssetListFlexibleFiltersAndOldestScanPagination(t *testing.T) {
 	}
 	defer db.Close()
 
-	assets := []*Asset{
+	assets := []*store.Asset{
 		{IP: "192.0.2.1", Port: 443, Protocol: "https", Source: "fofa", Tags: []string{"prod"}},
 		{IP: "192.0.2.2", Port: 80, Protocol: "http", Source: "manual", Tags: []string{"prod", "legacy"}},
 		{Domain: "never.example.com", Port: 443, Protocol: "https", Source: "manual", Tags: []string{"prod"}},
@@ -426,25 +426,96 @@ func TestAssetListFlexibleFiltersAndOldestScanPagination(t *testing.T) {
 	}
 
 	access := store.Access{Scope: RBACScopeAll}
-	firstPage, total, err := db.ListAssets(2, 0, AssetListFilter{Tag: "prod", SortBy: "last_scan_at", SortOrder: "asc"}, access)
+	firstPage, total, err := db.ListAssets(2, 0, store.AssetListFilter{Tag: "prod", SortBy: "last_scan_at", SortOrder: "asc"}, access)
 	if err != nil || total != 3 || len(firstPage) != 2 {
 		t.Fatalf("oldest scan page: total=%d len=%d err=%v", total, len(firstPage), err)
 	}
 	if firstPage[0].ID != assets[2].ID || firstPage[0].LastScanAt != nil || firstPage[1].ID != assets[0].ID {
 		t.Fatalf("expected never-scanned then oldest scanned asset, got %#v", firstPage)
 	}
-	secondPage, _, err := db.ListAssets(2, 2, AssetListFilter{Tag: "prod", SortBy: "last_scan_at", SortOrder: "asc"}, access)
+	secondPage, _, err := db.ListAssets(2, 2, store.AssetListFilter{Tag: "prod", SortBy: "last_scan_at", SortOrder: "asc"}, access)
 	if err != nil || len(secondPage) != 1 || secondPage[0].ID != assets[1].ID {
 		t.Fatalf("unexpected second page: %#v err=%v", secondPage, err)
 	}
 
-	never, total, err := db.ListAssets(20, 0, AssetListFilter{ScanState: "never"}, access)
+	never, total, err := db.ListAssets(20, 0, store.AssetListFilter{ScanState: "never"}, access)
 	if err != nil || total != 1 || len(never) != 1 || never[0].ID != assets[2].ID {
 		t.Fatalf("never-scanned filter: total=%d assets=%#v err=%v", total, never, err)
 	}
 	port := 443
-	filtered, total, err := db.ListAssets(20, 0, AssetListFilter{Source: "fofa", Port: &port, LastScanBefore: &recent}, access)
+	filtered, total, err := db.ListAssets(20, 0, store.AssetListFilter{Source: "fofa", Port: &port, LastScanBefore: &recent}, access)
 	if err != nil || total != 1 || len(filtered) != 1 || filtered[0].ID != assets[0].ID {
 		t.Fatalf("structured filters: total=%d assets=%#v err=%v", total, filtered, err)
+	}
+}
+
+// Deleting a project hands its assets back to the unassigned pool rather than deleting them, and
+// that half of DeleteProject is now store.Assets.UnlinkProject. Both directions are pinned: the
+// rows the console still lists afterwards, and the other project's stamp that must survive.
+func TestDeleteProjectKeepsAssetsAndClearsTheirProject(t *testing.T) {
+	db, err := NewDB(filepath.Join(t.TempDir(), "asset-delete-project.db"), zap.NewNop())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	doomed, err := db.CreateProject(&Project{Name: "Doomed", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	survivor, err := db.CreateProject(&Project{Name: "Survivor", Status: "active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.UpsertAssets([]*store.Asset{
+		{IP: "198.51.100.1"}, {IP: "198.51.100.2"}, {IP: "198.51.100.3"},
+	}, "owner-a"); err != nil {
+		t.Fatal(err)
+	}
+	all, _, err := db.ListAssets(10, 0, store.AssetListFilter{}, store.Access{Scope: RBACScopeAll})
+	if err != nil || len(all) != 3 {
+		t.Fatalf("seed list: len=%d err=%v", len(all), err)
+	}
+	byIP := map[string]string{}
+	for _, asset := range all {
+		byIP[asset.IP] = asset.ID
+	}
+	doomedIDs := []string{byIP["198.51.100.1"], byIP["198.51.100.2"]}
+	if _, err := db.UpdateAssetsProject(doomedIDs, doomed.ID, store.Access{Scope: RBACScopeAll}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.UpdateAssetsProject([]string{byIP["198.51.100.3"]}, survivor.ID, store.Access{Scope: RBACScopeAll}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.DeleteProject(doomed.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	after, total, err := db.ListAssets(10, 0, store.AssetListFilter{}, store.Access{Scope: RBACScopeAll})
+	if err != nil || total != 3 || len(after) != 3 {
+		t.Fatalf("assets must outlive the project: total=%d len=%d err=%v", total, len(after), err)
+	}
+	stamp := map[string]string{}
+	for _, asset := range after {
+		stamp[asset.ID] = asset.ProjectID
+	}
+	for _, id := range doomedIDs {
+		if stamp[id] != "" {
+			t.Fatalf("asset %s still stamped with %q after its project was deleted", id, stamp[id])
+		}
+	}
+	if got := stamp[byIP["198.51.100.3"]]; got != survivor.ID {
+		t.Fatalf("survivor project stamp=%q, want %q", got, survivor.ID)
+	}
+
+	// The asset list has no unassigned-project view. `__none__` is the sentinel the conversation,
+	// webshell and C2 lists answer with; here it is only a value that matches nothing, because the
+	// filter compares it against project_id. Pinned as it behaves today — whether assets should grow
+	// that view is a product call, not something a move gets to decide quietly.
+	unbound, total, err := db.ListAssets(10, 0, store.AssetListFilter{ProjectID: store.ProjectUnbound}, store.Access{Scope: RBACScopeAll})
+	if err != nil || total != 0 || len(unbound) != 0 {
+		t.Fatalf("unbound sentinel on assets matches nothing today: total=%d len=%d err=%v", total, len(unbound), err)
 	}
 }

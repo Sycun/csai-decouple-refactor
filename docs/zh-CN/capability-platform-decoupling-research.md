@@ -2621,6 +2621,54 @@ COALESCE 才是它活下来的原因）、`UnlinkProject` 只清该清的、无�
 **账**：`internal/store` 包内测试 **192 → 195**、全仓测试函数 **1563**；`gofmt -l` 空、`go vet ./...` 干净、
 `go test -count=1 ./...` 全绿；`grep -rn '"__none__"' --include='*.go' internal | grep -v _test | wc -l` 从 2 降到 1。
 
+### P6 第三十一刀 —— 资产域整体交回 `store.Assets`，并顺手抓住一个"新装就起不来"的建表顺序缺陷
+
+`internal/database/asset.go`（**1340 行**）是数据层剩下的最后一个**单文件单域**。这一刀把它整份搬进
+`internal/store/assets.go`：**16 个导出方法**（去重写入、六条列表/读/改/删/合并、扫描记账、风险缓存刷新、
+项目解绑）连同它们的私有 helper、常量表达式与**这张表的全部 schema**——建表、**13 个后补列**、**7 条索引**。
+`*database.DB` 侧留 **17 条一行转发**（可变量参数按 `name...` 转发），启动路径同一位置调
+`store.NewAssets(db.DB).EnsureSchema()`，`DeleteProject` 的级联改成 `NewAssets(db).UnlinkProject(id)`。
+
+**搬 DDL 才暴露出来的缺陷**：原来的启动顺序是**建表 → 补列 → （最后那一大段 `createIndexes`）建索引**，
+而 `idx_assets_last_scan ON assets(last_scan_at)` 依赖的 `last_scan_at` **不在 CREATE TABLE 里**、只由补列产生。
+第一版把"表 + 7 条索引"一起塞进 `EnsureSchema`、把补列留在 `database.go`，于是**全新安装的库会在启动时直接失败**
+（`no such column: last_scan_at`）。修法不是把索引留在原处，而是让表的拥有者按真实顺序自己走完三步：
+`EnsureSchema` = 建表 → `migrateColumns()`（13 列，逐列 `pragma_table_info` 先查再 ALTER）→ 建索引；
+`migrateAssetsTable` 因此从连接对象上**删掉**，这也是本刀 `*DB` 方法数只降 1 的原因（转发把其余 16 个顶住了）。
+新测试里带一个**正向对照**：同一张空表只跑"建表 + 建索引"必须报错，否则这条顺序断言就是空口白话。
+
+**表面收口**：搬过来时只有 `EnsureSchema` 与 `UnlinkProject` 有 `requireDB()`，另外 **17 个导出方法**拿着
+nil 连接会**panic**。现在 19 个导出方法一律先拒（唯一返回 `bool` 的那个答 `false`），并用一张 19 行的表逐条
+比对**错误文本相等**而不是只比"非 nil"。探针：删掉 `GetAsset` 的守卫 → 测试以 panic 栈红；加回来绿。
+
+**新存储层测试** `internal/store/assets_test.go` **3 个用例**（真库、零 mock）：建表顺序 + 对象清单
+（1 表、13 列、7 索引逐一数）+ 二次调用幂等 + 上面那个对照；连接缺失时 19 个方法全拒；`UnlinkProject`
+**只清钢印不删行**、别的项目的钢印不动、带空格的 id 照旧命中（`DeleteProject` 传的就是原值）、
+空 id 与陌生 id 都是空操作。**语句本身**的覆盖留在 `internal/database/asset_test.go` 的 **11 个真 schema 用例**里
+（它们走 `NewDB` 起全库，再经转发打到 store）——store 包**不该**为了测一条 JOIN 而自建 `batch_tasks`、
+`vulnerabilities` 的假表，那只会验到自己的夹具。本刀另加 **1 个级联用例**：`DeleteProject` 之后三条资产仍在、
+两条钢印清空、第三条属于别的项目的不受影响。
+
+**顺手量出来、按现状钉住没改的一件事**：资产列表**没有"未绑定项目"这个视图**。`__none__` 是会话、WebShell、
+C2 三张列表都认的哨兵，而 `assetWhere` 只是把它当成一个匹配不到任何行的 `project_id` 值——给资产加这个视图是
+产品决定，不该混在搬 SQL 的 commit 里。新用例按**今天的行为**断言"total=0"，并在注释里写清这是现状不是设计。
+
+**脚本自伤第四次，记成规矩**：给 17 个方法插守卫的脚本用"`func (s *Assets) NAME` 之后的第一个 `{`"当函数体
+左括号，而 `GetAssetStats` 的返回类型是 `map[string]interface{}`——它把守卫插进了**类型里**，造出一条跨行的签名。
+`go build` 当场抓住。**规矩**：脚本改 Go 时函数体的左括号只能取签名行末尾的 `) {`，或者直接 go/ast 读
+`Body.Lbrace`；按"第一个左括号"猜，遇到 map/struct 字面量类型必翻车。
+
+**探针四道，全部"注入即红、撤销即绿"**：① 交换 `EnsureSchema` 里补列与建索引 → `first EnsureSchema:
+创建assets索引失败: no such column: last_scan_at`；② 删一个 `requireDB()` 守卫 → 拒绝表以 panic 红；
+③ 在 `internal/handler` 塞一个写 `assets` 的生产文件 → `tables owned by a store are written from elsewhere:
+[assets <- internal/handler/probe_assets_writer.go: 1 writes, none allowed]`；④ 把启动那行 `EnsureSchema` 换成
+别的 Exec → `NewAssets: EnsureSchema is called 0 times on the boot path, want exactly 1`。
+
+**账（本会话实测）**：`*database.DB` 方法 **232 → 231**（`TestDatabaseSurfaceOnlyShrinks` 已收紧）；
+`internal/store` 生产文件 **26 → 27**、store 构造器 **19 → 20**、包内测试 **195 → 198**；
+全仓测试函数 **1563 → 1567**；`writeLedger` **31 → 32 张表**（`assets` 一行由两个测试双向核对）；
+两个自有层之外的裸 SQL 仍 **0**；`gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

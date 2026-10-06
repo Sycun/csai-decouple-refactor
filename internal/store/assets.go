@@ -1,11 +1,11 @@
-package database
+package store
 
 import (
 	"cyberstrike-ai/internal/sqltime"
-	"cyberstrike-ai/internal/store"
 	"database/sql"
 
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -18,6 +18,119 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/net/idna"
 )
+
+// Assets owns the recon target table: the deduplicated hosts/IPs/domains the console lists, the risk
+// cache columns the finding counts feed, and the scan bookkeeping an agent run leaves behind.
+//
+// It came over from internal/database as one file, and that file was nearly self-contained: the only
+// cross-file symbol it needed was the data layer's nullIfEmpty, which this package already has. The
+// reads that reach across to batch_tasks, projects, vulnerabilities and the RBAC assignment table
+// stay reads - what this package claims is the writes to `assets`.
+type Assets struct {
+	db *sql.DB
+}
+
+func NewAssets(db *sql.DB) *Assets { return &Assets{db: db} }
+
+func (s *Assets) requireDB() error {
+	if s == nil || s.db == nil {
+		return errors.New("store: assets requires a database")
+	}
+	return nil
+}
+
+// EnsureSchema builds the table, then the columns the first asset-management release lacked, then
+// the seven indexes — in that order, because idx_assets_last_scan is on last_scan_at and that column
+// only exists after the backfill. database.go ran the same three steps in the same order.
+func (s *Assets) EnsureSchema() error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(assetsSchema); err != nil {
+		return fmt.Errorf("创建assets表失败: %w", err)
+	}
+	if err := s.migrateColumns(); err != nil {
+		return fmt.Errorf("为assets补列失败: %w", err)
+	}
+	if _, err := s.db.Exec(assetsIndexes); err != nil {
+		return fmt.Errorf("创建assets索引失败: %w", err)
+	}
+	return nil
+}
+
+// assetColumns are the columns added after the table's first release. Each is checked with
+// pragma_table_info before its ALTER, so an existing database is left untouched.
+var assetColumns = []struct {
+	name string
+	ddl  string
+}{
+	{"project_id", "ALTER TABLE assets ADD COLUMN project_id TEXT"},
+	{"last_scan_at", "ALTER TABLE assets ADD COLUMN last_scan_at DATETIME"},
+	{"last_scan_conversation_id", "ALTER TABLE assets ADD COLUMN last_scan_conversation_id TEXT NOT NULL DEFAULT ''"},
+	{"last_scan_queue_id", "ALTER TABLE assets ADD COLUMN last_scan_queue_id TEXT NOT NULL DEFAULT ''"},
+	{"last_scan_task_id", "ALTER TABLE assets ADD COLUMN last_scan_task_id TEXT NOT NULL DEFAULT ''"},
+	{"responsible_person", "ALTER TABLE assets ADD COLUMN responsible_person TEXT NOT NULL DEFAULT ''"},
+	{"department", "ALTER TABLE assets ADD COLUMN department TEXT NOT NULL DEFAULT ''"},
+	{"business_system", "ALTER TABLE assets ADD COLUMN business_system TEXT NOT NULL DEFAULT ''"},
+	{"environment", "ALTER TABLE assets ADD COLUMN environment TEXT NOT NULL DEFAULT ''"},
+	{"criticality", "ALTER TABLE assets ADD COLUMN criticality TEXT NOT NULL DEFAULT ''"},
+	{"vulnerability_count", "ALTER TABLE assets ADD COLUMN vulnerability_count INTEGER NOT NULL DEFAULT 0"},
+	{"risk_score", "ALTER TABLE assets ADD COLUMN risk_score INTEGER NOT NULL DEFAULT 0"},
+	{"risk_level", "ALTER TABLE assets ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'unassessed'"},
+}
+
+// migrateColumns keeps databases created by the first asset-management release compatible.
+func (s *Assets) migrateColumns() error {
+	for _, column := range assetColumns {
+		var count int
+		if err := s.db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('assets') WHERE name=?", column.name).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			if _, err := s.db.Exec(column.ddl); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+const assetsSchema = `
+	CREATE TABLE IF NOT EXISTS assets (
+		id TEXT PRIMARY KEY,
+		dedup_key TEXT NOT NULL UNIQUE, project_id TEXT,
+		host TEXT NOT NULL DEFAULT '', ip TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 0,
+		domain TEXT NOT NULL DEFAULT '', protocol TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '',
+		server TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '', province TEXT NOT NULL DEFAULT '', city TEXT NOT NULL DEFAULT '',
+		responsible_person TEXT NOT NULL DEFAULT '', department TEXT NOT NULL DEFAULT '', business_system TEXT NOT NULL DEFAULT '',
+		environment TEXT NOT NULL DEFAULT '', criticality TEXT NOT NULL DEFAULT '',
+		source TEXT NOT NULL DEFAULT 'manual', source_query TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
+		vulnerability_count INTEGER NOT NULL DEFAULT 0, risk_score INTEGER NOT NULL DEFAULT 0, risk_level TEXT NOT NULL DEFAULT 'unassessed',
+		tags_json TEXT NOT NULL DEFAULT '[]', first_seen_at DATETIME NOT NULL, last_seen_at DATETIME NOT NULL,
+		created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, owner_user_id TEXT,
+		FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
+	);`
+
+const assetsIndexes = `
+	CREATE INDEX IF NOT EXISTS idx_assets_last_seen ON assets(last_seen_at);
+	CREATE INDEX IF NOT EXISTS idx_assets_last_scan ON assets(last_scan_at);
+	CREATE INDEX IF NOT EXISTS idx_assets_ip ON assets(ip);
+	CREATE INDEX IF NOT EXISTS idx_assets_domain ON assets(domain);
+	CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
+	CREATE INDEX IF NOT EXISTS idx_assets_owner ON assets(owner_user_id);
+	CREATE INDEX IF NOT EXISTS idx_assets_project ON assets(project_id);`
+
+// UnlinkProject clears the project stamp of every asset in a project being deleted. The table's own
+// owner writes it, so the project domain hands over a value rather than a statement.
+func (s *Assets) UnlinkProject(projectID string) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`UPDATE assets SET project_id = NULL WHERE project_id = ?`, strings.TrimSpace(projectID)); err != nil {
+		return fmt.Errorf("解除资产项目关联失败: %w", err)
+	}
+	return nil
+}
 
 // Asset is a persistent, deduplicated target discovered manually or by recon providers.
 type Asset struct {
@@ -285,8 +398,8 @@ func assetDedupKey(a *Asset) string {
 	return strings.Join([]string{target, strconv.Itoa(a.Port), a.Protocol}, "|")
 }
 
-func appendAssetAccess(query string, args []interface{}, access store.Access, alias string) (string, []interface{}) {
-	if strings.TrimSpace(access.UserID) == "" || access.Scope == RBACScopeAll {
+func appendAssetAccess(query string, args []interface{}, access Access, alias string) (string, []interface{}) {
+	if strings.TrimSpace(access.UserID) == "" || access.Scope == ScopeAll {
 		return query, args
 	}
 	prefix := ""
@@ -303,9 +416,12 @@ func appendAssetAccess(query string, args []interface{}, access store.Access, al
 	return query, append(args, access.UserID, access.UserID, access.UserID, access.UserID)
 }
 
-func (db *DB) UpsertAssets(assets []*Asset, ownerUserID string, allowGlobal ...bool) (AssetImportResult, error) {
+func (s *Assets) UpsertAssets(assets []*Asset, ownerUserID string, allowGlobal ...bool) (AssetImportResult, error) {
+	if err := s.requireDB(); err != nil {
+		return AssetImportResult{}, err
+	}
 	result := AssetImportResult{}
-	tx, err := db.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return result, err
 	}
@@ -397,7 +513,7 @@ func (db *DB) UpsertAssets(assets []*Asset, ownerUserID string, allowGlobal ...b
 	return result, nil
 }
 
-func assetWhere(filter AssetListFilter, access store.Access) (string, []interface{}) {
+func assetWhere(filter AssetListFilter, access Access) (string, []interface{}) {
 	query := " WHERE 1=1"
 	args := []interface{}{}
 	if q := strings.TrimSpace(filter.Search); q != "" {
@@ -587,9 +703,12 @@ const assetSelectColumns = `assets.id,COALESCE(assets.project_id,''),COALESCE(p.
 
 // MarkAssetScanned links an asset to the conversation or batch subtask created from it.
 // The link lets the asset list show the latest scan time and vulnerabilities produced by that scan.
-func (db *DB) MarkAssetScanned(id, conversationID, queueID, taskID string, access store.Access) error {
+func (s *Assets) MarkAssetScanned(id, conversationID, queueID, taskID string, access Access) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
 	where, args := appendAssetAccess(" WHERE id = ?", []interface{}{strings.TrimSpace(id)}, access, "assets")
-	res, err := db.Exec(`UPDATE assets SET last_scan_at=?,last_scan_conversation_id=?,last_scan_queue_id=?,last_scan_task_id=?,updated_at=?`+where,
+	res, err := s.db.Exec(`UPDATE assets SET last_scan_at=?,last_scan_conversation_id=?,last_scan_queue_id=?,last_scan_task_id=?,updated_at=?`+where,
 		append([]interface{}{time.Now(), strings.TrimSpace(conversationID), strings.TrimSpace(queueID), strings.TrimSpace(taskID), time.Now()}, args...)...)
 	if err != nil {
 		return err
@@ -598,7 +717,7 @@ func (db *DB) MarkAssetScanned(id, conversationID, queueID, taskID string, acces
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	if err := db.RefreshAssetRiskCache(id); err != nil {
+	if err := s.RefreshAssetRiskCache(id); err != nil {
 		return err
 	}
 	return nil
@@ -608,7 +727,10 @@ func (db *DB) MarkAssetScanned(id, conversationID, queueID, taskID string, acces
 // the asset was launched as a batch task, keep its task/queue link only when
 // that task belongs to the current conversation; a later ad-hoc chat scan must
 // not retain stale task associations.
-func (db *DB) CompleteAssetScan(id, conversationID string, access store.Access) error {
+func (s *Assets) CompleteAssetScan(id, conversationID string, access Access) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
 	id = strings.TrimSpace(id)
 	conversationID = strings.TrimSpace(conversationID)
 	if conversationID == "" {
@@ -616,7 +738,7 @@ func (db *DB) CompleteAssetScan(id, conversationID string, access store.Access) 
 	}
 	where, args := appendAssetAccess(" WHERE id = ?", []interface{}{id}, access, "assets")
 	now := time.Now()
-	res, err := db.Exec(`UPDATE assets SET
+	res, err := s.db.Exec(`UPDATE assets SET
 		last_scan_at=?,last_scan_conversation_id=?,
 		last_scan_queue_id=CASE WHEN EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.id=assets.last_scan_task_id AND bt.conversation_id=?) THEN last_scan_queue_id ELSE '' END,
 		last_scan_task_id=CASE WHEN EXISTS (SELECT 1 FROM batch_tasks bt WHERE bt.id=assets.last_scan_task_id AND bt.conversation_id=?) THEN last_scan_task_id ELSE '' END,
@@ -629,15 +751,18 @@ func (db *DB) CompleteAssetScan(id, conversationID string, access store.Access) 
 	if n == 0 {
 		return sql.ErrNoRows
 	}
-	if err := db.RefreshAssetRiskCache(id); err != nil {
+	if err := s.RefreshAssetRiskCache(id); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (db *DB) BatchTaskBelongsToQueue(taskID, queueID string) bool {
+func (s *Assets) BatchTaskBelongsToQueue(taskID, queueID string) bool {
+	if err := s.requireDB(); err != nil {
+		return false
+	}
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM batch_tasks WHERE id=? AND queue_id=?`, strings.TrimSpace(taskID), strings.TrimSpace(queueID)).Scan(&count)
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM batch_tasks WHERE id=? AND queue_id=?`, strings.TrimSpace(taskID), strings.TrimSpace(queueID)).Scan(&count)
 	return err == nil && count > 0
 }
 
@@ -664,34 +789,40 @@ func assetRiskLevelFromScore(score int, scanned bool) string {
 // RefreshAssetRiskCache recalculates the denormalized fields used by the asset
 // list. Keeping this in the database layer makes Web API and MCP writes share
 // one consistency path.
-func (db *DB) RefreshAssetRiskCache(assetID string) error {
+func (s *Assets) RefreshAssetRiskCache(assetID string) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
 	assetID = strings.TrimSpace(assetID)
 	if assetID == "" {
 		return nil
 	}
 	var count int
-	if err := db.QueryRow("SELECT "+assetVulnerabilityCountExpr+" FROM assets WHERE assets.id=?", assetID).Scan(&count); err != nil {
+	if err := s.db.QueryRow("SELECT "+assetVulnerabilityCountExpr+" FROM assets WHERE assets.id=?", assetID).Scan(&count); err != nil {
 		if err == sql.ErrNoRows {
 			return nil
 		}
 		return fmt.Errorf("刷新资产漏洞数量失败: %w", err)
 	}
 	var score int
-	if err := db.QueryRow("SELECT "+assetRiskScoreQueryExpr+" FROM assets WHERE assets.id=?", assetID).Scan(&score); err != nil {
+	if err := s.db.QueryRow("SELECT "+assetRiskScoreQueryExpr+" FROM assets WHERE assets.id=?", assetID).Scan(&score); err != nil {
 		return fmt.Errorf("刷新资产风险分数失败: %w", err)
 	}
 	var lastScan interface{}
-	if err := db.QueryRow("SELECT "+assetEffectiveLastScanExpr+" FROM assets WHERE assets.id=?", assetID).Scan(&lastScan); err != nil {
+	if err := s.db.QueryRow("SELECT "+assetEffectiveLastScanExpr+" FROM assets WHERE assets.id=?", assetID).Scan(&lastScan); err != nil {
 		return fmt.Errorf("刷新资产扫描状态失败: %w", err)
 	}
 	level := assetRiskLevelFromScore(score, lastScan != nil)
-	if _, err := db.Exec(`UPDATE assets SET vulnerability_count=?, risk_score=?, risk_level=? WHERE id=?`, count, score, level, assetID); err != nil {
+	if _, err := s.db.Exec(`UPDATE assets SET vulnerability_count=?, risk_score=?, risk_level=? WHERE id=?`, count, score, level, assetID); err != nil {
 		return fmt.Errorf("更新资产风险缓存失败: %w", err)
 	}
 	return nil
 }
 
-func (db *DB) AssetIDsForVulnerabilityConversations(conversationIDs []string) ([]string, error) {
+func (s *Assets) AssetIDsForVulnerabilityConversations(conversationIDs []string) ([]string, error) {
+	if err := s.requireDB(); err != nil {
+		return nil, err
+	}
 	seen := map[string]struct{}{}
 	cleaned := make([]string, 0, len(conversationIDs))
 	for _, id := range conversationIDs {
@@ -716,7 +847,7 @@ func (db *DB) AssetIDsForVulnerabilityConversations(conversationIDs []string) ([
 	for _, id := range cleaned {
 		args = append(args, id)
 	}
-	rows, err := db.Query(`SELECT DISTINCT assets.id FROM assets
+	rows, err := s.db.Query(`SELECT DISTINCT assets.id FROM assets
 		WHERE assets.last_scan_conversation_id IN (`+placeholders+`)
 		OR assets.last_scan_task_id IN (SELECT bt.id FROM batch_tasks bt WHERE bt.conversation_id IN (`+placeholders+`))`, args...)
 	if err != nil {
@@ -734,20 +865,26 @@ func (db *DB) AssetIDsForVulnerabilityConversations(conversationIDs []string) ([
 	return assetIDs, rows.Err()
 }
 
-func (db *DB) RefreshAssetRiskCacheForConversations(conversationIDs ...string) error {
-	assetIDs, err := db.AssetIDsForVulnerabilityConversations(conversationIDs)
+func (s *Assets) RefreshAssetRiskCacheForConversations(conversationIDs ...string) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	assetIDs, err := s.AssetIDsForVulnerabilityConversations(conversationIDs)
 	if err != nil {
 		return err
 	}
 	for _, id := range assetIDs {
-		if err := db.RefreshAssetRiskCache(id); err != nil {
+		if err := s.RefreshAssetRiskCache(id); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (db *DB) ListAssets(limit, offset int, filter AssetListFilter, access store.Access) ([]*Asset, int, error) {
+func (s *Assets) ListAssets(limit, offset int, filter AssetListFilter, access Access) ([]*Asset, int, error) {
+	if err := s.requireDB(); err != nil {
+		return nil, 0, err
+	}
 	if limit < 1 {
 		limit = 20
 	}
@@ -759,11 +896,11 @@ func (db *DB) ListAssets(limit, offset int, filter AssetListFilter, access store
 	}
 	where, args := assetWhere(filter, access)
 	var total int
-	if err := db.QueryRow("SELECT COUNT(*) FROM assets"+where, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM assets"+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	orderBy := assetOrderBy(filter.SortBy, filter.SortOrder)
-	rows, err := db.Query("SELECT "+assetSelectColumns+" FROM assets LEFT JOIN projects p ON p.id=assets.project_id"+where+" ORDER BY "+orderBy+" LIMIT ? OFFSET ?", append(args, limit, offset)...)
+	rows, err := s.db.Query("SELECT "+assetSelectColumns+" FROM assets LEFT JOIN projects p ON p.id=assets.project_id"+where+" ORDER BY "+orderBy+" LIMIT ? OFFSET ?", append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -781,19 +918,22 @@ func (db *DB) ListAssets(limit, offset int, filter AssetListFilter, access store
 
 // ListAssetsForOperation resolves the complete filtered selection used by
 // cross-page bulk actions. The caller supplies a strict upper bound.
-func (db *DB) ListAssetsForOperation(limit int, filter AssetListFilter, access store.Access) ([]*Asset, int, error) {
+func (s *Assets) ListAssetsForOperation(limit int, filter AssetListFilter, access Access) ([]*Asset, int, error) {
+	if err := s.requireDB(); err != nil {
+		return nil, 0, err
+	}
 	if limit < 1 || limit > 10000 {
 		limit = 10000
 	}
 	where, args := assetWhere(filter, access)
 	var total int
-	if err := db.QueryRow("SELECT COUNT(*) FROM assets"+where, args...).Scan(&total); err != nil {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM assets"+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	if total > limit {
 		return nil, total, fmt.Errorf("匹配资产超过 %d 条，请缩小筛选范围", limit)
 	}
-	rows, err := db.Query("SELECT "+assetSelectColumns+" FROM assets LEFT JOIN projects p ON p.id=assets.project_id"+where+" ORDER BY "+assetOrderBy(filter.SortBy, filter.SortOrder), args...)
+	rows, err := s.db.Query("SELECT "+assetSelectColumns+" FROM assets LEFT JOIN projects p ON p.id=assets.project_id"+where+" ORDER BY "+assetOrderBy(filter.SortBy, filter.SortOrder), args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -844,12 +984,18 @@ func assetOrderBy(sortBy, sortOrder string) string {
 	return expression + " " + direction + ", assets.id ASC"
 }
 
-func (db *DB) GetAsset(id string, access store.Access) (*Asset, error) {
+func (s *Assets) GetAsset(id string, access Access) (*Asset, error) {
+	if err := s.requireDB(); err != nil {
+		return nil, err
+	}
 	query, args := appendAssetAccess("SELECT "+assetSelectColumns+" FROM assets LEFT JOIN projects p ON p.id=assets.project_id WHERE assets.id = ?", []interface{}{id}, access, "assets")
-	return scanAsset(db.QueryRow(query, args...))
+	return scanAsset(s.db.QueryRow(query, args...))
 }
 
-func (db *DB) UpdateAsset(id string, a *Asset, access store.Access) error {
+func (s *Assets) UpdateAsset(id string, a *Asset, access Access) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
 	normalizeAsset(a)
 	if err := validateAsset(a); err != nil {
 		return err
@@ -860,7 +1006,7 @@ func (db *DB) UpdateAsset(id string, a *Asset, access store.Access) error {
 	}
 	tags, _ := json.Marshal(a.Tags)
 	where, args := appendAssetAccess(" WHERE id = ?", []interface{}{id}, access, "assets")
-	res, err := db.Exec(`UPDATE assets SET dedup_key=?,project_id=?,host=?,ip=?,port=?,domain=?,protocol=?,title=?,server=?,country=?,province=?,city=?,
+	res, err := s.db.Exec(`UPDATE assets SET dedup_key=?,project_id=?,host=?,ip=?,port=?,domain=?,protocol=?,title=?,server=?,country=?,province=?,city=?,
 		responsible_person=?,department=?,business_system=?,environment=?,criticality=?,source=?,source_query=?,status=?,tags_json=?,updated_at=?`+where,
 		append([]interface{}{key, nullIfEmpty(a.ProjectID), a.Host, a.IP, a.Port, a.Domain, a.Protocol, a.Title, a.Server, a.Country, a.Province, a.City,
 			a.ResponsiblePerson, a.Department, a.BusinessSystem, a.Environment, a.Criticality, a.Source, a.SourceQuery, a.Status, string(tags), time.Now()}, args...)...)
@@ -923,7 +1069,10 @@ func normalizeBulkTags(tags []string) ([]string, error) {
 }
 
 // UpdateAssetsBulk atomically applies operational metadata to a selected set.
-func (db *DB) UpdateAssetsBulk(ids []string, patch AssetBulkPatch, access store.Access) (int, error) {
+func (s *Assets) UpdateAssetsBulk(ids []string, patch AssetBulkPatch, access Access) (int, error) {
+	if err := s.requireDB(); err != nil {
+		return 0, err
+	}
 	unique := normalizeAssetIDs(ids)
 	if len(unique) == 0 {
 		return 0, fmt.Errorf("资产列表不能为空")
@@ -957,7 +1106,7 @@ func (db *DB) UpdateAssetsBulk(ids []string, patch AssetBulkPatch, access store.
 		return 0, err
 	}
 
-	tx, err := db.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
@@ -1035,12 +1184,15 @@ func valueOrEmpty(value *string) string {
 	return strings.TrimSpace(*value)
 }
 
-func (db *DB) DeleteAssets(ids []string, access store.Access) (int, error) {
+func (s *Assets) DeleteAssets(ids []string, access Access) (int, error) {
+	if err := s.requireDB(); err != nil {
+		return 0, err
+	}
 	unique := normalizeAssetIDs(ids)
 	if len(unique) == 0 {
 		return 0, fmt.Errorf("资产列表不能为空")
 	}
-	tx, err := db.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
@@ -1075,7 +1227,10 @@ func (db *DB) DeleteAssets(ids []string, access store.Access) (int, error) {
 
 // MergeAssets atomically updates the surviving asset and removes duplicates.
 // Separate access scopes preserve permission-specific RBAC boundaries.
-func (db *DB) MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, deleteAccess store.Access) (int, error) {
+func (s *Assets) MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, deleteAccess Access) (int, error) {
+	if err := s.requireDB(); err != nil {
+		return 0, err
+	}
 	if primary == nil || strings.TrimSpace(primary.ID) == "" {
 		return 0, fmt.Errorf("主资产不能为空")
 	}
@@ -1097,7 +1252,7 @@ func (db *DB) MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, de
 	key := assetDedupKey(primary)
 	tagsJSON, _ := json.Marshal(primary.Tags)
 
-	tx, err := db.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
@@ -1144,13 +1299,16 @@ func (db *DB) MergeAssets(primary *Asset, duplicateIDs []string, writeAccess, de
 // UpdateAssetsProject atomically replaces the project binding for every asset.
 // It refuses the whole update when any requested asset is missing or outside
 // the caller's access scope, so a bulk action can never partially succeed.
-func (db *DB) UpdateAssetsProject(ids []string, projectID string, access store.Access) (int, error) {
+func (s *Assets) UpdateAssetsProject(ids []string, projectID string, access Access) (int, error) {
+	if err := s.requireDB(); err != nil {
+		return 0, err
+	}
 	unique := normalizeAssetIDs(ids)
 	if len(unique) == 0 {
 		return 0, fmt.Errorf("资产列表不能为空")
 	}
 
-	tx, err := db.Begin()
+	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
@@ -1190,9 +1348,12 @@ func (db *DB) UpdateAssetsProject(ids []string, projectID string, access store.A
 	return int(updated), nil
 }
 
-func (db *DB) DeleteAsset(id string, access store.Access) error {
+func (s *Assets) DeleteAsset(id string, access Access) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
 	where, args := appendAssetAccess(" WHERE id = ?", []interface{}{id}, access, "assets")
-	res, err := db.Exec("DELETE FROM assets"+where, args...)
+	res, err := s.db.Exec("DELETE FROM assets"+where, args...)
 	if err != nil {
 		return err
 	}
@@ -1203,14 +1364,17 @@ func (db *DB) DeleteAsset(id string, access store.Access) error {
 	return nil
 }
 
-func (db *DB) GetAssetStats(access store.Access, requestedDays ...int) (map[string]interface{}, error) {
+func (s *Assets) GetAssetStats(access Access, requestedDays ...int) (map[string]interface{}, error) {
+	if err := s.requireDB(); err != nil {
+		return nil, err
+	}
 	days := 30
 	if len(requestedDays) > 0 && (requestedDays[0] == 7 || requestedDays[0] == 30 || requestedDays[0] == 90) {
 		days = requestedDays[0]
 	}
 	where, args := appendAssetAccess(" WHERE 1=1", nil, access, "assets")
 	stats := map[string]interface{}{}
-	row := db.QueryRow(`SELECT COUNT(*),COUNT(DISTINCT NULLIF(ip,'')),COUNT(DISTINCT NULLIF(domain,'')),
+	row := s.db.QueryRow(`SELECT COUNT(*),COUNT(DISTINCT NULLIF(ip,'')),COUNT(DISTINCT NULLIF(domain,'')),
 		COUNT(DISTINCT CASE WHEN port>0 THEN CAST(port AS TEXT) END),
 		COALESCE(SUM(CASE WHEN datetime(last_seen_at)>=datetime('now','-7 days') THEN 1 ELSE 0 END),0) FROM assets`+where, args...)
 	var total, ips, domains, ports, recent int
@@ -1218,7 +1382,7 @@ func (db *DB) GetAssetStats(access store.Access, requestedDays ...int) (map[stri
 		return nil, err
 	}
 	stats["total"], stats["ips"], stats["domains"], stats["ports"], stats["recent"] = total, ips, domains, ports, recent
-	rows, err := db.Query(`SELECT CASE WHEN protocol='' THEN 'unknown' ELSE protocol END,COUNT(*) FROM assets`+where+` GROUP BY protocol ORDER BY COUNT(*) DESC LIMIT 8`, args...)
+	rows, err := s.db.Query(`SELECT CASE WHEN protocol='' THEN 'unknown' ELSE protocol END,COUNT(*) FROM assets`+where+` GROUP BY protocol ORDER BY COUNT(*) DESC LIMIT 8`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1236,7 +1400,7 @@ func (db *DB) GetAssetStats(access store.Access, requestedDays ...int) (map[stri
 	stats["period_days"] = days
 
 	coverage := map[string]interface{}{}
-	coverageRow := db.QueryRow(`SELECT
+	coverageRow := s.db.QueryRow(`SELECT
 		COALESCE(SUM(CASE WHEN last_scan_at IS NOT NULL THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN datetime(last_scan_at)>=datetime('now','-7 days') THEN 1 ELSE 0 END),0),
 		COALESCE(SUM(CASE WHEN datetime(last_scan_at)>=datetime('now','-30 days') THEN 1 ELSE 0 END),0),
@@ -1260,7 +1424,7 @@ func (db *DB) GetAssetStats(access store.Access, requestedDays ...int) (map[stri
 
 	assetDaily := map[string]map[string]int{}
 	trendWhere, trendArgs := appendAssetAccess(" WHERE datetime(first_seen_at)>=datetime('now',?)", []interface{}{fmt.Sprintf("-%d days", days-1)}, access, "assets")
-	trendRows, err := db.Query(`SELECT date(first_seen_at), COUNT(*)
+	trendRows, err := s.db.Query(`SELECT date(first_seen_at), COUNT(*)
 		FROM assets`+trendWhere+` GROUP BY date(first_seen_at) ORDER BY date(first_seen_at)`, trendArgs...)
 	if err != nil {
 		return nil, err
@@ -1278,7 +1442,7 @@ func (db *DB) GetAssetStats(access store.Access, requestedDays ...int) (map[stri
 		return nil, err
 	}
 	inactiveWhere, inactiveArgs := appendAssetAccess(" WHERE status='inactive' AND datetime(updated_at)>=datetime('now',?)", []interface{}{fmt.Sprintf("-%d days", days-1)}, access, "assets")
-	inactiveRows, err := db.Query(`SELECT date(updated_at), COUNT(*) FROM assets`+inactiveWhere+` GROUP BY date(updated_at) ORDER BY date(updated_at)`, inactiveArgs...)
+	inactiveRows, err := s.db.Query(`SELECT date(updated_at), COUNT(*) FROM assets`+inactiveWhere+` GROUP BY date(updated_at) ORDER BY date(updated_at)`, inactiveArgs...)
 	if err != nil {
 		return nil, err
 	}
@@ -1299,8 +1463,8 @@ func (db *DB) GetAssetStats(access store.Access, requestedDays ...int) (map[stri
 	}
 
 	riskDaily := map[string]map[string]int{}
-	riskWhere, riskArgs := store.ConstrainFinding(" WHERE datetime(created_at)>=datetime('now',?)", []interface{}{fmt.Sprintf("-%d days", days-1)}, access)
-	riskRows, err := db.Query(`SELECT date(created_at), COUNT(*),
+	riskWhere, riskArgs := ConstrainFinding(" WHERE datetime(created_at)>=datetime('now',?)", []interface{}{fmt.Sprintf("-%d days", days-1)}, access)
+	riskRows, err := s.db.Query(`SELECT date(created_at), COUNT(*),
 		COALESCE(SUM(CASE WHEN LOWER(severity) IN ('critical','high') THEN 1 ELSE 0 END),0)
 		FROM vulnerabilities`+riskWhere+` GROUP BY date(created_at) ORDER BY date(created_at)`, riskArgs...)
 	if err != nil {

@@ -207,6 +207,7 @@ var writeLedger = map[string][]string{
 	"project_fact_edges":                {"facts_edges.go"},
 	"webshell_connections":              {"webshell.go"},
 	"webshell_connection_states":        {"webshell.go"},
+	"assets":                            {"assets.go"},
 	"robot_binding_codes":               {"robot_identity.go"},
 	"robot_user_bindings":               {"robot_identity.go"},
 	"robot_user_sessions":               {"robot_sessions.go"},
@@ -284,15 +285,15 @@ func TestStoreWritesOnlyTablesItOwns(t *testing.T) {
 	// The ledger size is exact while the scan's coverage is a floor: this package grows as domains are
 	// extracted, but every added table has to be an intentional edit with a file behind it. A floor on
 	// the ledger would let a failing offender be silenced by listing the table it names.
-	if len(writeLedger) != 31 {
-		t.Fatalf("the write ledger lists %d tables, want exactly 31 - measured 2026-10-06 when the blackboard "+
+	if len(writeLedger) != 32 {
+		t.Fatalf("the write ledger lists %d tables, want exactly 32 - measured 2026-10-06 when the blackboard "+
 			"arrived: %d statements over %d tables from %d files", len(writeLedger), statements, distinct, len(writes))
 	}
 	if len(writes) < 20 {
 		t.Fatalf("write ledger covers %d files, want at least 20 - the scan has gone blind", len(writes))
 	}
-	if distinct < 31 {
-		t.Fatalf("write ledger covers %d tables, want at least 31 - the scan has gone blind", distinct)
+	if distinct < 32 {
+		t.Fatalf("write ledger covers %d tables, want at least 32 - the scan has gone blind", distinct)
 	}
 }
 

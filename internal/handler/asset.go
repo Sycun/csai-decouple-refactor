@@ -43,9 +43,9 @@ func assetAccessForPermission(c *gin.Context, permission string) store.Access {
 }
 
 type importAssetsRequest struct {
-	Assets      []*database.Asset `json:"assets" binding:"required"`
-	Source      string            `json:"source"`
-	SourceQuery string            `json:"source_query"`
+	Assets      []*store.Asset `json:"assets" binding:"required"`
+	Source      string         `json:"source"`
+	SourceQuery string         `json:"source_query"`
 }
 
 type assetScanLink struct {
@@ -120,7 +120,7 @@ func (h *AssetHandler) Import(c *gin.Context) {
 	}
 	result, err := h.db.UpsertAssets(req.Assets, owner, allowGlobal)
 	if err != nil {
-		var validationErr *database.AssetValidationError
+		var validationErr *store.AssetValidationError
 		if errors.As(err, &validationErr) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -159,8 +159,8 @@ func (h *AssetHandler) List(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"assets": assets, "total": total, "page": page, "page_size": pageSize, "total_pages": totalPages})
 }
 
-func assetListFilterFromQuery(c *gin.Context) (database.AssetListFilter, error) {
-	filter := database.AssetListFilter{
+func assetListFilterFromQuery(c *gin.Context) (store.AssetListFilter, error) {
+	filter := store.AssetListFilter{
 		Search: strings.TrimSpace(c.Query("q")), Status: strings.ToLower(strings.TrimSpace(c.Query("status"))),
 		Protocol: strings.ToLower(strings.TrimSpace(c.Query("protocol"))), ProjectID: strings.TrimSpace(c.Query("project_id")),
 		Source: strings.TrimSpace(c.Query("source")), Tag: strings.TrimSpace(c.Query("tag")), Host: strings.TrimSpace(c.Query("host")),
@@ -318,7 +318,7 @@ func (h *AssetHandler) RecordScans(c *gin.Context) {
 }
 
 func (h *AssetHandler) Update(c *gin.Context) {
-	var asset database.Asset
+	var asset store.Asset
 	if err := c.ShouldBindJSON(&asset); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -381,7 +381,7 @@ func (h *AssetHandler) BulkUpdate(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "asset_ids 数量必须在 1-10000 之间"})
 		return
 	}
-	updated, err := h.db.UpdateAssetsBulk(req.AssetIDs, database.AssetBulkPatch{
+	updated, err := h.db.UpdateAssetsBulk(req.AssetIDs, store.AssetBulkPatch{
 		Status: req.Status, ResponsiblePerson: req.ResponsiblePerson, Department: req.Department,
 		BusinessSystem: req.BusinessSystem, Environment: req.Environment, Criticality: req.Criticality,
 		AddTags: req.AddTags, RemoveTags: req.RemoveTags,
@@ -411,7 +411,7 @@ func (h *AssetHandler) BatchDelete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"deleted": deleted})
 }
 
-func assetIdentityKeys(asset *database.Asset) map[string]struct{} {
+func assetIdentityKeys(asset *store.Asset) map[string]struct{} {
 	keys := map[string]struct{}{}
 	if value := strings.ToLower(strings.TrimSpace(asset.Domain)); value != "" {
 		keys["domain:"+value] = struct{}{}
@@ -425,7 +425,7 @@ func assetIdentityKeys(asset *database.Asset) map[string]struct{} {
 	return keys
 }
 
-func shareAssetIdentity(left, right *database.Asset) bool {
+func shareAssetIdentity(left, right *store.Asset) bool {
 	for key := range assetIdentityKeys(left) {
 		if _, ok := assetIdentityKeys(right)[key]; ok {
 			return true
@@ -456,7 +456,7 @@ func (h *AssetHandler) Merge(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "主资产不存在或无权访问"})
 		return
 	}
-	others := make([]*database.Asset, 0, len(req.AssetIDs)-1)
+	others := make([]*store.Asset, 0, len(req.AssetIDs)-1)
 	seen := map[string]struct{}{primaryID: {}}
 	for _, id := range req.AssetIDs {
 		id = strings.TrimSpace(id)

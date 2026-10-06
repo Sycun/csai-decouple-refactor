@@ -305,21 +305,7 @@ func (db *DB) initTables() error {
 		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
 	);`
 
-	createAssetsTable := `
-	CREATE TABLE IF NOT EXISTS assets (
-		id TEXT PRIMARY KEY,
-		dedup_key TEXT NOT NULL UNIQUE, project_id TEXT,
-		host TEXT NOT NULL DEFAULT '', ip TEXT NOT NULL DEFAULT '', port INTEGER NOT NULL DEFAULT 0,
-		domain TEXT NOT NULL DEFAULT '', protocol TEXT NOT NULL DEFAULT '', title TEXT NOT NULL DEFAULT '',
-		server TEXT NOT NULL DEFAULT '', country TEXT NOT NULL DEFAULT '', province TEXT NOT NULL DEFAULT '', city TEXT NOT NULL DEFAULT '',
-		responsible_person TEXT NOT NULL DEFAULT '', department TEXT NOT NULL DEFAULT '', business_system TEXT NOT NULL DEFAULT '',
-		environment TEXT NOT NULL DEFAULT '', criticality TEXT NOT NULL DEFAULT '',
-		source TEXT NOT NULL DEFAULT 'manual', source_query TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
-		vulnerability_count INTEGER NOT NULL DEFAULT 0, risk_score INTEGER NOT NULL DEFAULT 0, risk_level TEXT NOT NULL DEFAULT 'unassessed',
-		tags_json TEXT NOT NULL DEFAULT '[]', first_seen_at DATETIME NOT NULL, last_seen_at DATETIME NOT NULL,
-		created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL, owner_user_id TEXT,
-		FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
-	);`
+	// assets 表的 DDL 与七条索引在 store.Assets 的 EnsureSchema 里。
 
 	// 创建批量任务队列表
 	createBatchTaskQueuesTable := `
@@ -489,13 +475,6 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_severity ON vulnerabilities(severity);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_status ON vulnerabilities(status);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_created_at ON vulnerabilities(created_at);
-	CREATE INDEX IF NOT EXISTS idx_assets_last_seen ON assets(last_seen_at);
-	CREATE INDEX IF NOT EXISTS idx_assets_last_scan ON assets(last_scan_at);
-	CREATE INDEX IF NOT EXISTS idx_assets_ip ON assets(ip);
-	CREATE INDEX IF NOT EXISTS idx_assets_domain ON assets(domain);
-	CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
-	CREATE INDEX IF NOT EXISTS idx_assets_owner ON assets(owner_user_id);
-	CREATE INDEX IF NOT EXISTS idx_assets_project ON assets(project_id);
 	CREATE INDEX IF NOT EXISTS idx_assets_vulnerability_count ON assets(vulnerability_count);
 	CREATE INDEX IF NOT EXISTS idx_assets_risk_score ON assets(risk_score);
 	CREATE INDEX IF NOT EXISTS idx_assets_risk_level ON assets(risk_level);
@@ -562,11 +541,9 @@ func (db *DB) initTables() error {
 	if _, err := db.Exec(createVulnerabilitiesTable); err != nil {
 		return fmt.Errorf("创建vulnerabilities表失败: %w", err)
 	}
-	if _, err := db.Exec(createAssetsTable); err != nil {
-		return fmt.Errorf("创建assets表失败: %w", err)
-	}
-	if err := db.migrateAssetsTable(); err != nil {
-		return fmt.Errorf("迁移assets表失败: %w", err)
+	// 外键指向 projects，所以顺序不能提前到它之前。建表、补列、建索引三步的先后由 store 自己保证。
+	if err := store.NewAssets(db.DB).EnsureSchema(); err != nil {
+		return fmt.Errorf("初始化assets表失败: %w", err)
 	}
 
 	if _, err := db.Exec(createBatchTaskQueuesTable); err != nil {
@@ -681,40 +658,6 @@ func (db *DB) migrateToolExecutionsPartialOutputColumns() error {
 	} {
 		if err := db.addColumnIfMissing("tool_executions", col.name, col.stmt); err != nil {
 			return err
-		}
-	}
-	return nil
-}
-
-// migrateAssetsTable keeps databases created by the first asset-management release compatible.
-func (db *DB) migrateAssetsTable() error {
-	columns := []struct {
-		name string
-		ddl  string
-	}{
-		{"project_id", "ALTER TABLE assets ADD COLUMN project_id TEXT"},
-		{"last_scan_at", "ALTER TABLE assets ADD COLUMN last_scan_at DATETIME"},
-		{"last_scan_conversation_id", "ALTER TABLE assets ADD COLUMN last_scan_conversation_id TEXT NOT NULL DEFAULT ''"},
-		{"last_scan_queue_id", "ALTER TABLE assets ADD COLUMN last_scan_queue_id TEXT NOT NULL DEFAULT ''"},
-		{"last_scan_task_id", "ALTER TABLE assets ADD COLUMN last_scan_task_id TEXT NOT NULL DEFAULT ''"},
-		{"responsible_person", "ALTER TABLE assets ADD COLUMN responsible_person TEXT NOT NULL DEFAULT ''"},
-		{"department", "ALTER TABLE assets ADD COLUMN department TEXT NOT NULL DEFAULT ''"},
-		{"business_system", "ALTER TABLE assets ADD COLUMN business_system TEXT NOT NULL DEFAULT ''"},
-		{"environment", "ALTER TABLE assets ADD COLUMN environment TEXT NOT NULL DEFAULT ''"},
-		{"criticality", "ALTER TABLE assets ADD COLUMN criticality TEXT NOT NULL DEFAULT ''"},
-		{"vulnerability_count", "ALTER TABLE assets ADD COLUMN vulnerability_count INTEGER NOT NULL DEFAULT 0"},
-		{"risk_score", "ALTER TABLE assets ADD COLUMN risk_score INTEGER NOT NULL DEFAULT 0"},
-		{"risk_level", "ALTER TABLE assets ADD COLUMN risk_level TEXT NOT NULL DEFAULT 'unassessed'"},
-	}
-	for _, column := range columns {
-		var count int
-		if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('assets') WHERE name=?", column.name).Scan(&count); err != nil {
-			return err
-		}
-		if count == 0 {
-			if _, err := db.Exec(column.ddl); err != nil {
-				return err
-			}
 		}
 	}
 	return nil
