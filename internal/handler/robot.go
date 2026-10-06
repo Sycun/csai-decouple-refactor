@@ -89,6 +89,7 @@ type RobotHandler struct {
 	wecom                *WecomGateway
 	pendingConfirmations map[string]robotPendingConfirmation
 	threadBindings       *store.RobotSessions // robot_user_sessions: 线程到会话的映射，跨重启
+	identity             *store.RobotIdentity // robot_user_bindings + robot_binding_codes: 平台账号到本地用户
 	alertWake            chan struct{}
 	audit                *audit.Service
 }
@@ -99,6 +100,7 @@ func NewRobotHandler(cfg *config.Config, db *database.DB, agentHandler *AgentHan
 		config:               cfg,
 		db:                   database.Narrow[database.RobotStore](db),
 		threadBindings:       newRobotSessionsStore(db),
+		identity:             newRobotIdentityStore(db),
 		agentHandler:         agentHandler,
 		logger:               logger,
 		sessions:             make(map[string]string),
@@ -174,7 +176,14 @@ func (h *RobotHandler) resolveRobotAccess(platform, userID string) (*database.RB
 	var err error
 	switch authorization.EffectiveMode() {
 	case config.RobotAuthModeUserBinding:
-		access, err = h.db.ResolveRobotRBACAccess(platform, userID)
+		boundID, found, resolveErr := h.identity.ResolveBoundUser(platform, userID)
+		if resolveErr != nil {
+			err = resolveErr
+		} else if !found {
+			err = fmt.Errorf("robot identity is not bound")
+		} else {
+			access, err = h.db.ResolveRBACAccess(boundID)
+		}
 	case config.RobotAuthModeServiceAccount:
 		if !authorization.ExternalUserAllowed(userID) {
 			return nil, fmt.Errorf("机器人发送者不在服务账号白名单中")
@@ -1147,7 +1156,13 @@ func (h *RobotHandler) cmdBindUser(platform, userID, code string) string {
 	if code == "" {
 		return "请提供绑定码，例如：绑定 ABCD-1234"
 	}
-	user, err := h.db.ConsumeRobotBindingCode(platform, userID, hashRobotBindingCode(code))
+	// The store answers which account the code belonged to; what that account may do, and its own
+	// record, stay with the RBAC layer.
+	boundID, err := h.identity.ConsumeBindingCode(platform, userID, hashRobotBindingCode(code))
+	if err != nil {
+		return "绑定失败：绑定码无效、已使用或已过期。请在网页端重新生成。"
+	}
+	user, err := h.db.GetRBACUserByID(boundID)
 	if err != nil {
 		return "绑定失败：绑定码无效、已使用或已过期。请在网页端重新生成。"
 	}
@@ -1190,7 +1205,7 @@ func (h *RobotHandler) executeUnbindUser(platform, userID string) string {
 	if accessErr != nil {
 		return "当前平台账号尚未绑定。"
 	}
-	if err := h.db.DeleteRobotIdentityBinding(platform, userID); err != nil {
+	if err := h.identity.DeleteBindingByIdentity(platform, userID); err != nil {
 		return "解绑失败，请稍后重试。"
 	}
 	sk := h.sessionKey(platform, userID)
@@ -1509,7 +1524,7 @@ func (h *RobotHandler) CreateRobotBindingCode(c *gin.Context) {
 	raw := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(random)
 	code := raw[:4] + "-" + raw[4:]
 	expiresAt := time.Now().Add(robotBindingCodeTTL)
-	if err := h.db.CreateRobotBindingCode(session.UserID, hashRobotBindingCode(code), expiresAt); err != nil {
+	if err := h.identity.CreateBindingCode(session.UserID, hashRobotBindingCode(code), expiresAt); err != nil {
 		h.logger.Warn("创建机器人绑定码失败", zap.String("user_id", session.UserID), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "生成绑定码失败"})
 		return
@@ -1529,7 +1544,7 @@ func (h *RobotHandler) ListMyRobotBindings(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
 		return
 	}
-	bindings, err := h.db.ListRobotUserBindings(session.UserID)
+	bindings, err := h.identity.ListBindings(session.UserID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取机器人绑定失败"})
 		return
@@ -1551,7 +1566,7 @@ func (h *RobotHandler) DeleteMyRobotBinding(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "未授权访问"})
 		return
 	}
-	if err := h.db.DeleteRobotUserBindingForUser(c.Param("id"), session.UserID); err != nil {
+	if err := h.identity.DeleteBindingForUser(c.Param("id"), session.UserID); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "绑定不存在"})
 		return
 	}

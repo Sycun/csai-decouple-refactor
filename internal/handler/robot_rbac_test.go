@@ -26,6 +26,9 @@ func TestRobotUsersAreResourceIsolated(t *testing.T) {
 	if err := db.BootstrapRBAC("hash", security.PermissionCatalog); err != nil {
 		t.Fatal(err)
 	}
+	if err := h.identity.EnsureSchema(); err != nil {
+		t.Fatalf("ensure robot identity schema: %v", err)
+	}
 	alice, err := db.CreateRBACUser("robot-alice", "Robot Alice", "hash", true, []string{database.RBACSystemRoleOperator})
 	if err != nil {
 		t.Fatal(err)
@@ -36,14 +39,20 @@ func TestRobotUsersAreResourceIsolated(t *testing.T) {
 	}
 	for externalID, user := range map[string]*database.RBACUser{"alice": alice, "bob": bob} {
 		code := "TEST-" + strings.ToUpper(externalID)
-		if err := db.CreateRobotBindingCode(user.ID, hashRobotBindingCode(code), time.Now().Add(time.Minute)); err != nil {
+		if err := h.identity.CreateBindingCode(user.ID, hashRobotBindingCode(code), time.Now().Add(time.Minute)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.ConsumeRobotBindingCode("wecom", externalID, hashRobotBindingCode(code)); err != nil {
+		boundID, err := h.identity.ConsumeBindingCode("wecom", externalID, hashRobotBindingCode(code))
+		if err != nil {
 			t.Fatal(err)
 		}
+		_ = boundID
 	}
-	aliceAccess, err := db.ResolveRobotRBACAccess("wecom", "alice")
+	boundID, found, err := h.identity.ResolveBoundUser("wecom", "alice")
+	if err != nil || !found {
+		t.Fatalf("alice's binding did not resolve: found=%v err=%v", found, err)
+	}
+	aliceAccess, err := h.db.ResolveRBACAccess(boundID)
 	if err != nil {
 		t.Fatal(err)
 	}

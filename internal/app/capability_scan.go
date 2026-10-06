@@ -330,6 +330,15 @@ func ensureAuditLogsSchema(db *database.DB) error {
 	return store.NewAuditLogs(db.DB).EnsureSchema()
 }
 
+// ensureRobotIdentitySchema creates robot_user_bindings and robot_binding_codes through the store that
+// owns them. Both carry a foreign key onto rbac_users, which NewDB has just created.
+func ensureRobotIdentitySchema(db *database.DB) error {
+	if db == nil {
+		return nil
+	}
+	return store.NewRobotIdentity(db.DB).EnsureSchema()
+}
+
 // ensureRobotSessionSchema creates robot_user_sessions through the store that owns it, including the
 // agent_mode column a base predating that field does not have.
 func ensureRobotSessionSchema(db *database.DB) error {

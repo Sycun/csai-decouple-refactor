@@ -138,25 +138,8 @@ func (db *DB) initRBACTables() error {
 			FOREIGN KEY (user_id) REFERENCES rbac_users(id) ON DELETE CASCADE,
 			UNIQUE(user_id, resource_type, resource_id)
 		);`,
-		`CREATE TABLE IF NOT EXISTS robot_user_bindings (
-			id TEXT PRIMARY KEY,
-			platform TEXT NOT NULL,
-			external_user_id TEXT NOT NULL,
-			rbac_user_id TEXT NOT NULL,
-			enabled INTEGER NOT NULL DEFAULT 1,
-			created_at DATETIME NOT NULL,
-			updated_at DATETIME NOT NULL,
-			FOREIGN KEY (rbac_user_id) REFERENCES rbac_users(id) ON DELETE CASCADE,
-			UNIQUE(platform, external_user_id)
-		);`,
-		`CREATE TABLE IF NOT EXISTS robot_binding_codes (
-			code_hash TEXT PRIMARY KEY,
-			rbac_user_id TEXT NOT NULL,
-			expires_at DATETIME NOT NULL,
-			used_at DATETIME,
-			created_at DATETIME NOT NULL,
-			FOREIGN KEY (rbac_user_id) REFERENCES rbac_users(id) ON DELETE CASCADE
-		);`,
+		// robot_user_bindings / robot_binding_codes 由 store.RobotIdentity 自己建，
+		// 见 internal/app 启动里的那一次 ensureRobotIdentitySchema。
 		`CREATE TABLE IF NOT EXISTS c2_payload_artifacts (
 			filename TEXT PRIMARY KEY,
 			payload_id TEXT NOT NULL,
@@ -168,8 +151,6 @@ func (db *DB) initRBACTables() error {
 		`CREATE INDEX IF NOT EXISTS idx_rbac_role_permissions_role ON rbac_role_permissions(role_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_rbac_assignments_user_resource ON rbac_resource_assignments(user_id, resource_type, resource_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_rbac_assignments_resource ON rbac_resource_assignments(resource_type, resource_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_robot_user_bindings_user ON robot_user_bindings(rbac_user_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_robot_binding_codes_expiry ON robot_binding_codes(expires_at);`,
 		`CREATE INDEX IF NOT EXISTS idx_c2_payload_artifacts_listener ON c2_payload_artifacts(listener_id);`,
 	}
 	for _, stmt := range stmts {

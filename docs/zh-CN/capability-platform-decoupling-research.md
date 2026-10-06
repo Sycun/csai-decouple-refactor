@@ -1618,6 +1618,45 @@ Go 的 `Parse` 里布局的空格也匹配 `T`、`.999999999` 也匹配短小数
 （消息直接说"机器人会话重启后不认线程"）；往 handler 塞一条 `SELECT session_key FROM robot_user_sessions`
 → 归属门禁红并报表名。两条都撤销即绿。
 
+### P6 数据层第十五片 —— 机器人身份绑定：把"哪个账号"和"这个账号能干什么"彻底分开
+
+`robot_user_bindings` + `robot_binding_codes` 两张表进 `store.RobotIdentity`，
+`internal/database/robot_identity.go` 删除，`*database.DB` **316 → 310**
+（发码 / 消费 / 解析 / 列表 / 两种删除，加上它们共用的私有 `normalizeRobotIdentity`）。
+建表与两条索引原来在 `rbac.go: initRBACTables` 的语句清单里，一并搬进 store 的 `EnsureSchema`，
+由启动的 `ensureRobotIdentitySchema` 执行（配 AST 接线门禁；`robot_user_bindings` 的外键指向刚建好的 `rbac_users`）。
+
+**这一刀真正修的是耦合方向**：原来 `ConsumeRobotBindingCode` 直接返回 `*database.RBACUser`、
+`ResolveRobotRBACAccess` 直接返回 `*database.RBACAccess`——身份表的主人顺手把权限域的
+类型与解析函数（`GetRBACUserByID` / `ResolveRBACAccess`）也拿在手里。现在 store 只回答
+**"这个码属于哪个账号"/"这个外部身份绑到哪个账号"**，`handler/robot.go` 再拿这个 user id 去问 RBAC
+（鉴权处与绑定处各一次显式组合，错误文案与原来逐字一致）。JOIN 里那句 `u.enabled = 1` **留在 SQL**
+（禁用账号的发码不可消费、已有绑定不可解析，这是行的谓词，不是权限计算）。
+
+**归属清单为什么先不放 `robot_user_bindings`**：`internal/database/vulnerability_alert.go` 的
+告警收件人查询 JOIN 了它（"这个漏洞要发到哪些平台账号"），那条查询按表归属属于**漏洞告警域**，
+要连同 `vulnerability_alert_subscriptions` 一起搬。先只把 `robot_binding_codes` 列入清单，
+并在 `ownership_test.go` 上方写清"另一张表等告警那一片一起认领，避免先半个声明就报泄漏"——
+这是"永远不为没做完的活写 0"那条纪律的用法。
+
+测试：**store 侧 10 条**真库（幂等建表与两索引、残缺身份/过期码/无主码一律拒、
+消费即单次使用且第二次既不成功也不回账号、**8 个 goroutine 抢一个码只有一个赢**、
+发码在同一事务里清掉本账号旧码且不动别人的码、禁用账号不可消费不可解析但**绑定行不删**、
+重绑替换指向、删账号级联带走绑定与未用码、历史时间写法读回（`2026-01-02T03:04:05Z` 与
+`…+08:00` 两种都过上一片的 `sqltime.Parse`）、无连接七处被拒）；
+**原有两条端到端鉴权测试改写为走组合路径**（`internal/database/robot_identity_test.go` 与
+`internal/handler/robot_rbac_test.go`、`vulnerability_alert_test.go` 三处），
+它们仍用真 RBAC bootstrap，钉住"权限来自实时角色而非绑定那一刻的快照"。
+
+**一处诚实的负结果**：我把 `RowsAffected != 1` 那道"已被使用"的守卫删掉后，
+8 路并发测试**仍然绿**——在这条连接上输者是被前面那条 SELECT（要求 `used_at IS NULL`）拒掉的，
+守卫在这套测试里不可达。它覆盖的是"两边都先 SELECT 成功"的交错，
+所以**留着**（成本是一行判断，省不掉的正确性代价是一次重复绑定），
+但注释与测试说明都改成"这里证明不了它"，不把它写成被测试保护的东西。
+
+探针三条：删启动那次 ensure → 接线门禁红；把 `u.enabled = 1` 摘掉 → 禁用账号那条测试红；
+（第三条：删单次使用的 UPDATE 守卫 → 如上所述**没有变红**，已作为负结果写进上文而不是隐藏。）
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

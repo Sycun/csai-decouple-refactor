@@ -131,6 +131,10 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	if err := ensureKnowledgeRetrievalSchema(db); err != nil {
 		log.Logger.Warn("初始化 knowledge_retrieval_logs 表失败", zap.Error(err))
 	}
+	// robot_user_bindings / robot_binding_codes have foreign keys onto rbac_users, created just above.
+	if err := ensureRobotIdentitySchema(db); err != nil {
+		log.Logger.Warn("初始化机器人绑定表失败", zap.Error(err))
+	}
 	// robot_user_sessions has a foreign key onto conversations, created just above.
 	if err := ensureRobotSessionSchema(db); err != nil {
 		log.Logger.Warn("初始化 robot_user_sessions 表失败", zap.Error(err))

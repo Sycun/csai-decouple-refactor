@@ -41,6 +41,7 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	knowledgeRetrievalSchema := 0
 	modelTokenUsageSchema := 0
 	robotSessionSchema := 0
+	robotIdentitySchema := 0
 	auditSchemaOffset := -1
 	usageSchemaOffset := -1
 	usageSchemaFile := ""
@@ -89,6 +90,10 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 						mcpProvisioned++
 					case "ensureKnowledgeRetrievalSchema":
 						knowledgeRetrievalSchema++
+					case "ensureRobotIdentitySchema":
+						// The two binding tables left the RBAC start-up sweep; created nowhere, a
+						// fresh install would fail the first 绑定 command it ever received.
+						robotIdentitySchema++
 					case "ensureRobotSessionSchema":
 						// The table left the data layer's start-up sweep; without this it is only
 						// ever created on installations that predate the cut.
@@ -238,6 +243,10 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 			"offset %d, ensureModelTokenUsageSchema at %d): its history carry-over reads process_details, "+
 			"so running it earlier fails with \"no such table\" and the usage page stays empty",
 			newDBOffset, usageSchemaOffset)
+	}
+	if robotIdentitySchema < 1 {
+		t.Fatalf("ensureRobotIdentitySchema is never called at boot: robot_user_bindings left the RBAC " +
+			"sweep, so a fresh base would have nowhere to store a binding and every 绑定 command fails")
 	}
 	if robotSessionSchema < 1 {
 		t.Fatalf("ensureRobotSessionSchema is never called at boot: a robot conversation would not " +

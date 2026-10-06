@@ -300,13 +300,10 @@ var _ RBACStore = (*DB)(nil)
 
 // RobotStore is the persistence surface required by RobotHandler.
 type RobotStore interface {
-	ConsumeRobotBindingCode(platform, externalUserID, codeHash string) (*RBACUser, error)
+	GetRBACUserByID(id string) (*RBACUser, error)
 	CreateConversation(title string, meta ConversationCreateMeta) (*Conversation, error)
 	CreateProject(p *Project) (*Project, error)
-	CreateRobotBindingCode(userID, codeHash string, expiresAt time.Time) error
 	DeleteConversation(id string) error
-	DeleteRobotIdentityBinding(platform, externalUserID string) error
-	DeleteRobotUserBindingForUser(bindingID, userID string) error
 	EnqueueVulnerabilityAlertDeliveries(vulnerabilityID string, recipients []VulnerabilityAlertRecipient) error
 	GetConversation(id string) (*Conversation, error)
 	GetConversationProjectID(conversationID string) (string, error)
@@ -315,12 +312,10 @@ type RobotStore interface {
 	ListConversationsForAccess(limit, offset int, search, sortBy, projectID, userID, scope string) ([]*Conversation, error)
 	ListDueVulnerabilityAlertDeliveries(limit int) ([]VulnerabilityAlertDelivery, error)
 	ListProjectsForAccess(status, search string, limit, offset int, userID, scope string) ([]*Project, error)
-	ListRobotUserBindings(userID string) ([]RobotUserBinding, error)
 	ListVulnerabilityAlertRecipients(vuln *Vulnerability) ([]VulnerabilityAlertRecipient, error)
 	MarkVulnerabilityAlertDeliveryFailed(id int64, attempts int, sendErr error) error
 	MarkVulnerabilityAlertDeliverySent(id int64) error
 	ResolveRBACAccess(userID string) (*RBACAccess, error)
-	ResolveRobotRBACAccess(platform, externalUserID string) (*RBACAccess, error)
 	SetConversationProjectID(conversationID, projectID string) error
 	SetResourceOwner(resourceType, resourceID, userID string) error
 	UpdateConversationTitle(id, title string) error
@@ -341,7 +336,6 @@ type VulnerabilityStore interface {
 	GetVulnerabilityAlertSubscription(userID string) (*VulnerabilityAlertSubscription, error)
 	GetVulnerabilityFilterOptionsForAccess(access RBACListAccess) (map[string][]string, error)
 	GetVulnerabilityStatsForAccess(filter VulnerabilityListFilter, access RBACListAccess) (map[string]interface{}, error)
-	ListRobotUserBindings(userID string) ([]RobotUserBinding, error)
 	ListVulnerabilitiesForAccess(limit, offset int, filter VulnerabilityListFilter, access RBACListAccess) ([]*Vulnerability, error)
 	NotifyVulnerabilityCreated(vulnerability *Vulnerability)
 	SetResourceOwner(resourceType, resourceID, userID string) error

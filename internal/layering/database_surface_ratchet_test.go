@@ -37,7 +37,9 @@ import (
 // the four the method list shows: the counter counts every *DB receiver, exported or not.
 // 320 -> 316: robot_user_sessions moved whole - the read, the write, the delete, and the private
 // migrateRobotUserSessionsTable that backfilled its one late column.
-const dbMethodCeiling = 316
+// 316 -> 310: robot_user_bindings + robot_binding_codes moved whole - the code issue, the spend, the
+// resolve, the list, both deletes, and the private normalizer they shared.
+const dbMethodCeiling = 310
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)
