@@ -773,8 +773,11 @@ grep -rn go:embed --include='*.go' . | grep -v _test | wc -l       # 3（原 0�
 当前基线（2026-10-06 第十四片后复测，全部为当场命令输出）：`make fmt-check` **硬零（gofmt: clean）**、
 `go build ./...` 干净、`go vet ./...` 干净、`make test-gates`（= 同步测试树 + verify + gofmt + vet +
 `go test -race -count=1 ./...` + js 检查 + layering + wiring + build）**exit 0，69 个 ok 行、
-其中含测试的包 47 个、0 竞争**；测试函数 **1476** 个（重构前 HEAD 为 989，**+487**），
-`internal/store` 生产文件 **18 个**、包内测试 **131** 条。
+其中含测试的包 47 个、0 竞争**；测试函数 **1473** 个（重构前 HEAD 为 989，**+484**），
+`internal/store` 生产文件 **17 个**、包内测试 **128** 条。三条数字均为本片当场命令的第一手读数
+（`grep -rh "^func Test" --include='*_test.go' internal cmd | wc -l`、`ls internal/store/*.go | grep -v _test | wc -l`、
+同形命令数 `internal/store/*_test.go` 里的 `^func Test`）；上一版此处写的是凭记忆的数字，被同一条命令当场否掉——
+这类错误只能靠"先跑命令再落笔"防，不能靠提醒自己。
 `AgentHandler` 水位 **88 方法 / 20 文件**（起点 130 / 23；由 `TestHandlerSizesOnlyShrink` 钉住）。
 写这段数字时按 `grep -rlE '^func \([a-z] \*AgentHandler\)'` 当场复测出 **20** 个文件，而门禁上限还写着
 **21**——那是第五刀之后一次下降只进了 log、上限没人跟。已收紧为 20 并在常量旁写下原因；
