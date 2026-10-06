@@ -650,7 +650,8 @@ func (db *DB) migrateMessagesTable() error {
 	}
 
 	// 回填已有数据：让 updated_at 至少等于 created_at，避免前端出现空/当前时间回退。
-	_, _ = db.Exec("UPDATE messages SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''")
+	// 这条 UPDATE 归表的拥有者，所以这里只负责在原来的位置调用它，并沿用"失败也继续启动"。
+	_ = store.NewSession(db.DB).BackfillMessageUpdatedAt()
 
 	// reasoning_content：DeepSeek 思考模式 + 工具调用续跑；与 last_react_input 互补，供消息表回退路径回放
 	var rcColCount int

@@ -299,15 +299,13 @@ func TestStoreWritesOnlyTablesItOwns(t *testing.T) {
 	}
 }
 
-// writeDebt records the store-owned tables that are still written from the data layer as well, by
-// file and by statement count measured when this gate was written (2026-10-06). It is a ceiling, not
-// an approval: `messages` and `process_details` belong to store.Session while the conversation
-// domain still writes them, and the session/event-sourcing slice has to take those statements with it
-// and delete the line here. A new file, or a higher count for a listed one, fails the gate.
-var writeDebt = map[string]map[string]int{
-	"messages":        {"internal/database/conversation.go": 3, "internal/database/database.go": 1},
-	"process_details": {"internal/database/conversation.go": 3},
-}
+// writeDebt is the exemption list for store-owned tables that the data layer still writes. It is
+// empty as of 2026-10-06: the last seven statements - three writes to `messages` and three to
+// `process_details` in internal/database/conversation.go, plus the updated_at backfill that ran at
+// start-up - went to store.Session, the owner of both tables. `TestNoLedgerTableIsWrittenByADebtFile`
+// below pins it empty, so adding a line here has to be a decision someone argues for, not a way to get
+// a failing gate to pass.
+var writeDebt = map[string]map[string]int{}
 
 // TestWriteLedgerTablesHaveOneWriterEach is the repo-wide half of the write ledger: a table listed
 // there may be changed by the files named for it and by nobody else. Reads stay free - see the note
@@ -316,6 +314,27 @@ var writeDebt = map[string]map[string]int{
 // This is what keeps an extracted domain from quietly gaining a second writer later. That is how
 // project_facts ended up with one: a cascade that belonged to the other table's owner was written
 // inline because the statement was already at hand.
+// TestNoLedgerTableIsWrittenByADebtFile turns "one writer per table" from a shrinking claim into a
+// standing one. It fails if the exemption list gains an entry, and it fails if the scan stops finding
+// writes at all - an empty scan would otherwise look identical to an empty debt.
+func TestNoLedgerTableIsWrittenByADebtFile(t *testing.T) {
+	if len(writeDebt) != 0 {
+		var entries []string
+		for table, byFile := range writeDebt {
+			for file, ceiling := range byFile {
+				entries = append(entries, table+" <- "+file+" ("+strconv.Itoa(ceiling)+")")
+			}
+		}
+		sort.Strings(entries)
+		t.Fatalf("the write ledger carries %d debt exemptions (%v): every store-owned table has had exactly "+
+			"one writer since 2026-10-06, so a new line here is a second writer being approved. Hand the "+
+			"statement to the table's owner instead.", len(writeDebt), entries)
+	}
+	if len(writeLedger) < 34 {
+		t.Fatalf("the ledger lists %d tables (floor 34): the scan has gone blind, which would make an empty debt list meaningless", len(writeLedger))
+	}
+}
+
 func TestWriteLedgerTablesHaveOneWriterEach(t *testing.T) {
 	root := moduleRoot(t)
 	tables := createdTables(t, root)

@@ -861,12 +861,9 @@ func (db *DB) AddMessage(conversationID, role, content string, mcpExecutionIDs [
 		}
 	}
 
-	_, err := db.Exec(
-		"INSERT INTO messages (id, conversation_id, role, content, reasoning_content, mcp_execution_ids, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-		id, conversationID, role, content, "", mcpIDsJSON, now, now,
-	)
+	err := newSession(db).InsertMessage(id, conversationID, role, content, "", mcpIDsJSON, now)
 	if err != nil {
-		return nil, fmt.Errorf("添加消息失败: %w", err)
+		return nil, err
 	}
 
 	// 更新对话时间
@@ -897,14 +894,7 @@ func (db *DB) UpdateAssistantMessageFinalize(messageID, content string, mcpExecu
 		}
 		mcpIDsJSON = string(jsonData)
 	}
-	_, err := db.Exec(
-		"UPDATE messages SET content = ?, mcp_execution_ids = ?, reasoning_content = ?, updated_at = ? WHERE id = ?",
-		content, mcpIDsJSON, strings.TrimSpace(reasoningContent), time.Now(), messageID,
-	)
-	if err != nil {
-		return fmt.Errorf("更新助手消息失败: %w", err)
-	}
-	return nil
+	return newSession(db).FinalizeAssistantMessage(messageID, content, mcpIDsJSON, strings.TrimSpace(reasoningContent))
 }
 
 // GetMessages 获取对话的所有消息
@@ -1053,21 +1043,9 @@ func (db *DB) DeleteConversationTurn(conversationID, anchorMessageID string) (de
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	ph := strings.Repeat("?,", len(deletedIDs))
-	ph = ph[:len(ph)-1]
-	args := make([]interface{}, 0, 1+len(deletedIDs))
-	args = append(args, conversationID)
-	for _, id := range deletedIDs {
-		args = append(args, id)
-	}
-	res, err := tx.Exec(
-		"DELETE FROM messages WHERE conversation_id = ? AND id IN ("+ph+")",
-		args...,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("delete messages: %w", err)
-	}
-	n, err := res.RowsAffected()
+	ids := make([]string, len(deletedIDs))
+	copy(ids, deletedIDs)
+	n, err := newSession(db).DeleteMessagesInTurn(tx, conversationID, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -1197,12 +1175,9 @@ func (db *DB) AddProcessDetailWithID(messageID, conversationID, eventType, messa
 		}
 	}
 
-	_, err := db.Exec(
-		"INSERT INTO process_details (id, message_id, conversation_id, event_type, message, data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		id, messageID, conversationID, eventType, message, dataJSON, time.Now(),
-	)
+	err := newSession(db).InsertProcessDetail(id, messageID, conversationID, eventType, message, dataJSON)
 	if err != nil {
-		return "", fmt.Errorf("添加过程详情失败: %w", err)
+		return "", err
 	}
 
 	if err := store.NewModelTokenUsage(db.DB).RecordFromProcessDetail(messageID, conversationID, id, eventType, data); err != nil && db.logger != nil {
@@ -1226,26 +1201,12 @@ func (db *DB) UpdateProcessDetailContent(id, message string, data interface{}) e
 		}
 		dataJSON = string(jsonData)
 	}
-	result, err := db.Exec(
-		"UPDATE process_details SET message = ?, data = ? WHERE id = ?",
-		message, dataJSON, strings.TrimSpace(id),
-	)
-	if err != nil {
-		return fmt.Errorf("更新过程详情失败: %w", err)
-	}
-	if affected, affectedErr := result.RowsAffected(); affectedErr == nil && affected == 0 {
-		return fmt.Errorf("过程详情不存在: %s", id)
-	}
-	return nil
+	return newSession(db).UpdateProcessDetailContent(id, message, dataJSON)
 }
 
 // DeleteProcessDetail 删除被判定为工具结果回显的临时规划记录。
 func (db *DB) DeleteProcessDetail(id string) error {
-	_, err := db.Exec("DELETE FROM process_details WHERE id = ?", strings.TrimSpace(id))
-	if err != nil {
-		return fmt.Errorf("删除过程详情失败: %w", err)
-	}
-	return nil
+	return newSession(db).DeleteProcessDetail(id)
 }
 
 // GetProcessDetails 获取消息的过程详情

@@ -2842,6 +2842,48 @@ SQLite 因为 `idx_batch_task_queues_title` 占用而**拒绝** DROP `title` 这
 消费者面少了一个域）。`gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿；
 `internal/audit` 新增 1 个测试函数，全仓测试函数 **1575 → 1576**。
 
+### P6 第三十五刀 —— 写账本上的最后两条债还清：`messages` 与 `process_details` 各只剩一个写入者
+
+`writeLedger` 认领 34 张表，但里面**一直有两条债**：`messages`（会话域 3 条写 + 启动回填 1 条）与
+`process_details`（会话域 3 条）明明归 `store.Session`，却仍由 `internal/database/conversation.go`
+亲自写。这一刀把那 **7 条语句**逐字搬进 `store.Session`：`InsertMessage` /
+`FinalizeAssistantMessage` / `DeleteMessagesInTurn`（收调用方的 `*sql.Tx`，与
+`Facts.UnlinkFindingReferences` 同一先例）/ `InsertProcessDetail` / `UpdateProcessDetailContent` /
+`DeleteProcessDetail` / `BackfillMessageUpdatedAt`（原 `migrateMessagesTable` 里那句
+`UPDATE messages SET updated_at = created_at …`，仍在原位、仍"失败也继续启动"）。
+调用点经 `internal/database/session_store.go` 的 `newSession(db)`（**nil 连接给 nil 句柄**，同前几刀）。
+
+**为什么 `*DB` 方法数不动（实测 191）**：搬的是**语句**不是方法——`AddMessage` 这些方法的
+事务、日志、返回值组装都还在会话域，它现在向表的主人**要一条语句**。
+所以本刀的交付是"归属"而不是"水位"：**`writeDebt` 清空，34 张表全部只有一个写入者**。
+错误文本一律**逐字保留**（`添加消息失败` / `更新助手消息失败` / `过程详情不存在: ` 前缀 /
+`添加过程详情失败` / `更新过程详情失败` / `删除过程详情失败`），其中几条会直接进 HTTP 响应。
+
+**新门禁 `TestNoLedgerTableIsWrittenByADebtFile`**：把"只降的债"翻成**standing 断言**——
+`writeDebt` 必须为空，并带一条"账本至少 34 张表"的反空跑下限（否则"没有债"会因为扫不到东西而显得成立）。
+两道探针各自验红：① 往 `internal/handler` 塞一句 `UPDATE messages …` →
+`tables owned by a store are written from elsewhere: [messages <- …: 1 writes, none allowed]`；
+② 往 `writeDebt` 加回一行 → `the write ledger carries 1 debt exemptions
+([messages <- internal/database/conversation.go (1)]) … every store-owned table has had exactly one writer
+since 2026-10-06`；各自撤回复绿。
+
+**语句本身按真实 schema 钉住**（新 `internal/database/session_writes_parity_test.go` **5 个用例**，零 mock）：
+`AddMessage` 写满八列且 `created_at == updated_at`、空 id 列表落成 `''` 而不是 `'null'`；
+`UpdateAssistantMessageFinalize` 动 `updated_at` 不动 `created_at`、思考链**先 trim 再写**、
+nil ids 清空该列；过程详情**原地续写不新增行**（`COUNT(*)==1`）、缺行时报"过程详情不存在"、
+重复删除是静默空操作（原行为）；`DeleteConversationTurn` 只删这一轮、别的会话一行不动、
+**nil tx 必须被拒**（否则调用方还没决定回滚就已经删了）、空 id 列表答 0 而不是拼出 `IN ()`；
+启动回填用**同一个文件二次开库**验：`updated_at=''` 的旧行被补成 `created_at` 的值。
+存储层拿不到这两张表的 DDL（还归会话域），所以**没有**为这些语句造一份手搓建表脚本——
+覆盖放在真实 schema 那一侧，store 侧只补了无连接即拒与 nil 事务即拒的断言。
+
+**逐字等价证明**：7 条语句在 HEAD 里的原文与 store 里一一对上（只有拼占位符的局部变量名从 `ph`
+改成 `placeholders`），数据层侧这 7 条现在**一条都不剩**。
+
+**账（实测）**：`*database.DB` **191**（未变）；`internal/store` 包内测试 **205 → 206**；
+全仓测试函数 **1582**；`writeLedger` 34 张表、**`writeDebt` 0 条**；
+`gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

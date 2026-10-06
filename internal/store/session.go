@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -269,4 +270,132 @@ func (s *Session) appendFragment(id, fragment, emptyClause string) (int64, error
 		return 0, fmt.Errorf("count message fragment append: %w", err)
 	}
 	return n, nil
+}
+
+// The six statements below were the last writes to `messages` and `process_details` still written
+// from the data layer - the two entries the write ledger carried as debt. They moved here so every
+// table this package claims has exactly one writer, and each keeps its own error text: some of these
+// strings are returned to the console, so a paraphrase would be a wire change.
+
+// InsertMessage writes one message row. The caller generates the id and the timestamp so the value
+// it returns afterwards carries the same ones, and marshals mcpExecutionIDs because that is a
+// presentation concern of the caller, not of the row.
+func (s *Session) InsertMessage(id, conversationID, role, content, reasoningContent, mcpIDsJSON string, now time.Time) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO messages (id, conversation_id, role, content, reasoning_content, mcp_execution_ids, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		id, conversationID, role, content, reasoningContent, mcpIDsJSON, now, now,
+	); err != nil {
+		return fmt.Errorf("添加消息失败: %w", err)
+	}
+	return nil
+}
+
+// FinalizeAssistantMessage writes the end state of an assistant placeholder: body, MCP ids and the
+// aggregated reasoning text that the replay path reads back when a run left no trajectory behind.
+func (s *Session) FinalizeAssistantMessage(messageID, content, mcpIDsJSON, reasoningContent string) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(
+		"UPDATE messages SET content = ?, mcp_execution_ids = ?, reasoning_content = ?, updated_at = ? WHERE id = ?",
+		content, mcpIDsJSON, reasoningContent, time.Now(), messageID,
+	); err != nil {
+		return fmt.Errorf("更新助手消息失败: %w", err)
+	}
+	return nil
+}
+
+// DeleteMessagesInTurn removes one turn's rows on the caller's transaction, because the count has to
+// agree with the ids the caller picked before anything was written. It answers the number of rows
+// removed so the caller can still refuse a partial delete.
+func (s *Session) DeleteMessagesInTurn(tx *sql.Tx, conversationID string, messageIDs []string) (int64, error) {
+	if err := s.requireDB(); err != nil {
+		return 0, err
+	}
+	if tx == nil {
+		return 0, errors.New("store: deleting a turn requires the caller's transaction")
+	}
+	if len(messageIDs) == 0 {
+		return 0, nil
+	}
+	placeholders := strings.Repeat("?,", len(messageIDs))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, 0, 1+len(messageIDs))
+	args = append(args, conversationID)
+	for _, id := range messageIDs {
+		args = append(args, id)
+	}
+	res, err := tx.Exec(
+		"DELETE FROM messages WHERE conversation_id = ? AND id IN ("+placeholders+")",
+		args...,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("delete messages: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// InsertProcessDetail writes one step of a run's visible trace.
+func (s *Session) InsertProcessDetail(id, messageID, conversationID, eventType, message, dataJSON string) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO process_details (id, message_id, conversation_id, event_type, message, data, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		id, messageID, conversationID, eventType, message, dataJSON, time.Now(),
+	); err != nil {
+		return fmt.Errorf("添加过程详情失败: %w", err)
+	}
+	return nil
+}
+
+// UpdateProcessDetailContent rewrites a streaming detail in place, which is what keeps one planning
+// output from becoming one row per token. A missing row is an error, not a silent zero: the caller is
+// mid-stream and has already promised this id to the page.
+func (s *Session) UpdateProcessDetailContent(id, message, dataJSON string) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	result, err := s.db.Exec(
+		"UPDATE process_details SET message = ?, data = ? WHERE id = ?",
+		message, dataJSON, strings.TrimSpace(id),
+	)
+	if err != nil {
+		return fmt.Errorf("更新过程详情失败: %w", err)
+	}
+	if affected, affectedErr := result.RowsAffected(); affectedErr == nil && affected == 0 {
+		return fmt.Errorf("过程详情不存在: %s", id)
+	}
+	return nil
+}
+
+// DeleteProcessDetail removes a planning row that turned out to be a tool-result echo.
+func (s *Session) DeleteProcessDetail(id string) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec("DELETE FROM process_details WHERE id = ?", strings.TrimSpace(id)); err != nil {
+		return fmt.Errorf("删除过程详情失败: %w", err)
+	}
+	return nil
+}
+
+// BackfillMessageUpdatedAt gives rows written before `updated_at` existed at least their creation
+// time, so the console cannot fall back to "now" for a message that finished long ago. It runs once
+// at start-up and tolerates a database that has no such column yet.
+func (s *Session) BackfillMessageUpdatedAt() error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec("UPDATE messages SET updated_at = created_at WHERE updated_at IS NULL OR updated_at = ''"); err != nil {
+		return fmt.Errorf("回填 messages.updated_at 失败: %w", err)
+	}
+	return nil
 }
