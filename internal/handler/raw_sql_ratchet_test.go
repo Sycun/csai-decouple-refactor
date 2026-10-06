@@ -23,7 +23,7 @@ var rawSQLBaselines = map[string]int{
 	// messages domain followed - one UPDATE repeated at fifteen sites across six files, plus a
 	// near-twin CASE append pair, now internal/store.Session - and finally the notification
 	// digest's two reads of other domains' tables, which are now
-	// store.Vulnerability.RecentFindings and store.Execution.FailedSince.
+	// store.Vulnerabilities.RecentFindings and store.Execution.FailedSince.
 	// Zero means zero: the transport layer assembles no SQL any more.
 	"h.db": 0,
 	// HITLManager: 17 statements moved into internal/store (schema creation and the
