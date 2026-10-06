@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/google/uuid"
 )
@@ -35,7 +35,7 @@ func executeNode(ctx context.Context, args RunArgs, runID string, node graphNode
 		},
 	}
 	inputJSON, _ := json.Marshal(input)
-	if err := args.DB.CreateWorkflowNodeRun(&database.WorkflowNodeRun{
+	if err := args.DB.CreateWorkflowNodeRun(&store.WorkflowNodeRun{
 		ID:        nodeRunID,
 		RunID:     runID,
 		NodeID:    node.ID,

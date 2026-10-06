@@ -168,18 +168,20 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		}
 	}
 
+	// workflow 包交换表的生命周期清理归它的 store；这里是开机一次 + 每小时一次。
+	workflows := store.NewWorkflows(db.DB)
 	auditSvc := audit.NewService(db, cfg, log.Logger)
 	audit.RegisterConversationCreateHook(auditSvc)
 	auditSvc.PurgeExpired()
 	audit.StartRetentionLoop(auditSvc, log.Logger)
-	if err := db.PurgeWorkflowPackageLifecycle(time.Now().UTC()); err != nil {
+	if err := workflows.PurgeWorkflowPackageLifecycle(time.Now().UTC()); err != nil {
 		log.Logger.Warn("清理过期工作流包记录失败", zap.Error(err))
 	}
 	go func() {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
 		for range ticker.C {
-			if err := db.PurgeWorkflowPackageLifecycle(time.Now().UTC()); err != nil {
+			if err := workflows.PurgeWorkflowPackageLifecycle(time.Now().UTC()); err != nil {
 				log.Logger.Warn("清理过期工作流包记录失败", zap.Error(err))
 			}
 		}

@@ -38,20 +38,9 @@ type ToolExecutionLedger interface {
 
 var _ ToolExecutionLedger = (*DB)(nil)
 
-// WorkflowRunLedger is the workflow engine's own run state: which run is executing, which node is
-// awaiting approval, and how each finished. Anything broader than this is another domain's table.
-type WorkflowRunLedger interface {
-	CreateWorkflowRun(run *WorkflowRun) error
-	GetWorkflowRun(runID string) (*WorkflowRun, error)
-	SetWorkflowRunStatus(runID, status string) error
-	SetWorkflowRunAwaitingHITL(runID, nodeID, pendingJSON string) error
-	FinishWorkflowRun(runID, status, outputJSON, errText string) error
-	CreateWorkflowNodeRun(n *WorkflowNodeRun) error
-	FinishWorkflowNodeRun(nodeRunID, status, outputJSON, errText string) error
-	GetWorkflowDefinition(id string) (*WorkflowDefinition, error)
-}
-
-var _ WorkflowRunLedger = (*DB)(nil)
+// WorkflowRunLedger used to live here. The five workflow tables moved to store.Workflows, and the
+// ledger the engine declares is now in internal/workflow - so this file no longer carries a workflow
+// surface at all, and internal/workflow no longer imports this package.
 
 // AttackChainLedger is what the attack-chain builder and the "promote to project" path need: the
 // chain's node/edge rows, the conversation evidence they are reconstructed from, and - because

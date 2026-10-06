@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"cyberstrike-ai/internal/config"
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -26,7 +26,7 @@ func ShouldAutoRunRoleWorkflow(role config.RoleConfig) bool {
 
 // RunRoleBoundWorkflow executes the persisted role-bound workflow via cached Eino Workflow.
 func RunRoleBoundWorkflow(ctx context.Context, args RunArgs) (*RunResult, error) {
-	if args.DB == nil {
+	if args.DB.Missing() {
 		return nil, fmt.Errorf("workflow db is nil")
 	}
 	workflowID := strings.TrimSpace(args.Role.WorkflowID)
@@ -60,7 +60,7 @@ func RunRoleBoundWorkflow(ctx context.Context, args RunArgs) (*RunResult, error)
 		"workflowVersion": wf.Version,
 	}
 	inputJSON, _ := json.Marshal(input)
-	run := &database.WorkflowRun{
+	run := &store.WorkflowRun{
 		ID:              runID,
 		WorkflowID:      wf.ID,
 		WorkflowVersion: wf.Version,

@@ -60,7 +60,7 @@ func extractAwaitingHITL(err error, art *compiledArtifact, runID string, args Ru
 	}
 	prompt := resolveHITLPromptBinding(node.Config, state)
 	label := firstNonEmpty(node.Label, nodeID)
-	if args.DB != nil {
+	if !args.DB.Missing() {
 		pending := map[string]any{
 			"nodeId":        nodeID,
 			"label":         label,

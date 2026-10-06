@@ -97,7 +97,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 
 	progress := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, sendEvent)
 	result, err := workflowrunner.RunRoleBoundWorkflow(taskCtx, workflowrunner.RunArgs{
-		DB:                 h.db,
+		DB:                 workflowrunner.Store{Store: h.db, Ledger: h.runs},
 		Logger:             h.logger,
 		Role:               role,
 		AppCfg:             h.config,
@@ -241,7 +241,7 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 
 	progress := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, nil)
 	result, err := workflowrunner.RunRoleBoundWorkflow(taskCtx, workflowrunner.RunArgs{
-		DB:                 h.db,
+		DB:                 workflowrunner.Store{Store: h.db, Ledger: h.runs},
 		Logger:             h.logger,
 		Role:               role,
 		AppCfg:             h.config,

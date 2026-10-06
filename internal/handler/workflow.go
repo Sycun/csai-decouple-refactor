@@ -12,12 +12,14 @@ import (
 	"cyberstrike-ai/internal/database"
 	workflowrunner "cyberstrike-ai/internal/workflow"
 
+	"cyberstrike-ai/internal/store"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
 type WorkflowHandler struct {
 	db     database.WorkflowStore
+	runs   *store.Workflows // 五张 workflow 表：定义、运行、节点运行、包检查与包导入
 	logger *zap.Logger
 	audit  *audit.Service
 	agent  *agent.Agent
@@ -25,7 +27,7 @@ type WorkflowHandler struct {
 }
 
 func NewWorkflowHandler(db *database.DB, logger *zap.Logger) *WorkflowHandler {
-	return &WorkflowHandler{db: database.Narrow[database.WorkflowStore](db), logger: logger}
+	return &WorkflowHandler{db: database.Narrow[database.WorkflowStore](db), runs: newWorkflowStore(db), logger: logger}
 }
 
 func (h *WorkflowHandler) SetAudit(s *audit.Service) {
@@ -56,7 +58,7 @@ type workflowGenerateDraftRequest struct {
 
 func (h *WorkflowHandler) List(c *gin.Context) {
 	includeDisabled := strings.EqualFold(c.Query("includeDisabled"), "true") || c.Query("include_disabled") == "1"
-	items, err := h.db.ListWorkflowDefinitions(includeDisabled)
+	items, err := h.runs.ListWorkflowDefinitions(includeDisabled)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -66,7 +68,7 @@ func (h *WorkflowHandler) List(c *gin.Context) {
 
 func (h *WorkflowHandler) Get(c *gin.Context) {
 	id := strings.TrimSpace(c.Param("id"))
-	wf, err := h.db.GetWorkflowDefinition(id)
+	wf, err := h.runs.GetWorkflowDefinition(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -214,7 +216,7 @@ func (h *WorkflowHandler) save(c *gin.Context, pathID string) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
-	wf := &database.WorkflowDefinition{
+	wf := &store.WorkflowDefinition{
 		ID:          id,
 		Name:        name,
 		Description: strings.TrimSpace(req.Description),
@@ -222,14 +224,14 @@ func (h *WorkflowHandler) save(c *gin.Context, pathID string) {
 		GraphJSON:   string(graph),
 		Enabled:     enabled,
 	}
-	if err := h.db.UpsertWorkflowDefinition(wf); err != nil {
+	if err := h.runs.UpsertWorkflowDefinition(wf); err != nil {
 		if h.logger != nil {
 			h.logger.Warn("保存工作流失败", zap.String("id", id), zap.Error(err))
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	saved, _ := h.db.GetWorkflowDefinition(id)
+	saved, _ := h.runs.GetWorkflowDefinition(id)
 	workflowrunner.InvalidateCompiledCache(id)
 	if h.audit != nil {
 		h.audit.RecordOK(c, "workflow", "save", "保存工作流", "workflow", id, map[string]interface{}{"name": name})
@@ -243,7 +245,7 @@ func (h *WorkflowHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "工作流 id 不能为空"})
 		return
 	}
-	if err := h.db.DeleteWorkflowDefinition(id); err != nil {
+	if err := h.runs.DeleteWorkflowDefinition(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

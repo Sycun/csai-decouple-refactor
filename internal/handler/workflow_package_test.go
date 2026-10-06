@@ -13,6 +13,7 @@ import (
 
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 	workflowrunner "cyberstrike-ai/internal/workflow"
 	workflowpkg "cyberstrike-ai/internal/workflow/package"
 
@@ -74,7 +75,7 @@ func TestWorkflowPackageHandlerInspectionAndCreateImport(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("import status=%d body=%s", w.Code, w.Body.String())
 	}
-	saved, _ := db.GetWorkflowDefinition("wf-api")
+	saved, _ := store.NewWorkflows(db.DB).GetWorkflowDefinition("wf-api")
 	if saved == nil || saved.Version != 1 {
 		t.Fatalf("saved=%#v", saved)
 	}

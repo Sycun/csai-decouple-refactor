@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
 	workflowrunner "cyberstrike-ai/internal/workflow"
 	workflowpkg "cyberstrike-ai/internal/workflow/package"
 
+	"cyberstrike-ai/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
@@ -31,7 +31,7 @@ type workflowPackageImportRequest struct {
 }
 
 func (h *WorkflowHandler) ExportPackage(c *gin.Context) {
-	wf, err := h.db.GetWorkflowDefinition(c.Param("id"))
+	wf, err := h.runs.GetWorkflowDefinition(c.Param("id"))
 	if err != nil {
 		writeWorkflowPackageError(c, http.StatusInternalServerError, "WFPKG_EXPORT_FAILED", "导出工作流包失败", nil)
 		return
@@ -107,14 +107,14 @@ func (h *WorkflowHandler) CreatePackageInspection(c *gin.Context) {
 		return
 	}
 	inspectionJSON, _ := json.Marshal(summary)
-	record := &database.WorkflowPackageInspection{ID: summary.ID, PackageHash: inspected.PackageHash, ManifestJSON: string(manifestJSON), WorkflowPayloadJSON: string(payloadJSON), InspectionJSON: string(inspectionJSON), SourceWorkflowID: inspected.Document.ID, SourceRevision: inspected.Document.Version, SourceContentHash: inspected.ContentHash, SourceGraphHash: inspected.GraphHash, LocalConflictState: state, CreatedBy: session.UserID, CreatedAt: time.Now().UTC(), ExpiresAt: summary.ExpiresAt}
+	record := &store.WorkflowPackageInspection{ID: summary.ID, PackageHash: inspected.PackageHash, ManifestJSON: string(manifestJSON), WorkflowPayloadJSON: string(payloadJSON), InspectionJSON: string(inspectionJSON), SourceWorkflowID: inspected.Document.ID, SourceRevision: inspected.Document.Version, SourceContentHash: inspected.ContentHash, SourceGraphHash: inspected.GraphHash, LocalConflictState: state, CreatedBy: session.UserID, CreatedAt: time.Now().UTC(), ExpiresAt: summary.ExpiresAt}
 	if local != nil {
 		content, graph, _, _ := workflowpkg.DocumentHashes(workflowPackageDocument(local))
 		record.LocalWorkflowID = local.ID
 		record.LocalContentHash = content
 		record.LocalGraphHash = graph
 	}
-	if err := h.db.CreateWorkflowPackageInspection(record); err != nil {
+	if err := h.runs.CreateWorkflowPackageInspection(record); err != nil {
 		writeWorkflowPackageError(c, http.StatusInternalServerError, "WFPKG_IMPORT_FAILED", "保存预检失败", nil)
 		return
 	}
@@ -130,7 +130,7 @@ func (h *WorkflowHandler) GetPackageInspection(c *gin.Context) {
 		writeWorkflowPackageError(c, http.StatusUnauthorized, "WFPKG_INSPECTION_NOT_FOUND", "未授权访问", nil)
 		return
 	}
-	v, err := h.db.GetWorkflowPackageInspection(c.Param("inspectionId"), session.UserID)
+	v, err := h.runs.GetWorkflowPackageInspection(c.Param("inspectionId"), session.UserID)
 	if err != nil {
 		writeWorkflowPackageError(c, http.StatusInternalServerError, "WFPKG_IMPORT_FAILED", "读取预检失败", nil)
 		return
@@ -172,12 +172,12 @@ func (h *WorkflowHandler) ApplyPackageImport(c *gin.Context) {
 		return
 	}
 	requestHash := workflowPackageRequestHash(req)
-	imp, replayed, err := h.db.ApplyWorkflowPackageImport(c.Request.Context(), database.WorkflowPackageApplyRequest{InspectionID: req.InspectionID, RequestHash: requestHash, IdempotencyKey: key, ActorUserID: session.UserID, Action: req.Resolution.Action, NewWorkflowID: req.Resolution.NewWorkflowID, ConfirmOverwrite: req.ConfirmOverwrite})
+	imp, replayed, err := h.runs.ApplyWorkflowPackageImport(c.Request.Context(), store.WorkflowPackageApplyRequest{InspectionID: req.InspectionID, RequestHash: requestHash, IdempotencyKey: key, ActorUserID: session.UserID, Action: req.Resolution.Action, NewWorkflowID: req.Resolution.NewWorkflowID, ConfirmOverwrite: req.ConfirmOverwrite})
 	if err != nil {
 		h.writeWorkflowPackageImportError(c, req.InspectionID, err)
 		return
 	}
-	wf, _ := h.db.GetWorkflowDefinition(imp.ResultingWorkflowID)
+	wf, _ := h.runs.GetWorkflowDefinition(imp.ResultingWorkflowID)
 	if !replayed && (imp.Result == "created" || imp.Result == "overwritten" || imp.Result == "renamed") {
 		workflowrunner.InvalidateCompiledCache(imp.ResultingWorkflowID)
 	}
@@ -198,7 +198,7 @@ func (h *WorkflowHandler) GetPackageImport(c *gin.Context) {
 		writeWorkflowPackageError(c, http.StatusUnauthorized, "WFPKG_INSPECTION_NOT_FOUND", "未授权访问", nil)
 		return
 	}
-	imp, err := h.db.GetWorkflowPackageImport(c.Param("importId"), session.UserID)
+	imp, err := h.runs.GetWorkflowPackageImport(c.Param("importId"), session.UserID)
 	if err != nil {
 		writeWorkflowPackageError(c, http.StatusInternalServerError, "WFPKG_IMPORT_FAILED", "读取导入结果失败", nil)
 		return
@@ -207,12 +207,12 @@ func (h *WorkflowHandler) GetPackageImport(c *gin.Context) {
 		writeWorkflowPackageError(c, http.StatusNotFound, "WFPKG_INSPECTION_NOT_FOUND", "导入结果不存在", nil)
 		return
 	}
-	wf, _ := h.db.GetWorkflowDefinition(imp.ResultingWorkflowID)
+	wf, _ := h.runs.GetWorkflowDefinition(imp.ResultingWorkflowID)
 	c.JSON(http.StatusOK, gin.H{"import": h.workflowPackageImportResponse(imp, wf)})
 }
 
-func (h *WorkflowHandler) workflowPackageConflict(id, sourceHash string) (string, *database.WorkflowDefinition, error) {
-	local, err := h.db.GetWorkflowDefinition(id)
+func (h *WorkflowHandler) workflowPackageConflict(id, sourceHash string) (string, *store.WorkflowDefinition, error) {
+	local, err := h.runs.GetWorkflowDefinition(id)
 	if err != nil {
 		return "", nil, err
 	}
@@ -228,7 +228,7 @@ func (h *WorkflowHandler) workflowPackageConflict(id, sourceHash string) (string
 	}
 	return "id_conflict", local, nil
 }
-func workflowPackageDocument(w *database.WorkflowDefinition) workflowpkg.Document {
+func workflowPackageDocument(w *store.WorkflowDefinition) workflowpkg.Document {
 	return workflowpkg.Document{ID: w.ID, Name: w.Name, Description: w.Description, Version: w.Version, GraphJSON: w.GraphJSON, Enabled: w.Enabled, UpdatedAt: w.UpdatedAt}
 }
 func workflowPackageRequestHash(req workflowPackageImportRequest) string {
@@ -247,7 +247,7 @@ func workflowPackageHash(b []byte) string {
 }
 
 func (h *WorkflowHandler) writeWorkflowPackageImportError(c *gin.Context, inspectionID string, err error) {
-	var e *database.WorkflowPackageStoreError
+	var e *store.WorkflowPackageStoreError
 	if errors.As(err, &e) {
 		status := http.StatusConflict
 		if e.Code == "WFPKG_INVALID_ACTION" || e.Code == "WFPKG_INVALID_RENAME_ID" {
@@ -309,7 +309,7 @@ type workflowPackageLocalWorkflow struct {
 	GraphHash   string `json:"graph_hash"`
 }
 
-func (h *WorkflowHandler) workflowPackageImportResponse(imp *database.WorkflowPackageImport, wf *database.WorkflowDefinition) gin.H {
+func (h *WorkflowHandler) workflowPackageImportResponse(imp *store.WorkflowPackageImport, wf *store.WorkflowDefinition) gin.H {
 	out := gin.H{"id": imp.ID, "inspection_id": imp.InspectionID, "status": "succeeded", "result": imp.Result, "action": imp.Action, "source_workflow_id": imp.SourceWorkflowID, "target_workflow_id": imp.TargetWorkflowID, "applied_at": imp.AppliedAt}
 	if wf != nil {
 		content, graph, _, _ := workflowpkg.DocumentHashes(workflowPackageDocument(wf))

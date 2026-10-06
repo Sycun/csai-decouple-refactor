@@ -1,4 +1,4 @@
-package database
+package store
 
 import (
 	"context"
@@ -44,7 +44,10 @@ func workflowPackageStoreError(code, message string) error {
 	return &WorkflowPackageStoreError{code, message}
 }
 
-func (db *DB) CreateWorkflowPackageInspection(v *WorkflowPackageInspection) error {
+func (w *Workflows) CreateWorkflowPackageInspection(v *WorkflowPackageInspection) error {
+	if err := w.requireDB(); err != nil {
+		return err
+	}
 	if v == nil || strings.TrimSpace(v.ID) == "" || strings.TrimSpace(v.CreatedBy) == "" {
 		return fmt.Errorf("workflow package inspection is incomplete")
 	}
@@ -54,14 +57,17 @@ func (db *DB) CreateWorkflowPackageInspection(v *WorkflowPackageInspection) erro
 	if v.ExpiresAt.IsZero() {
 		v.ExpiresAt = v.CreatedAt.Add(30 * time.Minute)
 	}
-	_, err := db.Exec(`INSERT INTO workflow_package_inspections (id,package_hash,manifest_json,workflow_payload_json,inspection_json,source_workflow_id,source_revision,source_content_hash,source_graph_hash,local_conflict_state,local_workflow_id,local_content_hash,local_graph_hash,created_by,status,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ID, v.PackageHash, v.ManifestJSON, v.WorkflowPayloadJSON, v.InspectionJSON, v.SourceWorkflowID, v.SourceRevision, v.SourceContentHash, v.SourceGraphHash, v.LocalConflictState, nullString(v.LocalWorkflowID), nullString(v.LocalContentHash), nullString(v.LocalGraphHash), v.CreatedBy, "ready", v.CreatedAt.UTC(), v.ExpiresAt.UTC())
+	_, err := w.db.Exec(`INSERT INTO workflow_package_inspections (id,package_hash,manifest_json,workflow_payload_json,inspection_json,source_workflow_id,source_revision,source_content_hash,source_graph_hash,local_conflict_state,local_workflow_id,local_content_hash,local_graph_hash,created_by,status,created_at,expires_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, v.ID, v.PackageHash, v.ManifestJSON, v.WorkflowPayloadJSON, v.InspectionJSON, v.SourceWorkflowID, v.SourceRevision, v.SourceContentHash, v.SourceGraphHash, v.LocalConflictState, nullString(v.LocalWorkflowID), nullString(v.LocalContentHash), nullString(v.LocalGraphHash), v.CreatedBy, "ready", v.CreatedAt.UTC(), v.ExpiresAt.UTC())
 	return err
 }
 
-func (db *DB) GetWorkflowPackageInspection(id, actor string) (*WorkflowPackageInspection, error) {
+func (w *Workflows) GetWorkflowPackageInspection(id, actor string) (*WorkflowPackageInspection, error) {
+	if err := w.requireDB(); err != nil {
+		return nil, err
+	}
 	now := time.Now().UTC()
-	_, _ = db.Exec(`UPDATE workflow_package_inspections SET status='expired' WHERE status='ready' AND expires_at <= ?`, now)
-	row, err := scanWorkflowPackageInspection(db.QueryRow(`SELECT id,package_hash,manifest_json,workflow_payload_json,inspection_json,source_workflow_id,source_revision,source_content_hash,source_graph_hash,local_conflict_state,COALESCE(local_workflow_id,''),COALESCE(local_content_hash,''),COALESCE(local_graph_hash,''),created_by,status,created_at,expires_at,consumed_at FROM workflow_package_inspections WHERE id=? AND created_by=?`, strings.TrimSpace(id), strings.TrimSpace(actor)))
+	_, _ = w.db.Exec(`UPDATE workflow_package_inspections SET status='expired' WHERE status='ready' AND expires_at <= ?`, now)
+	row, err := scanWorkflowPackageInspection(w.db.QueryRow(`SELECT id,package_hash,manifest_json,workflow_payload_json,inspection_json,source_workflow_id,source_revision,source_content_hash,source_graph_hash,local_conflict_state,COALESCE(local_workflow_id,''),COALESCE(local_content_hash,''),COALESCE(local_graph_hash,''),created_by,status,created_at,expires_at,consumed_at FROM workflow_package_inspections WHERE id=? AND created_by=?`, strings.TrimSpace(id), strings.TrimSpace(actor)))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -79,8 +85,11 @@ func scanWorkflowPackageInspection(s interface{ Scan(...any) error }) (*Workflow
 	return &v, err
 }
 
-func (db *DB) GetWorkflowPackageImport(id, actor string) (*WorkflowPackageImport, error) {
-	v, err := scanWorkflowPackageImport(db.QueryRow(`SELECT id,inspection_id,request_hash,idempotency_key,actor_user_id,action,source_workflow_id,target_workflow_id,COALESCE(resulting_workflow_id,''),result,COALESCE(error_code,''),COALESCE(error_message,''),created_at,applied_at FROM workflow_package_imports WHERE id=? AND actor_user_id=?`, strings.TrimSpace(id), strings.TrimSpace(actor)))
+func (w *Workflows) GetWorkflowPackageImport(id, actor string) (*WorkflowPackageImport, error) {
+	if err := w.requireDB(); err != nil {
+		return nil, err
+	}
+	v, err := scanWorkflowPackageImport(w.db.QueryRow(`SELECT id,inspection_id,request_hash,idempotency_key,actor_user_id,action,source_workflow_id,target_workflow_id,COALESCE(resulting_workflow_id,''),result,COALESCE(error_code,''),COALESCE(error_message,''),created_at,applied_at FROM workflow_package_imports WHERE id=? AND actor_user_id=?`, strings.TrimSpace(id), strings.TrimSpace(actor)))
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -97,8 +106,11 @@ func scanWorkflowPackageImport(s interface{ Scan(...any) error }) (*WorkflowPack
 	return &v, err
 }
 
-func (db *DB) ApplyWorkflowPackageImport(ctx context.Context, req WorkflowPackageApplyRequest) (*WorkflowPackageImport, bool, error) {
-	tx, err := db.BeginTx(ctx, nil)
+func (w *Workflows) ApplyWorkflowPackageImport(ctx context.Context, req WorkflowPackageApplyRequest) (*WorkflowPackageImport, bool, error) {
+	if err := w.requireDB(); err != nil {
+		return nil, false, err
+	}
+	tx, err := w.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -273,14 +285,17 @@ func validWorkflowPackageID(id string) bool {
 	return true
 }
 
-func (db *DB) PurgeWorkflowPackageLifecycle(now time.Time) error {
+func (w *Workflows) PurgeWorkflowPackageLifecycle(now time.Time) error {
+	if err := w.requireDB(); err != nil {
+		return err
+	}
 	now = now.UTC()
-	if _, err := db.Exec(`UPDATE workflow_package_inspections SET status='expired' WHERE status='ready' AND expires_at<=?`, now); err != nil {
+	if _, err := w.db.Exec(`UPDATE workflow_package_inspections SET status='expired' WHERE status='ready' AND expires_at<=?`, now); err != nil {
 		return err
 	}
-	if _, err := db.Exec(`DELETE FROM workflow_package_inspections WHERE status='expired' AND expires_at<? AND NOT EXISTS (SELECT 1 FROM workflow_package_imports i WHERE i.inspection_id=workflow_package_inspections.id)`, now.Add(-24*time.Hour)); err != nil {
+	if _, err := w.db.Exec(`DELETE FROM workflow_package_inspections WHERE status='expired' AND expires_at<? AND NOT EXISTS (SELECT 1 FROM workflow_package_imports i WHERE i.inspection_id=workflow_package_inspections.id)`, now.Add(-24*time.Hour)); err != nil {
 		return err
 	}
-	_, err := db.Exec(`DELETE FROM workflow_package_imports WHERE created_at<?`, now.AddDate(0, 0, -90))
+	_, err := w.db.Exec(`DELETE FROM workflow_package_imports WHERE created_at<?`, now.AddDate(0, 0, -90))
 	return err
 }

@@ -1,19 +1,42 @@
 package workflow
 
 import (
-	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/project"
+	"cyberstrike-ai/internal/store"
 )
 
-// Store is the persistence surface a workflow run needs: its own run/node-run ledger plus the
-// definition it executes and the HITL handshake it waits on - and, because a workflow node can run
-// a deep agent that maintains the project fact index, everything internal/project needs.
+// Ledger is the workflow engine's own run state: which run is executing, which node is awaiting
+// approval, and how each finished. It is satisfied by *store.Workflows, the package that owns those
+// five tables.
 //
-// Declared here because this package is the consumer. Passing the 361-method *database.DB into the
-// Eino runtime meant every graph node could reach any table; with this interface the runtime can
-// only write workflow run state and project facts, and the compiler enforces it. The method lists
-// live in database (WorkflowRunLedger, ProjectFactStore) to avoid an import cycle.
-type Store interface {
-	project.Store
-	database.WorkflowRunLedger
+// Before the rows moved, this list was declared in internal/database (WorkflowRunLedger) and the one
+// value passed around satisfied it together with everything else, because it was the connection
+// wrapper. That is the shape this package exists to not have: a graph node holding a handle to every
+// table in the application.
+type Ledger interface {
+	CreateWorkflowRun(run *store.WorkflowRun) error
+	GetWorkflowRun(runID string) (*store.WorkflowRun, error)
+	FinishWorkflowRun(runID, status, outputJSON, errText string) error
+	SetWorkflowRunStatus(runID, status string) error
+	SetWorkflowRunAwaitingHITL(runID, nodeID, pendingJSON string) error
+	CreateWorkflowNodeRun(n *store.WorkflowNodeRun) error
+	FinishWorkflowNodeRun(nodeRunID, status, outputJSON, errText string) error
+	GetWorkflowDefinition(id string) (*store.WorkflowDefinition, error)
+	UpsertWorkflowDefinition(wf *store.WorkflowDefinition) error
 }
+
+// Store is what a workflow run needs: the ledger above, plus the project fact surface - a workflow
+// node can run a deep agent that maintains the project's fact index.
+//
+// A struct of two providers rather than one interface, because after the ledger moved to its own
+// store no single value answers both halves any more, and composing them here is what keeps the
+// engine's call sites (`db.GetWorkflowRun`, `db.UpsertProjectFact`) unchanged.
+type Store struct {
+	project.Store
+	Ledger
+}
+
+// Missing reports whether either half of the persistence a run needs is absent. It exists because
+// Store is a pair of providers rather than the single interface it used to be: the old guard was a
+// `db == nil` check on an interface, and the same question now has two halves to ask about.
+func (s Store) Missing() bool { return s.Store == nil || s.Ledger == nil }

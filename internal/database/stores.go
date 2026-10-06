@@ -1,7 +1,6 @@
 package database
 
 import (
-	"context"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/store"
 	"database/sql"
@@ -25,7 +24,6 @@ import (
 type AgentStore interface {
 	ProjectFactStore
 	ToolExecutionLedger
-	WorkflowRunLedger
 	AddMessage(conversationID, role, content string, mcpExecutionIDs []string) (*Message, error)
 	AddProcessDetail(messageID, conversationID, eventType, message string, data interface{}) error
 	AddProcessDetailWithID(messageID, conversationID, eventType, message string, data interface{}) (string, error)
@@ -344,22 +342,13 @@ type WebShellStore interface {
 
 var _ WebShellStore = (*DB)(nil)
 
-// WorkflowStore is the persistence surface required by WorkflowHandler.
+// WorkflowStore is what the workflow handler still needs from the connection wrapper once the five
+// workflow tables moved to store.Workflows: the project fact surface a run writes into, the process
+// detail a run appends, and the one RBAC question the page asks. The workflow rows themselves are not
+// here - h.runs answers those.
 type WorkflowStore interface {
 	ProjectFactStore
-	WorkflowRunLedger
-	ApplyWorkflowPackageImport(ctx context.Context, req WorkflowPackageApplyRequest) (*WorkflowPackageImport, bool, error)
-	CreateWorkflowPackageInspection(v *WorkflowPackageInspection) error
-	DeleteWorkflowDefinition(id string) error
-	GetWorkflowDefinition(id string) (*WorkflowDefinition, error)
-	GetWorkflowPackageImport(id, actor string) (*WorkflowPackageImport, error)
-	GetWorkflowPackageInspection(id, actor string) (*WorkflowPackageInspection, error)
-	GetWorkflowRun(runID string) (*WorkflowRun, error)
-	ListWorkflowDefinitions(includeDisabled bool) ([]*WorkflowDefinition, error)
-	ListWorkflowNodeRuns(runID string) ([]*WorkflowNodeRun, error)
-	ListWorkflowRunsAwaitingHITLFiltered(conversationID string, limit int) ([]*WorkflowRun, error)
-	RecordWorkflowRunHITLDecision(runID string, approved bool, comment string) error
-	UpsertWorkflowDefinition(wf *WorkflowDefinition) error
+	AddProcessDetail(conversationID, messageID, id, eventType string, data interface{}) error
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 

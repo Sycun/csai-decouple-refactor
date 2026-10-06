@@ -58,7 +58,10 @@ import (
 // with the DDL of its two tables, which EnsureSchema now creates itself.
 // 287 -> 282: the attack chain moved whole - both saves, both loads, the delete-a-conversation's-chain
 // step - and the two tables' DDL with their conversation indexes went to store.AttackChain.EnsureSchema.
-const dbMethodCeiling = 282
+// 282 -> 262: the workflow domain moved whole - definitions, runs, node runs and the
+// two package-exchange tables, twenty methods including the private scanners, the hash helpers and the
+// runs-table column backfill. The engine no longer reaches them through a data-layer interface.
+const dbMethodCeiling = 262
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

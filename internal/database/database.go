@@ -528,74 +528,7 @@ func (db *DB) initTables() error {
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);`
 
-	createWorkflowDefinitionsTable := `
-	CREATE TABLE IF NOT EXISTS workflow_definitions (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL,
-		description TEXT,
-		version INTEGER NOT NULL DEFAULT 1,
-		graph_json TEXT NOT NULL,
-		enabled INTEGER NOT NULL DEFAULT 1,
-		created_at DATETIME NOT NULL,
-		updated_at DATETIME NOT NULL
-	);`
-
-	createWorkflowRunsTable := `
-	CREATE TABLE IF NOT EXISTS workflow_runs (
-		id TEXT PRIMARY KEY,
-		workflow_id TEXT NOT NULL,
-		workflow_version INTEGER NOT NULL DEFAULT 1,
-		conversation_id TEXT,
-		project_id TEXT,
-		role_id TEXT,
-		status TEXT NOT NULL,
-		input_json TEXT,
-		output_json TEXT,
-		error TEXT,
-		pending_hitl_node_id TEXT,
-		pending_hitl_json TEXT,
-		started_at DATETIME NOT NULL,
-		finished_at DATETIME,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
-	);`
-
-	createWorkflowNodeRunsTable := `
-	CREATE TABLE IF NOT EXISTS workflow_node_runs (
-		id TEXT PRIMARY KEY,
-		run_id TEXT NOT NULL,
-		node_id TEXT NOT NULL,
-		status TEXT NOT NULL,
-		input_json TEXT,
-		output_json TEXT,
-		error TEXT,
-		started_at DATETIME NOT NULL,
-		finished_at DATETIME,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (run_id) REFERENCES workflow_runs(id) ON DELETE CASCADE
-	);`
-
-	createWorkflowPackageInspectionsTable := `
-	CREATE TABLE IF NOT EXISTS workflow_package_inspections (
-		id TEXT PRIMARY KEY, package_hash TEXT NOT NULL, manifest_json TEXT NOT NULL,
-		workflow_payload_json TEXT NOT NULL, inspection_json TEXT NOT NULL,
-		source_workflow_id TEXT NOT NULL, source_revision INTEGER NOT NULL,
-		source_content_hash TEXT NOT NULL, source_graph_hash TEXT NOT NULL,
-		local_conflict_state TEXT NOT NULL CHECK (local_conflict_state IN ('none','identical','id_conflict')),
-		local_workflow_id TEXT, local_content_hash TEXT, local_graph_hash TEXT,
-		created_by TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'ready' CHECK (status IN ('ready','consumed','expired')),
-		created_at DATETIME NOT NULL, expires_at DATETIME NOT NULL, consumed_at DATETIME
-	);`
-	createWorkflowPackageImportsTable := `
-	CREATE TABLE IF NOT EXISTS workflow_package_imports (
-		id TEXT PRIMARY KEY, inspection_id TEXT NOT NULL, request_hash TEXT NOT NULL,
-		idempotency_key TEXT NOT NULL, actor_user_id TEXT NOT NULL,
-		action TEXT NOT NULL CHECK (action IN ('create','keep_existing','overwrite','rename')),
-		source_workflow_id TEXT NOT NULL, target_workflow_id TEXT NOT NULL, resulting_workflow_id TEXT,
-		result TEXT NOT NULL CHECK (result IN ('created','overwritten','renamed','kept_existing','skipped_identical','failed')),
-		error_code TEXT, error_message TEXT, created_at DATETIME NOT NULL, applied_at DATETIME,
-		FOREIGN KEY (inspection_id) REFERENCES workflow_package_inspections(id)
-	);`
+	// workflow 五张表的 DDL 与九条索引都在 store.Workflows 的 EnsureSchema 里。
 
 	// 创建索引
 	createIndexes := `
@@ -653,16 +586,7 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_c2_events_created_at ON c2_events(created_at);
 	CREATE INDEX IF NOT EXISTS idx_c2_events_category ON c2_events(category);
 	CREATE INDEX IF NOT EXISTS idx_c2_events_session ON c2_events(session_id);
-	CREATE INDEX IF NOT EXISTS idx_workflow_definitions_updated_at ON workflow_definitions(updated_at);
-	CREATE INDEX IF NOT EXISTS idx_workflow_definitions_enabled ON workflow_definitions(enabled);
-	CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow ON workflow_runs(workflow_id);
-	CREATE INDEX IF NOT EXISTS idx_workflow_runs_conversation ON workflow_runs(conversation_id);
-	CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
-	CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run ON workflow_node_runs(run_id);
-	CREATE INDEX IF NOT EXISTS idx_workflow_package_inspections_creator_expiry ON workflow_package_inspections(created_by, expires_at);
-	CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_package_imports_actor_key ON workflow_package_imports(actor_user_id, idempotency_key);
-	CREATE UNIQUE INDEX IF NOT EXISTS uq_workflow_package_imports_inspection_success ON workflow_package_imports(inspection_id) WHERE result IN ('created','overwritten','renamed','kept_existing','skipped_identical');
-	`
+										`
 
 	if _, err := db.Exec(createConversationsTable); err != nil {
 		return fmt.Errorf("创建conversations表失败: %w", err)
@@ -739,16 +663,10 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("创建漏洞提醒表失败: %w", err)
 	}
 
-	for tableName, ddl := range map[string]string{
-		"workflow_definitions":         createWorkflowDefinitionsTable,
-		"workflow_runs":                createWorkflowRunsTable,
-		"workflow_node_runs":           createWorkflowNodeRunsTable,
-		"workflow_package_inspections": createWorkflowPackageInspectionsTable,
-		"workflow_package_imports":     createWorkflowPackageImportsTable,
-	} {
-		if _, err := db.Exec(ddl); err != nil {
-			return fmt.Errorf("创建%s表失败: %w", tableName, err)
-		}
+	// 五张表按外键顺序在这一个字符串里建（runs 先于 node_runs、inspections 先于 imports）；
+	// 这一步只能在 conversations 之后，因为 workflow_runs.conversation_id 外键指向它。
+	if err := store.NewWorkflows(db.DB).EnsureSchema(); err != nil {
+		return fmt.Errorf("创建workflow表失败: %w", err)
 	}
 
 	for tableName, ddl := range map[string]string{
@@ -801,8 +719,9 @@ func (db *DB) initTables() error {
 	if err := db.migrateC2ListenersTable(); err != nil {
 		db.logger.Warn("迁移c2_listeners表失败", zap.Error(err))
 	}
-	if err := db.migrateWorkflowRunsTable(); err != nil {
-		db.logger.Warn("迁移workflow_runs表失败", zap.Error(err))
+	// 列补写也归表的拥有者；这里保持原来的"记一条 warn 就继续"，建表失败才拦启动。
+	if err := store.NewWorkflows(db.DB).MigrateRunsTable(); err != nil {
+		db.logger.Warn("迁移 workflow 运行表失败", zap.Error(err))
 	}
 	if err := db.migrateToolExecutionsPartialOutputColumns(); err != nil {
 		db.logger.Warn("迁移tool_executions partial output字段失败", zap.Error(err))

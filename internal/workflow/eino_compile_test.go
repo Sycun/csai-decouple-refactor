@@ -9,6 +9,7 @@ import (
 
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/cloudwego/eino/compose"
 	"go.uber.org/zap"
@@ -23,6 +24,14 @@ func testWorkflowDB(t *testing.T) *database.DB {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+// testWorkflowLedger is the run ledger over the same database: since the five workflow tables moved
+// to store.Workflows, a test that wants to persist a run has to hold that store rather than call
+// through the connection wrapper.
+func testWorkflowLedger(t *testing.T, db *database.DB) *store.Workflows {
+	t.Helper()
+	return store.NewWorkflows(db.DB)
 }
 
 func linearStartOutputGraph() string {
@@ -204,9 +213,9 @@ func TestCompileEngine_linear(t *testing.T) {
 	}
 }
 
-func createTestWorkflowRun(t *testing.T, db *database.DB, runID string) {
+func createTestWorkflowRun(t *testing.T, runs *store.Workflows, runID string) {
 	t.Helper()
-	if err := db.CreateWorkflowRun(&database.WorkflowRun{
+	if err := runs.CreateWorkflowRun(&store.WorkflowRun{
 		ID:         runID,
 		WorkflowID: "test-wf",
 		Status:     "running",
@@ -219,13 +228,14 @@ func TestExecuteEinoGraph_linearStartOutput(t *testing.T) {
 	ctx := context.Background()
 	SetCheckpointDir(t.TempDir())
 	db := testWorkflowDB(t)
-	createTestWorkflowRun(t, db, "run-linear")
+	runs := testWorkflowLedger(t, db)
+	createTestWorkflowRun(t, runs, "run-linear")
 	g, err := parseGraph(linearStartOutputGraph())
 	if err != nil {
 		t.Fatal(err)
 	}
 	state := newWorkflowLocalState(map[string]interface{}{"message": "ping"}, "run-linear")
-	args := RunArgs{DB: db}
+	args := RunArgs{DB: Store{Store: db, Ledger: runs}}
 	if err := executeEinoGraph(ctx, args, "run-linear", "test-wf", 1, g, state); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -324,15 +334,16 @@ func TestExecuteEinoGraph_conditionBranch(t *testing.T) {
 	ctx := context.Background()
 	SetCheckpointDir(t.TempDir())
 	db := testWorkflowDB(t)
-	createTestWorkflowRun(t, db, "run-yes")
-	createTestWorkflowRun(t, db, "run-no")
+	runs := testWorkflowLedger(t, db)
+	createTestWorkflowRun(t, runs, "run-yes")
+	createTestWorkflowRun(t, runs, "run-no")
 	g, err := parseGraph(conditionBranchGraph())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	stateYes := newWorkflowLocalState(map[string]interface{}{"message": "yes"}, "run-yes")
-	if err := executeEinoGraph(ctx, RunArgs{DB: db}, "run-yes", "test-wf-branch", 1, g, stateYes); err != nil {
+	if err := executeEinoGraph(ctx, RunArgs{DB: Store{Store: db, Ledger: runs}}, "run-yes", "test-wf-branch", 1, g, stateYes); err != nil {
 		t.Fatalf("execute yes: %v", err)
 	}
 	if got := stateYes.Outputs["branch"]; got != "yes" {
@@ -340,7 +351,7 @@ func TestExecuteEinoGraph_conditionBranch(t *testing.T) {
 	}
 
 	stateNo := newWorkflowLocalState(map[string]interface{}{"message": "no"}, "run-no")
-	if err := executeEinoGraph(ctx, RunArgs{DB: db}, "run-no", "test-wf-branch", 1, g, stateNo); err != nil {
+	if err := executeEinoGraph(ctx, RunArgs{DB: Store{Store: db, Ledger: runs}}, "run-no", "test-wf-branch", 1, g, stateNo); err != nil {
 		t.Fatalf("execute no: %v", err)
 	}
 	if got := stateNo.Outputs["branch"]; got != "no" {
@@ -352,8 +363,9 @@ func TestRunRoleBoundWorkflow_integration(t *testing.T) {
 	ctx := context.Background()
 	SetCheckpointDir(t.TempDir())
 	db := testWorkflowDB(t)
+	runs := testWorkflowLedger(t, db)
 	graph := linearStartOutputGraph()
-	if err := db.UpsertWorkflowDefinition(&database.WorkflowDefinition{
+	if err := runs.UpsertWorkflowDefinition(&store.WorkflowDefinition{
 		ID:        "wf-linear",
 		Name:      "线性流程",
 		Version:   1,
@@ -369,7 +381,7 @@ func TestRunRoleBoundWorkflow_integration(t *testing.T) {
 		WorkflowPolicy: "auto",
 	}
 	result, err := RunRoleBoundWorkflow(ctx, RunArgs{
-		DB:          db,
+		DB:          Store{Store: db, Ledger: runs},
 		Logger:      zap.NewNop(),
 		Role:        role,
 		UserMessage: "from-role",

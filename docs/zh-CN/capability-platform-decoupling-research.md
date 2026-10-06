@@ -784,7 +784,7 @@ grep -rn go:embed --include='*.go' . | grep -v _test | wc -l       # 3（原 0�
 **21**——那是第五刀之后一次下降只进了 log、上限没人跟。已收紧为 20 并在常量旁写下原因；
 **同类漂移至今撞到两次**（`dbMethodCeiling` 328/327 与这里 21/20），所以本节的每个数字都只写当场命令的输出。
 
-第二十一至二十三刀落地后同形复测（2026-10-06 08:28 当场命令，全部为本段第一手读数）：测试函数 **1523**、`internal/store` 生产文件 **20** 个、包内测试 **158** 条、`*database.DB` 方法 **282**
+第二十一至二十四刀落地后同形复测（2026-10-06 09:11 当场命令，全部为本段第一手读数）：测试函数 **1532**、`internal/store` 生产文件 **22** 个、包内测试 **166** 条、`*database.DB` 方法 **262**
 （上一版此处为 1485，那是第十四片后的读数；第**二十一刀三个提交自己新增 21 条**：升级形状回归 2 条、
 9 条路由的契约用例 8 条、store 记录侧真库测试 10 条、归属门禁 1 条——**其余差额来自十五至二十刀**，
 本段不把别人加的测试记在自己头上）；`internal/store` 生产文件仍 **18** 个、包内测试 **145** 条（原 134）；
@@ -2138,6 +2138,70 @@ store 没有 logger，为一条日志引入一条依赖不值，这句写在代�
 因为我抄清单时漏了这个路径，**遍历域小于 CI 的传播域**。补进清单后重跑同一注入 →
 `生成物过期，CI 的 regenerate-and-diff 会红： docs/zh-CN/sse-event-catalog.md`（exit 1），
 恢复后 ok。这段教训和它的验收方式现在都写在该函数的注释里：**清单改动只能靠"注入过期生成物看它是否变红"来验收**。
+
+### P6 第二十四刀 —— workflow 五张表整片进 `store.Workflows`，引擎不再 import 数据层
+
+`internal/database/workflow.go`(464 行) 与 `workflow_package.go`(286 行) **删除**，
+20 个方法进 `internal/store/workflows.go` + `workflow_package.go`；
+五张表的 `CREATE TABLE` 与**九条索引**（含两条 UNIQUE）一起进 `EnsureSchema`，
+`migrateWorkflowRunsTable` 变成 `MigrateRunsTable` —— 它仍由开机调用、失败只 `warn` 后继续，
+而建表失败仍然拦启动：**这两件事的严格程度不同，所以不并成一个方法**。
+DDL 与索引逐条与 `git show HEAD` 比对：**tables EQUAL、indexes EQUAL**（九条逐字相同）。
+
+**这一刀真正的收获是依赖方向，不是方法数**：
+- `database.WorkflowRunLedger`（引擎运行状态）与 `database.WorkflowStore`（handler 面）**删掉**；
+   ledger 改由 `internal/workflow` 自己声明为 `Ledger`，由 `*store.Workflows` 满足。
+- `workflow.Store` 从接口变成**两个 provider 组成的结构体**（`project.Store` + `Ledger`）：
+  运行状态搬走以后已经没有任何一个值同时答得上这两半，
+  而组合留在一个类型里让引擎里 `db.GetWorkflowRun` / `db.UpsertProjectFact` 的写法一行都不用改。
+  配套的 `Store.Missing()` 取代原来三处 `db == nil` 判断（结构体没有 nil）。
+- 新门禁 `TestWorkflowEngineDoesNotImportTheDataLayer`：`internal/workflow` 的**任何非测试文件**
+  再 import `internal/database` 即失败，并带"扫到 ≥10 个文件"的反空跑下限。
+  现状是 **0 个文件**（原来 3 个）。探针：往 `runner.go` 加一条 database import → 红并点名文件；撤销即绿。
+  这条断言按 import 判而不是按调用判，因为**加回一个 `database.X` 引用是完全类型正确的**——
+  只有 import 图看得见。
+- `WorkflowStore` 收窄成三件事（项目事实面 + 一条 process detail + 一个 RBAC 问题），
+  `AgentHandler` 与 `WorkflowHandler` 各加 `runs *store.Workflows`。
+
+**测试先抓到一个真 panic，再补的门禁**：搬过去的 21 个导出方法一开始**一个连接守卫都没有**——
+`NewWorkflowHandler(nil, ...)` 之类的"没有连接"构造走的是仓库既有的 nil 规矩，
+而 store 侧没有 `requireDB()`，于是 `sql.(*DB).Query` 解引用 nil 直接崩。
+现在 21 个方法逐个守卫（脚本按方法名映射逐个插，返回元组形状写错就拒绝生成而不是留下坏代码），
+`internal/handler/workflow_wiring_test.go` 负责盯两件事：
+① 两个 handler 的构造真的把 `runs` 装上了（**未赋值的字段编译器看不见**，
+探针：删掉 `runs: newWorkflowStore(db)` → `NewAgentHandler left runs unset` 红）；
+② 无连接的句柄**回错误而不是 panic**。
+`internal/store/workflows_test.go` 另加 6 个真库用例（五表九索引都由 `EnsureSchema` 造且幂等、
+`MigrateRunsTable` 给旧形状补两条后加列且可重复、定义存读与版本自增与启用过滤、
+运行台账的 HITL 挂起→决策→恢复→完成、待审批列表的会话过滤、节点运行按插入顺序、过期巡检生命周期），
+另有 `TestWorkflowsRefuseAConnectionlessHandle` 逐个方法验 21 条守卫。
+两条**如实钉住既有契约而非"顺手改好"**：`GetWorkflowDefinition` / `GetWorkflowRun` 对未知 id 回
+`(nil, nil)`（调用方按 nil 判，这是 404 的来源）；`FinishWorkflowRun` **不清**HITL 两列
+（replay 视图要读它），这两条都写在测试里而不是留成口口相传。
+
+**上一刀新加的两条门禁当场各自抓到东西**：
+① `TestSchemaEnsuresAreWiredAtBoot` 扩成表驱动三条（告警/攻击链/workflow），
+workflow 那条按 `createConversationsTable` 定外键顺序，三个方向探针（删调用、挪到 conversations 之前、
+在 boot 文件里补一条 `ALTER TABLE workflow_runs`）各红一次；
+它的"锚点找不到即失败"分支在写作过程中就红过一次——我第一版把 `db.Exec(x)` 当 `*ast.Ident` 匹配。
+② 生成物漂移门禁 `generate-diff` **连着两次抓到真实过期**：先是本刀改了 `handler/agent.go`
+的行数让 SSE 目录里记录的发射点行号过期（第二次跑 `gates` 直接 exit 1 并点名两个文件），
+刷新生成物后才绿。**这条判据以前只活在 CI 里**，所以同一份过期能一路带着提交。
+
+**水位与数字**：`*database.DB` **282 → 262**（20 个方法走，含私有扫描器与哈希助手）；
+死面扫描下限 240 → 220（实测 225），它这已是第三次因"又搬走一片"而如实红；
+归属清单再认领五张表（`workflow_definitions` / `workflow_runs` / `workflow_node_runs` /
+`workflow_package_inspections` / `workflow_package_imports`）；
+传输层 **0** 个结构体持 `*database.DB`、18 个窄接口字段、**21** 个字段持自己的表 store、
+扫描 1152 个字段；两个自有层之外裸 SQL 仍 **0**（511 文件）；
+`internal/store` 生产文件 **22**、包内测试 **166**、全仓测试函数 **1532**。
+**真机点验（同一数据目录三轮启动）**：全新库上五表九索引齐备且 `0 error / 0 panic`；
+`POST /api/workflows` → `工作流已保存`（version 1）、列表读到、`PUT` 后 version 递增、
+`GET /workflows/:id/package` 200、`/workflows/validate` `{"ok":true}`、
+`/workflows/runs/pending` `{"runs":[]}`、删除后详情 404、审计列表 200；
+重启仍 0 error。两轮里我踩了同一个客户端坑两次（`graph_json` 要发**对象**不是字符串、
+第二遍启动不再打印 admin 密码所以要用首遍的），都记在这里以免下次误判成服务端缺陷。
+服务只按记录的 PID 停；`~/csai-生产版` 那个实例（PID 83620）全程未碰。
 
 ### 明确还没做（不假装完成）
 

@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -34,10 +35,12 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 		tablePrefix      string
 		anchorCall       string
 		anchorReason     string
-		// mustNotMention is the stronger form of "no second copy": where the owning store's tables
-		// have a recognisable name, the boot file should not mention them at all - not just not
-		// CREATE them, because an index left behind is as much a second owner as a CREATE is.
-		mustNotMention string
+		// mustNotChangeSQL is the stronger form of "no second copy": no statement of any kind -
+		// CREATE, index, ALTER, or a write - may be run against the store's tables from the boot file.
+		// An index left in the general sweep is as much a second owner as a CREATE is, and prose about
+		// the tables (which the ordering comments legitimately need) is not what is being banned here,
+		// so the match is on SQL syntax rather than on the bare table name.
+		mustNotChangeSQL string
 	}
 	cases := []bootCase{
 		{
@@ -45,14 +48,21 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 			tablePrefix:      "vulnerability_alert_",
 			anchorCall:       "initRBACTables",
 			anchorReason:     "both alert tables have foreign keys onto rbac_users",
-			mustNotMention:   "",
+			mustNotChangeSQL: "",
 		},
 		{
 			storeConstructor: "NewAttackChain",
 			tablePrefix:      "attack_chain_",
 			anchorCall:       "createToolExecutionsTable",
 			anchorReason:     "attack_chain_nodes has a foreign key onto tool_executions",
-			mustNotMention:   "attack_chain",
+			mustNotChangeSQL: "attack_chain",
+		},
+		{
+			storeConstructor: "NewWorkflows",
+			tablePrefix:      "workflow_",
+			anchorCall:       "createConversationsTable",
+			anchorReason:     "workflow_runs.conversation_id has a foreign key onto conversations",
+			mustNotChangeSQL: "workflow_",
 		},
 	}
 
@@ -140,10 +150,12 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 			t.Errorf("%s: a CREATE for %s is still written in the boot file next to the store that owns it",
 				tc.storeConstructor, tc.tablePrefix)
 		}
-		if tc.mustNotMention != "" && strings.Contains(string(src), tc.mustNotMention) {
-			t.Errorf("%s: the boot file still mentions %q - the store owns these tables, their indexes "+
-				"included, so any remaining mention is a second owner to find later",
-				tc.storeConstructor, tc.mustNotMention)
+		if tc.mustNotChangeSQL != "" {
+			sql := regexp.MustCompile(`(?i)\b(?:CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS|ALTER\s+TABLE|CREATE\s+(?:UNIQUE\s+)?INDEX\s+\w+\s+ON|UPDATE|DELETE\s+FROM|INSERT\s+INTO)\s+` + tc.mustNotChangeSQL)
+			if hit := sql.FindString(string(src)); hit != "" {
+				t.Errorf("%s: the boot file still runs %q against tables %s owns - a statement left here "+
+					"is a second writer to find later", tc.storeConstructor, hit, tc.storeConstructor)
+			}
 		}
 	}
 }

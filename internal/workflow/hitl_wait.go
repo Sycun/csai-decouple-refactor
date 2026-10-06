@@ -47,7 +47,7 @@ func NotifyHITLDecision(runID string, decision HITLDecision) bool {
 }
 
 func readHITLDecisionFromDB(db Store, runID string) (HITLDecision, bool, error) {
-	if db == nil {
+	if db.Missing() {
 		return HITLDecision{}, false, nil
 	}
 	run, err := db.GetWorkflowRun(runID)

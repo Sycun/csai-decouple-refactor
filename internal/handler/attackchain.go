@@ -15,6 +15,16 @@ import (
 	"go.uber.org/zap"
 )
 
+// newWorkflowStore hands out a connectionless store rather than a nil pointer when there is no
+// connection: an untyped nil in the engine's Ledger field would read as "nothing wired", while a
+// store with no db answers every call with an error the endpoints already turn into a 500.
+func newWorkflowStore(db *database.DB) *store.Workflows {
+	if db == nil {
+		return store.NewWorkflows(nil)
+	}
+	return store.NewWorkflows(db.DB)
+}
+
 // newAttackChainStore follows the same nil rule as the narrowed fields around it.
 func newAttackChainStore(db *database.DB) *store.AttackChain {
 	if db == nil {

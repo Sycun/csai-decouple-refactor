@@ -12,6 +12,7 @@ import (
 	"cyberstrike-ai/internal/security"
 	workflowrunner "cyberstrike-ai/internal/workflow"
 
+	"cyberstrike-ai/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
@@ -26,7 +27,7 @@ func (h *WorkflowHandler) GetRun(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
 		return
 	}
-	run, err := h.db.GetWorkflowRun(runID)
+	run, err := h.runs.GetWorkflowRun(runID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -35,7 +36,7 @@ func (h *WorkflowHandler) GetRun(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "工作流运行不存在"})
 		return
 	}
-	nodeRuns, err := h.db.ListWorkflowNodeRuns(runID)
+	nodeRuns, err := h.runs.ListWorkflowNodeRuns(runID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -49,7 +50,7 @@ func (h *WorkflowHandler) ReplayRun(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
 		return
 	}
-	nodeRuns, err := h.db.ListWorkflowNodeRuns(runID)
+	nodeRuns, err := h.runs.ListWorkflowNodeRuns(runID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -81,12 +82,12 @@ func (h *WorkflowHandler) ListPendingRuns(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
 		return
 	}
-	runs, err := h.db.ListWorkflowRunsAwaitingHITLFiltered(conversationID, 50)
+	runs, err := h.runs.ListWorkflowRunsAwaitingHITLFiltered(conversationID, 50)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	runs = filterSlice(runs, func(run *database.WorkflowRun) bool {
+	runs = filterSlice(runs, func(run *store.WorkflowRun) bool {
 		return run != nil && h.workflowConversationAllowed(c, run.ConversationID)
 	})
 	c.JSON(http.StatusOK, gin.H{"runs": runs})
@@ -112,7 +113,7 @@ func (h *WorkflowHandler) ResumeRun(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数: " + err.Error()})
 		return
 	}
-	run, err := h.db.GetWorkflowRun(runID)
+	run, err := h.runs.GetWorkflowRun(runID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -134,7 +135,7 @@ func (h *WorkflowHandler) ResumeRun(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "工作流运行不在等待审批状态: " + run.Status})
 		return
 	}
-	if err := h.db.RecordWorkflowRunHITLDecision(runID, req.Approved, req.Comment); err != nil {
+	if err := h.runs.RecordWorkflowRunHITLDecision(runID, req.Approved, req.Comment); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -162,7 +163,7 @@ func (h *WorkflowHandler) ResumeRun(c *gin.Context) {
 		return
 	}
 	result, err := workflowrunner.ResumeWorkflowRun(c.Request.Context(), workflowrunner.RunArgs{
-		DB:             h.db,
+		DB:             workflowrunner.Store{Store: h.db, Ledger: h.runs},
 		Logger:         h.logger,
 		Role:           role,
 		AppCfg:         h.cfg,
@@ -195,6 +196,6 @@ func (h *WorkflowHandler) workflowRunAllowed(c *gin.Context, runID string) bool 
 	if session.Scope == database.RBACScopeAll {
 		return true
 	}
-	run, err := h.db.GetWorkflowRun(strings.TrimSpace(runID))
+	run, err := h.runs.GetWorkflowRun(strings.TrimSpace(runID))
 	return err == nil && run != nil && h.workflowConversationAllowed(c, run.ConversationID)
 }

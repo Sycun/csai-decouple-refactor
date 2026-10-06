@@ -27,7 +27,9 @@ func TestOwnedTablesAreOnlyWrittenFromThisPackage(t *testing.T) {
 		"knowledge_retrieval_logs", "knowledge_base_items", "knowledge_embeddings", "model_token_usage",
 		"robot_user_sessions", "robot_binding_codes", "c2_payload_artifacts",
 		"vulnerability_alert_subscriptions", "vulnerability_alert_deliveries", "robot_user_bindings",
-		"attack_chain_nodes", "attack_chain_edges"}
+		"attack_chain_nodes", "attack_chain_edges",
+		"workflow_definitions", "workflow_runs", "workflow_node_runs",
+		"workflow_package_inspections", "workflow_package_imports"}
 	pattern := regexp.MustCompile(`(?i)\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+` + `(` + strings.Join(owned, "|") + `)`)
 
 	var offenders []string
