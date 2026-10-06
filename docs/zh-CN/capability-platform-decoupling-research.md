@@ -2372,6 +2372,19 @@ want the pinned fact first even though it is the oldest row`，撤销即绿）�
 **顺带的账**：`*database.DB` 仍 **262**（本片不动方法）；`internal/store` 生产文件 **22 → 23**、
 包内测试函数 **168 → 169**；`go vet ./...` 与 `go test -count=1 ./internal/...` 全绿。
 
+**真机点验（测试树里新编译的二进制、全新库、独立端口 18099 与独立 data/log，沙箱
+`.livecheck-facts27`；口令取第一次启动打印的一次性 admin 密码；跑完按记录的 PID 29831 停掉并删除沙箱，
+`~/csai-生产版` 那个实例全程未碰）**：登录 → 建对话 → 记两条漏洞 → 建项目 → 建三条事实
+（其中一条 body 里写 `- 依赖事实: note.base`）→ 按 `?related_vulnerability_id=` 过滤能查到挂着的那条 →
+`/fact-edges` 回**由 body 那行解析出来的边** `note.base → note.single (depends_on)` →
+deprecate `note.base` 后**相关边跟着变 deprecated** → restore 回 `confirmed` →
+**单条删除 `DELETE /api/vulnerabilities/<id>` 后，读回那条事实的 `related_vulnerability_id` 已消失** →
+**批量删除 `?severity=medium` 后同样消失**（这两条就是第二十六刀那句 claim 在真进程、真 HTTP 路径上的样子）→
+三个错误答案在活进程上各自成立：未知 fact_key **404**、deprecate 未知 **404**、restore 未废弃的 **400**。
+日志里 **0 条 panic、0 条 error 级**。
+顺带在真机上看清一条契约测试没覆盖的既有行为：**restore 只把事实本身改回 confirmed，不会把当初连带标成
+deprecated 的边改回来**（边留在 `deprecated`）。这是原行为，这里如实记下，不当 bug 顺手改。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
