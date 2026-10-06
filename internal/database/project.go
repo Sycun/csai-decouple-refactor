@@ -266,6 +266,39 @@ func (db *DB) UpdateProject(p *Project) error {
 	return nil
 }
 
+// unlinkFactReferences clears the fact rows that point at the given findings. It runs on the caller's
+// transaction, so a finding deleted without clearing its references cannot be observed: the console
+// renders such a leftover as a dangling short id.
+//
+// project_facts is this domain's table, which is why the findings store asks for this rather than
+// writing the row itself. The ids are chunked because SQLite caps how many host parameters one
+// statement may carry, and a batch delete that matches thousands of findings has to keep working the
+// way it did when the clear was a subquery.
+//
+// A free function rather than a method: it needs no connection, only the caller's transaction, and the
+// method set of *DB is a ratchet that only goes down.
+func unlinkFactReferences(tx *sql.Tx, findingIDs []string) error {
+	const chunk = 500
+	for start := 0; start < len(findingIDs); start += chunk {
+		end := start + chunk
+		if end > len(findingIDs) {
+			end = len(findingIDs)
+		}
+		batch := findingIDs[start:end]
+		args := make([]interface{}, 0, len(batch)+1)
+		placeholders := make([]string, 0, len(batch))
+		for _, id := range batch {
+			placeholders = append(placeholders, "?")
+			args = append(args, id)
+		}
+		query := "UPDATE project_facts SET related_vulnerability_id = NULL WHERE related_vulnerability_id IN (" + strings.Join(placeholders, ",") + ")"
+		if _, err := tx.Exec(query, args...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // DeleteProject 删除项目（级联删除事实；对话 project_id 置空由 FK 处理；其他资源 project_id 置空）。
 func (db *DB) DeleteProject(id string) error {
 	if err := NewFindings(db).UnlinkProject(id); err != nil {

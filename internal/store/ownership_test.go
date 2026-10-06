@@ -1,10 +1,14 @@
 package store
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -168,4 +172,290 @@ func TestFindingsTableHasOneWriter(t *testing.T) {
 			"The lifecycle steps that need a finding touched (conversation retirement, project deletion) "+
 			"call store.Vulnerabilities for it; add a method there instead of writing the table here.", offenders)
 	}
+}
+
+// writeLedger is every table internal/store changes, with the files here that change it.
+//
+// It is a declaration of this package's own write surface, not a list of everything this package
+// reads: aggregate queries in other domains may select from a table without being allowed to change
+// it, and the claims that ban reads would either be wrong or be widened until they mean nothing.
+var writeLedger = map[string][]string{
+	"attack_chain_edges":                {"attack_chain.go"},
+	"attack_chain_nodes":                {"attack_chain.go"},
+	"audit_logs":                        {"audit_logs.go"},
+	"capability_unit_switches":          {"capability_switches.go"},
+	"chat_upload_artifacts":             {"chat_upload.go"},
+	"c2_payload_artifacts":              {"c2_payload.go"},
+	"hitl_conversation_configs":         {"hitl_lifecycle.go"},
+	"hitl_interrupts":                   {"hitl.go", "hitl_lifecycle.go"},
+	"knowledge_base_items":              {"knowledge_items.go"},
+	"knowledge_embeddings":              {"knowledge_embeddings.go"},
+	"knowledge_retrieval_logs":          {"knowledge_retrieval.go"},
+	"messages":                          {"session.go"},
+	"model_token_usage":                 {"model_token_usage.go"},
+	"notification_reads_by_user":        {"notification_reads.go"},
+	"process_details":                   {"session.go"},
+	"robot_binding_codes":               {"robot_identity.go"},
+	"robot_user_bindings":               {"robot_identity.go"},
+	"robot_user_sessions":               {"robot_sessions.go"},
+	"skill_stats":                       {"skill_stats.go"},
+	"vulnerabilities":                   {"vulnerability.go"},
+	"vulnerability_alert_deliveries":    {"vulnerability_alerts.go"},
+	"vulnerability_alert_subscriptions": {"vulnerability_alerts.go"},
+	"workflow_definitions":              {"workflows.go", "workflow_package.go"},
+	"workflow_node_runs":                {"workflows.go"},
+	"workflow_package_imports":          {"workflow_package.go"},
+	"workflow_package_inspections":      {"workflow_package.go"},
+	"workflow_runs":                     {"workflows.go"},
+}
+
+// TestStoreWritesOnlyTablesItOwns claims the other direction of ownership. The scan above keeps other
+// packages off this package's tables; this one keeps a store off tables it does not own - the mistake
+// the findings store made while it cleared project_facts inside its own delete transaction, which is
+// a second writer for another domain's table wearing a store's clothes.
+//
+// Two details make the claim mean what it says:
+//
+//   - Only string literals are read, via go/ast. Prose cannot be mistaken for a statement: the RBAC
+//     catalogue in internal/security/rbac.go contains "Create and update vulnerabilities", and the
+//     comment above the findings store's delete names project_facts while writing nothing.
+//   - A name counts as a table only if some production file creates it. That is what drops the upsert
+//     clause - "ON CONFLICT(user_id) DO UPDATE SET" would otherwise report a table called "set".
+//
+// The ledger is checked in both directions. A write to a table that is not listed is an offender; a
+// listed table that stops being written from the files named here is a dead claim. The second half
+// matters: widening the list is the cheapest way to silence a failing version of this test, and an
+// entry nobody writes is how such a widening shows up.
+func TestStoreWritesOnlyTablesItOwns(t *testing.T) {
+	root := moduleRoot(t)
+	tables := createdTables(t, root)
+	writes := packageWrites(t, filepath.Join(root, "internal", "store"), tables)
+
+	if len(writes) == 0 {
+		t.Fatal("the scan found no write statement in internal/store - an empty scan is not a claim about ownership")
+	}
+
+	var offenders []string
+	for file, byTable := range writes {
+		for table, count := range byTable {
+			if _, listed := writeLedger[table]; listed {
+				continue
+			}
+			offenders = append(offenders, file+": "+table+" ("+strconv.Itoa(count)+")")
+		}
+	}
+	for table, files := range writeLedger {
+		found := 0
+		for _, f := range files {
+			found += writes[f][table]
+		}
+		if found == 0 {
+			offenders = append(offenders, "declared write with no statement behind it: "+table+" ("+strings.Join(files, ", ")+")")
+		}
+	}
+
+	if len(offenders) > 0 {
+		sort.Strings(offenders)
+		t.Fatalf("internal/store changes tables it does not own, or its write ledger is stale: %v. "+
+			"Ask the owning domain for a method through an injected interface, as store.FindingEffects does; "+
+			"do not add another domain's table to the ledger.", offenders)
+	}
+
+	distinct := distinctTables(writes)
+	statements := 0
+	for _, counts := range writes {
+		for _, count := range counts {
+			statements += count
+		}
+	}
+	t.Logf("internal/store writes %d statements over %d tables in %d files", statements, distinct, len(writes))
+	// The ledger size is exact while the scan's coverage is a floor: this package grows as domains are
+	// extracted, but every added table has to be an intentional edit with a file behind it. A floor on
+	// the ledger would let a failing offender be silenced by listing the table it names.
+	if len(writeLedger) != 27 {
+		t.Fatalf("the write ledger lists %d tables, want exactly 27 - measured 2026-10-06: %d statements over "+
+			"these tables from %d files", len(writeLedger), statements, len(writes))
+	}
+	if len(writes) < 20 {
+		t.Fatalf("write ledger covers %d files, want at least 20 - the scan has gone blind", len(writes))
+	}
+	if distinct < 27 {
+		t.Fatalf("write ledger covers %d tables, want at least 27 - the scan has gone blind", distinct)
+	}
+}
+
+// TestProjectFactsHasOneWriter pins the delete path's side effect to the facts domain.
+//
+// Deleting a finding used to carry the unlink as SQL in the store that owned the delete, so
+// project_facts had two writers and the schema's "one owner" claim was false for that table. The store
+// now hands the ids to the project domain on the same transaction, and this is the test that keeps the
+// handover from drifting back.
+func TestProjectFactsHasOneWriter(t *testing.T) {
+	root := moduleRoot(t)
+	tables := createdTables(t, root)
+	const owner = "internal/database/project.go"
+
+	ownWrites := 0
+	var offenders []string
+	for _, dir := range []string{"internal", "cmd"} {
+		for path := range productionGoFiles(t, filepath.Join(root, dir)) {
+			rel := mustRel(t, root, path)
+			if strings.HasPrefix(rel, "internal/store/") {
+				continue // claimed by TestStoreWritesOnlyTablesItOwns, which checks every table there
+			}
+			for _, w := range writeTargets(t, path, tables) {
+				if w.table != "project_facts" {
+					continue
+				}
+				if rel == owner {
+					ownWrites++
+					continue
+				}
+				offenders = append(offenders, rel+": "+w.statement)
+			}
+		}
+	}
+
+	// Six statements as this slice landed: the insert, the four updates (the fact body, the confidence
+	// flips in and out of deprecated, and the link this test exists to keep here) and the delete.
+	if ownWrites != 6 {
+		t.Fatalf("%s writes project_facts in %d statements, want exactly 6 - a scan finding fewer is not "+
+			"a claim about ownership", owner, ownWrites)
+	}
+	if len(offenders) > 0 {
+		sort.Strings(offenders)
+		t.Fatalf("project_facts is written from outside its owner: %v. "+
+			"Clear a fact's link to a finding through database.unlinkFactReferences on the caller's "+
+			"transaction instead of writing the table there.", offenders)
+	}
+}
+
+type writeHit struct {
+	table     string
+	statement string
+}
+
+// createdTables is the schema's own vocabulary: every table name any production file creates.
+func createdTables(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	creator := regexp.MustCompile(`(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)`)
+	tables := map[string]bool{}
+	for _, dir := range []string{"internal", "cmd"} {
+		for path := range productionGoFiles(t, filepath.Join(root, dir)) {
+			for _, lit := range stringLiterals(t, path) {
+				for _, m := range creator.FindAllStringSubmatch(lit, -1) {
+					tables[strings.ToLower(m[1])] = true
+				}
+			}
+		}
+	}
+	if len(tables) < 40 {
+		t.Fatalf("found %d created tables, want at least 40 - the schema scan has gone blind", len(tables))
+	}
+	return tables
+}
+
+// packageWrites returns table -> statement count for every write statement in one directory.
+func packageWrites(t *testing.T, dir string, tables map[string]bool) map[string]map[string]int {
+	t.Helper()
+	byFile := map[string]map[string]int{}
+	for path := range productionGoFiles(t, dir) {
+		counts := map[string]int{}
+		for _, w := range writeTargets(t, path, tables) {
+			counts[w.table]++
+		}
+		if len(counts) > 0 {
+			byFile[filepath.Base(path)] = counts
+		}
+	}
+	return byFile
+}
+
+func distinctTables(byFile map[string]map[string]int) int {
+	set := map[string]bool{}
+	for _, counts := range byFile {
+		for table := range counts {
+			set[table] = true
+		}
+	}
+	return len(set)
+}
+
+// writeTargets finds INSERT/UPDATE/DELETE statements in one file's SQL. Only string literals are
+// examined and only names the schema creates are reported, so the answer is about statements rather
+// than about anything a sentence happens to mention.
+func writeTargets(t *testing.T, path string, tables map[string]bool) []writeHit {
+	t.Helper()
+	writer := regexp.MustCompile(`(?i)\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+([a-z_][a-z0-9_]*)`)
+	var out []writeHit
+	for _, lit := range stringLiterals(t, path) {
+		for _, m := range writer.FindAllStringSubmatch(lit, -1) {
+			table := strings.ToLower(m[2])
+			if !tables[table] {
+				continue
+			}
+			out = append(out, writeHit{table: table, statement: strings.Join(strings.Fields(m[0]), " ")})
+		}
+	}
+	return out
+}
+
+func stringLiterals(t *testing.T, path string) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	var out []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		lit, ok := n.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		value, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			t.Fatalf("unquote %s: %v", path, err)
+		}
+		out = append(out, value)
+		return true
+	})
+	return out
+}
+
+// productionGoFiles yields the non-test source files under dir, skipping fixtures.
+func productionGoFiles(t *testing.T, dir string) <-chan string {
+	ch := make(chan string)
+	go func() {
+		defer close(ch)
+		err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				t.Errorf("walk %s: %v", path, err)
+				return err
+			}
+			if d.IsDir() {
+				if d.Name() == "testdata" || d.Name() == "generated" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
+				ch <- path
+			}
+			return nil
+		})
+		if err != nil {
+			t.Errorf("scan %s: %v", dir, err)
+		}
+	}()
+	return ch
+}
+
+func mustRel(t *testing.T, root, path string) string {
+	t.Helper()
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		t.Fatalf("relativize %s: %v", path, err)
+	}
+	return filepath.ToSlash(rel)
 }
