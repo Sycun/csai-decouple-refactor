@@ -127,6 +127,10 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	if err := ensureChatUploadArtifactSchema(db); err != nil {
 		log.Logger.Warn("初始化 chat_upload_artifacts 表失败", zap.Error(err))
 	}
+	// knowledge_retrieval_logs has foreign keys onto conversations and messages, both just created.
+	if err := ensureKnowledgeRetrievalSchema(db); err != nil {
+		log.Logger.Warn("初始化 knowledge_retrieval_logs 表失败", zap.Error(err))
+	}
 
 	// 认证管理器（数据库初始化后挂载 RBAC）
 	authManager := security.NewAuthManager(cfg.Auth.SessionDurationHours)

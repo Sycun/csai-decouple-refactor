@@ -329,3 +329,11 @@ func ensureAuditLogsSchema(db *database.DB) error {
 	}
 	return store.NewAuditLogs(db.DB).EnsureSchema()
 }
+
+// ensureKnowledgeRetrievalSchema creates knowledge_retrieval_logs through the store that owns it.
+func ensureKnowledgeRetrievalSchema(db *database.DB) error {
+	if db == nil {
+		return nil
+	}
+	return store.NewKnowledgeRetrieval(db.DB).EnsureSchema()
+}

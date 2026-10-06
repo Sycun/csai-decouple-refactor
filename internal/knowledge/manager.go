@@ -11,23 +11,26 @@ import (
 	"strings"
 	"time"
 
+	"cyberstrike-ai/internal/store"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
 // Manager 知识库管理器
 type Manager struct {
-	db       *sql.DB
-	basePath string
-	logger   *zap.Logger
+	db        *sql.DB
+	retrieval *store.KnowledgeRetrieval // knowledge_retrieval_logs: 这张表只由 store 写
+	basePath  string
+	logger    *zap.Logger
 }
 
 // NewManager 创建新的知识库管理器
 func NewManager(db *sql.DB, basePath string, logger *zap.Logger) *Manager {
 	return &Manager{
-		db:       db,
-		basePath: basePath,
-		logger:   logger,
+		retrieval: store.NewKnowledgeRetrieval(db),
+		db:        db,
+		basePath:  basePath,
+		logger:    logger,
 	}
 }
 
@@ -756,11 +759,10 @@ func (m *Manager) LogRetrieval(conversationID, messageID, query, riskType string
 	id := uuid.New().String()
 	itemsJSON, _ := json.Marshal(retrievedItems)
 
-	_, err := m.db.Exec(
-		"INSERT INTO knowledge_retrieval_logs (id, conversation_id, message_id, query, risk_type, retrieved_items, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		id, conversationID, messageID, query, riskType, string(itemsJSON), time.Now(),
-	)
-	return err
+	return m.retrieval.Record(store.RetrievalEntry{
+		ID: id, ConversationID: conversationID, MessageID: messageID,
+		Query: query, RiskType: riskType, ItemsJSON: string(itemsJSON),
+	}, time.Now())
 }
 
 // GetIndexStatus 获取索引状态
@@ -803,39 +805,19 @@ func (m *Manager) GetIndexStatus() (map[string]interface{}, error) {
 
 // GetRetrievalLogs 获取检索日志
 func (m *Manager) GetRetrievalLogs(conversationID, messageID string, limit int) ([]*RetrievalLog, error) {
-	var rows *sql.Rows
-	var err error
-
-	if messageID != "" {
-		rows, err = m.db.Query(
-			"SELECT id, conversation_id, message_id, query, risk_type, retrieved_items, created_at FROM knowledge_retrieval_logs WHERE message_id = ? ORDER BY created_at DESC LIMIT ?",
-			messageID, limit,
-		)
-	} else if conversationID != "" {
-		rows, err = m.db.Query(
-			"SELECT id, conversation_id, message_id, query, risk_type, retrieved_items, created_at FROM knowledge_retrieval_logs WHERE conversation_id = ? ORDER BY created_at DESC LIMIT ?",
-			conversationID, limit,
-		)
-	} else {
-		rows, err = m.db.Query(
-			"SELECT id, conversation_id, message_id, query, risk_type, retrieved_items, created_at FROM knowledge_retrieval_logs ORDER BY created_at DESC LIMIT ?",
-			limit,
-		)
-	}
-
+	entries, err := m.retrieval.ListNewest(messageID, conversationID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("查询检索日志失败: %w", err)
 	}
-	defer rows.Close()
 
 	var logs []*RetrievalLog
-	for rows.Next() {
-		log := &RetrievalLog{}
-		var createdAt string
-		var itemsJSON sql.NullString
-		if err := rows.Scan(&log.ID, &log.ConversationID, &log.MessageID, &log.Query, &log.RiskType, &itemsJSON, &createdAt); err != nil {
-			return nil, fmt.Errorf("扫描检索日志失败: %w", err)
+	for _, entry := range entries {
+		log := &RetrievalLog{
+			ID: entry.ID, ConversationID: entry.ConversationID, MessageID: entry.MessageID,
+			Query: entry.Query, RiskType: entry.RiskType,
 		}
+		createdAt := entry.CreatedAt
+		itemsJSON := sql.NullString{String: entry.ItemsJSON, Valid: entry.ItemsJSON != ""}
 
 		// 解析时间 - 支持多种格式
 		var err error
@@ -879,19 +861,12 @@ func (m *Manager) GetRetrievalLogs(conversationID, messageID string, limit int) 
 
 // DeleteRetrievalLog 删除检索日志
 func (m *Manager) DeleteRetrievalLog(id string) error {
-	result, err := m.db.Exec("DELETE FROM knowledge_retrieval_logs WHERE id = ?", id)
+	found, err := m.retrieval.DeleteByID(id)
 	if err != nil {
 		return fmt.Errorf("删除检索日志失败: %w", err)
 	}
-
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("获取删除行数失败: %w", err)
-	}
-
-	if rowsAffected == 0 {
+	if !found {
 		return fmt.Errorf("检索日志不存在")
 	}
-
 	return nil
 }

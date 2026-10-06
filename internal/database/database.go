@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"cyberstrike-ai/internal/store"
 	_ "github.com/mattn/go-sqlite3"
 	"go.uber.org/zap"
 )
@@ -317,20 +318,6 @@ func (db *DB) initTables() error {
 		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE,
 		FOREIGN KEY (source_node_id) REFERENCES attack_chain_nodes(id) ON DELETE CASCADE,
 		FOREIGN KEY (target_node_id) REFERENCES attack_chain_nodes(id) ON DELETE CASCADE
-	);`
-
-	// 创建知识检索日志表（保留在会话数据库中，因为有外键关联）
-	createKnowledgeRetrievalLogsTable := `
-	CREATE TABLE IF NOT EXISTS knowledge_retrieval_logs (
-		id TEXT PRIMARY KEY,
-		conversation_id TEXT,
-		message_id TEXT,
-		query TEXT NOT NULL,
-		risk_type TEXT,
-		retrieved_items TEXT,
-		created_at DATETIME NOT NULL,
-		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL,
-		FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE SET NULL
 	);`
 
 	// 机器人会话绑定表（用于跨重启保持「平台+租户+用户」到 conversation 的映射）
@@ -720,9 +707,6 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_chain_edges_conversation ON attack_chain_edges(conversation_id);
 	CREATE INDEX IF NOT EXISTS idx_chain_edges_source ON attack_chain_edges(source_node_id);
 	CREATE INDEX IF NOT EXISTS idx_chain_edges_target ON attack_chain_edges(target_node_id);
-	CREATE INDEX IF NOT EXISTS idx_knowledge_retrieval_logs_conversation ON knowledge_retrieval_logs(conversation_id);
-	CREATE INDEX IF NOT EXISTS idx_knowledge_retrieval_logs_message ON knowledge_retrieval_logs(message_id);
-	CREATE INDEX IF NOT EXISTS idx_knowledge_retrieval_logs_created_at ON knowledge_retrieval_logs(created_at);
 	CREATE INDEX IF NOT EXISTS idx_robot_user_sessions_updated_at ON robot_user_sessions(updated_at);
 	CREATE INDEX IF NOT EXISTS idx_conversations_pinned ON conversations(pinned);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_conversation_id ON vulnerabilities(conversation_id);
@@ -812,10 +796,6 @@ func (db *DB) initTables() error {
 
 	if _, err := db.Exec(createAttackChainEdgesTable); err != nil {
 		return fmt.Errorf("创建attack_chain_edges表失败: %w", err)
-	}
-
-	if _, err := db.Exec(createKnowledgeRetrievalLogsTable); err != nil {
-		return fmt.Errorf("创建knowledge_retrieval_logs表失败: %w", err)
 	}
 
 	if _, err := db.Exec(createRobotUserSessionsTable); err != nil {
@@ -1664,25 +1644,16 @@ func (db *DB) initKnowledgeTables() error {
 		FOREIGN KEY (item_id) REFERENCES knowledge_base_items(id) ON DELETE CASCADE
 	);`
 
-	// 创建知识检索日志表（在独立知识库数据库中，不使用外键约束，因为conversations和messages表可能不在这个数据库中）
-	createKnowledgeRetrievalLogsTable := `
-	CREATE TABLE IF NOT EXISTS knowledge_retrieval_logs (
-		id TEXT PRIMARY KEY,
-		conversation_id TEXT,
-		message_id TEXT,
-		query TEXT NOT NULL,
-		risk_type TEXT,
-		retrieved_items TEXT,
-		created_at DATETIME NOT NULL
-	);`
+	// knowledge_retrieval_logs 在独立知识库里不建外键（conversations/messages 可能不在这个库）。
+	// 两种拼法都由这张表的主人给出，见 internal/store/knowledge_retrieval.go。
+	if err := store.NewKnowledgeRetrieval(db.DB).EnsureStandaloneSchema(); err != nil {
+		return fmt.Errorf("创建knowledge_retrieval_logs表失败: %w", err)
+	}
 
 	// 创建索引
 	createIndexes := `
 	CREATE INDEX IF NOT EXISTS idx_knowledge_items_category ON knowledge_base_items(category);
 	CREATE INDEX IF NOT EXISTS idx_knowledge_embeddings_item_id ON knowledge_embeddings(item_id);
-	CREATE INDEX IF NOT EXISTS idx_knowledge_retrieval_logs_conversation ON knowledge_retrieval_logs(conversation_id);
-	CREATE INDEX IF NOT EXISTS idx_knowledge_retrieval_logs_message ON knowledge_retrieval_logs(message_id);
-	CREATE INDEX IF NOT EXISTS idx_knowledge_retrieval_logs_created_at ON knowledge_retrieval_logs(created_at);
 	`
 
 	if _, err := db.Exec(createKnowledgeBaseItemsTable); err != nil {
@@ -1691,10 +1662,6 @@ func (db *DB) initKnowledgeTables() error {
 
 	if _, err := db.Exec(createKnowledgeEmbeddingsTable); err != nil {
 		return fmt.Errorf("创建knowledge_embeddings表失败: %w", err)
-	}
-
-	if _, err := db.Exec(createKnowledgeRetrievalLogsTable); err != nil {
-		return fmt.Errorf("创建knowledge_retrieval_logs表失败: %w", err)
 	}
 
 	if _, err := db.Exec(createIndexes); err != nil {

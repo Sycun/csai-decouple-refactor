@@ -38,6 +38,7 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	skillStatsSchema := 0
 	chatUploadSchema := 0
 	auditLogsSchema := 0
+	knowledgeRetrievalSchema := 0
 	auditSchemaOffset := -1
 	auditServiceOffset := -1
 	pluginCalls := 0
@@ -80,6 +81,8 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 						// builds from config.yaml. Without this call the server is in the table and
 						// in the console after a restart while nothing connects to it.
 						mcpProvisioned++
+					case "ensureKnowledgeRetrievalSchema":
+						knowledgeRetrievalSchema++
 					case "ensureAuditLogsSchema":
 						auditLogsSchema++
 						auditSchemaOffset = fset.Position(call.Pos()).Offset
@@ -200,6 +203,10 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 			"(ensure at offset %d, audit.NewService at %d): the service purges expired records during "+
 			"construction, so on a fresh database it queries a table nobody made yet",
 			auditSchemaOffset, auditServiceOffset)
+	}
+	if knowledgeRetrievalSchema < 1 {
+		t.Fatalf("ensureKnowledgeRetrievalSchema is never called at boot: the table left the data " +
+			"layer's start-up sweep, and its form is the one with two foreign keys")
 	}
 	if auditLogsSchema < 1 {
 		t.Fatalf("ensureAuditLogsSchema is never called at boot: audit_logs left the start-up sweep, so " +

@@ -1367,6 +1367,54 @@ store 侧 6 条真库用例（前缀级联删除、子树改名带同一套 `LIK
 门禁改动的纪律：**改完 Makefile 必须跑那个 target 本身**（这行引号我拼错过两次，
 `go test` 直接跑是发现不了的，只有 `make test-gates` 会撞）。
 
+### P6 数据层第九片 —— `knowledge_retrieval_logs`，顺带挖出"一张表两套 schema、两个数据库"
+
+抽这张表的 SQL 时发现它**被建了两次，而且语句不一样**：
+- `NewDB`（会话主库 `data/conversations.db`）里的 `knowledge_retrieval_logs` **带两个外键**
+  （`conversation_id → conversations`、`message_id → messages`，都是 `ON DELETE SET NULL`）+ 3 条索引；
+- `NewKnowledgeDB`（独立知识库文件）里的同名表**故意不带外键**，注释写着
+  "因为 conversations 和 messages 表可能不在这个数据库中"。
+
+于是这两套拼法连同索引一起进 `internal/store/knowledge_retrieval.go`
+（`EnsureSchema()` 与 `EnsureStandaloneSchema()`，各自带索引），
+**差别留在同一个地方并被说清楚**，而不是散在数据层两处；
+两条测试分别断言"主库那版必须有两个外键"与"独立库那版必须为 0"，
+这样谁把其中一版"顺手统一"掉就会红。
+写入方也从两处变成一个：`Manager.LogRetrieval/GetRetrievalLogs/DeleteRetrievalLog`
+和**会话删除路径**里那句手动的 `DELETE FROM knowledge_retrieval_logs WHERE conversation_id = ?`
+（原本是第二个写入者）现在都经这个 store。
+读取侧的解释逻辑（7 种历史时间格式、items JSON、解析失败退回 now 并 warn）**留在 knowledge**，
+store 只按原样把 `created_at` 文本和 JSON 传回去——绑定 `time.Now()` 的写法一字未改，
+换成 `sqltime.UTC` 就会改变已存行的文本形态。
+
+数字：`internal/knowledge` 的裸 SQL **24 → 19**（`manager.go`），
+`raw_sql_ratchet_test.go` 的上限随之下调；`knowledge_retrieval_logs` 进归属门禁表清单。
+**两道门禁各自探针验红**：把某文件上限调低一格 → 报 "19 raw statements, ceiling 18"；
+在 `handler/knowledge.go` 塞一条 `DELETE FROM knowledge_retrieval_logs` → 报"泄漏"。
+（顺带纠一处我自己犯的错：第一次跑归属探针是**绿的**，因为表名根本没进清单——
+我上一段脚本在更早的一处断言上抛异常就退出了，后面的清单编辑没执行。
+**"改了门禁"必须包含"门禁里那一项真的存在"**：这次是把 `grep -n owned :=` 的输出与红/绿一起看。）
+
+启动侧：主库的建表在 `ensureKnowledgeRetrievalSchema(db)`（紧跟 conversations/messages 之后，
+因为那两个外键），并被 AST 门禁钉住（探针：删掉那三行 → `never called at boot` 即红）；
+独立库的建表在 `NewKnowledgeDB → initKnowledgeTables` 里经 `EnsureStandaloneSchema()` 完成。
+
+**空库真机复验（一个干净实例，全部四张 store 拥有的表）**：
+`knowledge_retrieval_logs=1 / 外键=2 / 索引=3`，`audit_logs=1`，`skill_stats=1`，
+`chat_upload_artifacts=1`，日志里 `no such table` 与建表失败 **0 行**。
+这一轮真机点验还抓出两件事，都不是代码问题而是"验错了东西"：
+① `ensureKnowledgeRetrievalSchema` 最初**根本没进 app.go**（我那段脚本在更早一处断言就抛异常退出，
+后面的编辑没执行），而第一次查库看到"表不存在"时先怀疑的是代码不是二进制——
+`make test-gates` 之后我又改了 app.go 却没重编二进制，测的是**旧产物**；重编后一切正常。
+**结论：真机点验之前必须重编，且"表没建出来"要按顺序排除 二进制新旧 → 门禁是否真在跑 → 代码**。
+② 上一段"表存在但外键=0"其实查的是**空文件**（sqlite3 打不开目标文件时会新建一个空的），
+配置里的库路径替换没命中（那行早已是 `data/livecheck.db`）。
+所以现在固定用一个 python 脚本按 `*.db` 全列举并打印每个计数，而不是 `sqlite3 单文件` 加一堆引号。
+
+**下一片照旧**：`knowledge_embeddings`（含 `schema_migrate.go` 的三条列迁移）与
+`knowledge_base_items`（`manager.go` 剩下的 19 条里的大部分）——它们**同时存在于两个数据库文件**，
+所以 store 侧要先决定"每表 × 每库"的形状，别再制造第二套拼法。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

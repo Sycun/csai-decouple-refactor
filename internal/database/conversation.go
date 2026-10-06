@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"cyberstrike-ai/internal/store"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -712,8 +713,9 @@ func (db *DB) DeleteConversation(id string) error {
 		db.logger.Warn("更新漏洞来源标签失败", zap.String("conversationId", id), zap.Error(err))
 	}
 
-	// 显式删除知识检索日志（虽然外键是SET NULL，但为了彻底清理，我们手动删除）
-	_, err = db.Exec("DELETE FROM knowledge_retrieval_logs WHERE conversation_id = ?", id)
+	// 显式删除知识检索日志（虽然外键是SET NULL，但为了彻底清理，我们手动删除）。
+	// 这张表的主人不是会话域，所以经它自己的 store 删。
+	err = store.NewKnowledgeRetrieval(db.DB).DeleteForConversation(id)
 	if err != nil {
 		db.logger.Warn("删除知识检索日志失败", zap.String("conversationId", id), zap.Error(err))
 		// 不返回错误，继续删除对话
