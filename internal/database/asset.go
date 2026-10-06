@@ -1306,7 +1306,7 @@ func (db *DB) GetAssetStats(access store.Access, requestedDays ...int) (map[stri
 	}
 
 	riskDaily := map[string]map[string]int{}
-	riskWhere, riskArgs := appendVulnerabilityAccessFilter(" WHERE datetime(created_at)>=datetime('now',?)", []interface{}{fmt.Sprintf("-%d days", days-1)}, access)
+	riskWhere, riskArgs := store.ConstrainFinding(" WHERE datetime(created_at)>=datetime('now',?)", []interface{}{fmt.Sprintf("-%d days", days-1)}, access)
 	riskRows, err := db.Query(`SELECT date(created_at), COUNT(*),
 		COALESCE(SUM(CASE WHEN LOWER(severity) IN ('critical','high') THEN 1 ELSE 0 END),0)
 		FROM vulnerabilities`+riskWhere+` GROUP BY date(created_at) ORDER BY date(created_at)`, riskArgs...)

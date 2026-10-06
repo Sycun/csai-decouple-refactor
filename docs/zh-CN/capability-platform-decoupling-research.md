@@ -1764,6 +1764,43 @@ store.Access 的接口"。是编译和门禁全绿之后我重读注释才发现
 第三块铺垫（`appendVulnerabilityAccessFilter` 与 `store/access.go` 那条子句的差分归一）
 仍未做，所以漏洞域整片还没开工——原因清单与顺序在 §12.3「漏洞域为什么搬不动」。
 
+### P6 第十九刀 —— 同一张表的可见性规则的两份拷贝合成一条，顺带把"无身份 = 全见"这个默认翻过来
+
+`internal/database/vulnerability.go` 里的 `appendVulnerabilityAccessFilter` 与
+`internal/store/vulnerability.go` 的 `ConstrainFinding`（通知摘要在用）是**同一条规则的两份拷贝**：
+六条可达路径（本人 owner / 被分到该漏洞 / 拥有其项目 / 被分到其项目 / 拥有其会话 / 被分到其会话）
+**逐字相同**，只有一处不同——数据层那份在 `userID == ""` 时**什么都不加**。
+6 个调用点（漏洞 5 条查询 + 资产看板的风险趋势 1 条）全部改指 store 那一条，重复的那份删除。
+
+**差分测试**（`internal/database/access_clause_parity_test.go`）：种 7 条漏洞，一条一条对着可达路径
+（外加一条谁都不属于的孤儿），7 个身份 × `own`/`assigned` 两种 scope 共 **14 次比对**，
+每次同时跑「钉在测试里的旧拼写」与新的 store 子句，行集合必须一模一样；
+`scope=all` 单独一条（两边都不加条件）；**唯一允许的差别**单独断言：
+无身份时旧拼写返回全库 7 条、新子句返回 0 条。旧拼写以原文常量形式钉进测试，
+不是拿新实现跟自己比。
+
+**这次合并真正翻出来的东西**：`ListVulnerabilities` / `CountVulnerabilities` 这两个"不做过滤"的读，
+过去是**靠传一个空 access** 来表达"不加限制"的——它们依赖的正是那个 fail-open 默认。
+现在显式写 `Access{Scope: store.ScopeAll}`，意图落在参数上而不是落在缺省行为里。
+顺带记下两处**策略问题**（不是今晚该改的行为）：
+`handler/openapi.go:89`（按会话导出漏洞的文档接口）与 `internal/app/vulnerability_tools.go:391/399`
+（MCP 的漏洞列表工具）调的都是这个"不加限制"的读——也就是说，任何一个通过鉴权的调用者、
+任何一次带上下文的 agent 工具调用，看到的都是**全库**漏洞。要不要按调用者收窄是产品/安全决策，
+列为 §10 决策项 10。
+
+还有一处只能靠**回归测试**才看得见：合并之后 `internal/database/asset_test.go` 里
+`TestAssetScanLinkReturnsTimeAndRelatedVulnerabilities` 当场红了（它走的就是那条无身份读）。
+这条红不是测试坏了，是**默认值变了**——处理方式就是上面那个显式 `ScopeAll`，
+改完原测试原样通过，没有为了让它绿而放宽任何断言。
+
+**探针（注入即红 / 撤销即绿）**：① 把 store 子句的空身份分支改回"什么都不加" →
+`a caller with no identity read 7 findings, want none`；
+② 把"被分到其项目"那条 EXISTS 掐掉 → `project-assigned/own: the store clause answered [], want [f-project-assigned]`。
+两条都是差分测试自己红的，不是编译红。
+
+至此 §12.3 列的三块铺垫全部拆完（复数改名、访问类型合一、可见性子句归一），
+漏洞域整片（11 + 8 个方法、两张告警表、`robot_user_bindings` 的归属认领）已经没有前置阻塞。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
@@ -1796,6 +1833,9 @@ store.Access 的接口"。是编译和门禁全绿之后我重读注释才发现
   二进制自身的 `ArtifactDigest`，执行路径每次调用查；单元的指纹也盖住二进制，换文件即报漂移）。
 - P5 剩余：registry 服务端（签名发布、灰度、release-age 冷却）、气隙离线包导出/导入、沙箱引爆自动化。
 - §6.1 待决策：角色/skill/markdown-agent 文本是否也按运行期不可信处理（当前视为"已安装的运维者配置"）。
+- **决策项 10（第十九刀翻出来的）**：会话漏洞导出接口与 MCP 漏洞列表工具目前读的是**不加限制**的那条路
+  （任何通过鉴权的调用者 / 任何一次带 principal 的工具调用都能看到全库漏洞）。
+  要不要按调用者可见性收窄是产品决定；本刀只把"不加限制"从隐式默认改成显式参数，没有改变任何可达行为。
 - `docs/zh-CN/agent-finalization-best-practices.md` 缺 en-US 且引用旧域名 `docs.anthropic.com/en/docs/claude-code/*`，本报告已更正但未代改。
 
 ## 十二、交接口径（验收清单 · 剩余工作 · 未提交状态）
