@@ -2722,6 +2722,16 @@ C2 三张列表都认的哨兵，而 `assetWhere` 只是把它当成一个匹配
 `NewAssets(db).X(` / `database.NewAssets(db).X(`——**这批测试仍跑在真库上**，它们对语句的覆盖度没有变化，
 变的只是取得那条语句的入口。
 
+**真机点验（空目录起一个全新进程，走真的 HTTP 面）**：登录 → `POST /api/assets/import` 得
+`{created:2}` → `GET /api/assets` 回 2 条且 `total=2` → `PUT /api/assets/:id`（带 `tags:["prod","prod","  x  "]`）
+回 `tags:["prod","x"]`，去重与去空白仍在 → `PUT /api/assets/bulk` 回 `{updated:2}`，两条都拿到 `live3` →
+`POST /api/assets/merge` 对两条**没有共同域名/IP/Host** 的资产回
+`所选资产没有共同域名、IP 或 Host，不能判定为重复资产`（这条软拒绝是原行为，不是新加的）→
+`POST /api/assets/batch-delete` 回 `{deleted:2}`、复列 `total=0` → 未带 token 的 `GET /api/assets/stats` 回 401。
+**这七步全部走的就是 `AssetHandler.assets`（`*store.Assets`）与 MCP 路径同款构造的 store**，
+所以"删转发不改变线格式"这一条是跑出来的，不是推断出来的。
+
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
