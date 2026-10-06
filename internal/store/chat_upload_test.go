@@ -13,12 +13,22 @@ import (
 
 func newChatUploadStore(t *testing.T) *ChatUploads {
 	t.Helper()
-	uploads := NewChatUploads(openDB(t))
+	db := openDB(t)
+	uploads := NewChatUploads(db)
 	if err := uploads.EnsureSchema(); err != nil {
 		t.Fatal(err)
 	}
 	if err := uploads.EnsureSchema(); err != nil {
 		t.Fatalf("schema is not idempotent: %v", err)
+	}
+	// The schema is three statements in one Exec: the table plus both indexes. An implementation that
+	// stops after the first statement still looks like it worked, so the indexes are checked by name.
+	for _, object := range []string{"chat_upload_artifacts", "idx_chat_upload_artifacts_conversation", "idx_chat_upload_artifacts_owner"} {
+		var found string
+		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE name = ?`, object).Scan(&found)
+		if err != nil {
+			t.Fatalf("%s was not created: %v", object, err)
+		}
 	}
 	return uploads
 }
