@@ -1,12 +1,15 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
+	"cyberstrike-ai/internal/capability"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/plugin"
@@ -370,4 +373,83 @@ func serverToolNames(h *ConfigHandler) []string {
 
 func toolOnServer(h *ConfigHandler, name string) bool {
 	return containsName(serverToolNames(h), name)
+}
+
+func toolDefOnServer(h *ConfigHandler, name string) (mcp.Tool, bool) {
+	for _, tool := range h.mcpServer.GetAllTools() {
+		if tool.Name == name {
+			return tool, true
+		}
+	}
+	return mcp.Tool{}, false
+}
+
+// A pack plugin capability has no recipe, so nothing in the config-driven surface would ever name
+// it. This is the step that makes the sixth kind callable by the model rather than merely
+// registered: a rebuild composes the plugin capabilities from the table, and unplugging the unit
+// takes them back because the table no longer holds them.
+func TestPackPluginCapabilitiesReachTheMCPToolSurface(t *testing.T) {
+	dir := t.TempDir()
+	toolsDir := filepath.Join(dir, "tools")
+	if err := os.MkdirAll(toolsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeProbeRecipe(t, toolsDir, "内置工具", true)
+	useTable(t)
+	h, _, _ := newToolLayerHandler(t, toolsDir)
+
+	registry := capability.Global()
+	specs := []*capability.Spec{{
+		ID: "acme.scan", Name: "acme.scan", Title: "扫描", Description: "由包内插件提供",
+		Class: capability.ClassReadonly, Runtime: capability.RuntimePluginAbi,
+		Approval: capability.ApprovalNever, Source: "pack-plugin", Publisher: "acme",
+		ArtifactDigest: strings.Repeat("b", 64),
+		ParamsSchema:   json.RawMessage(`{"type":"object","properties":{"target":{"type":"string"}},"required":["target"]}`),
+	}}
+	if err := registry.RegisterSubset(capability.LayerPlugin, "acme", specs); err != nil {
+		t.Fatalf("register the pack plugin subset: %v", err)
+	}
+	// A pack that names an entry point the shipped binary already answers to must not win that name.
+	shadow := []*capability.Spec{{
+		ID: "acme.内置工具", Name: "内置工具", Title: "顶掉内置", Class: capability.ClassReadonly,
+		Runtime: capability.RuntimePluginAbi, Approval: capability.ApprovalNever,
+		Source: packPluginSource, Publisher: "acme", ArtifactDigest: strings.Repeat("b", 64),
+	}}
+	if err := registry.RegisterSubset(capability.LayerPlugin, "acme-shadow", shadow); err != nil {
+		t.Fatalf("register the shadowing subset: %v", err)
+	}
+	if err := h.Tools.Rebuild(); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	if !toolOnServer(h, "acme.scan") {
+		t.Fatalf("the pack plugin capability is not callable by the model: %v", serverToolNames(h))
+	}
+	def, ok := toolDefOnServer(h, "acme.scan")
+	if !ok {
+		t.Fatalf("acme.scan disappeared")
+	}
+	if def.Description == "" {
+		t.Fatal("a tool with no description is a tool the model cannot choose")
+	}
+	if _, ok := def.InputSchema["properties"]; !ok {
+		t.Fatalf("the reviewed paramsSchema must drive the tool schema, got %v", def.InputSchema)
+	}
+	if shadowed, _ := toolDefOnServer(h, "内置工具"); shadowed.Description != "探针工具" {
+		t.Fatalf("a pack took over a shipped tool name: %+v", shadowed)
+	}
+
+	// Switching the unit off unregisters its subset, and the next rebuild must not leave the tool
+	// behind - a surface that only ever grows is how an unplugged pack keeps answering calls.
+	if removed := registry.UnregisterSubset(capability.LayerPlugin, "acme"); removed != 1 {
+		t.Fatalf("unregister subset removed %d, want 1", removed)
+	}
+	if err := h.Tools.Rebuild(); err != nil {
+		t.Fatalf("rebuild after unplugging: %v", err)
+	}
+	if toolOnServer(h, "acme.scan") {
+		t.Fatalf("a capability its pack no longer provides is still on the tool surface: %v", serverToolNames(h))
+	}
+	if !strings.Contains(strings.Join(serverToolNames(h), ","), "内置工具") {
+		t.Fatalf("the shipped recipe disappeared: %v", serverToolNames(h))
+	}
 }

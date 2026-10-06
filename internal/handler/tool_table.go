@@ -1,13 +1,18 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 
+	"cyberstrike-ai/internal/capability"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/plugin"
+	"cyberstrike-ai/internal/pluginhost"
 	"cyberstrike-ai/internal/security"
 
 	"go.uber.org/zap"
@@ -253,7 +258,8 @@ func (l *ToolLayer) Rebuild() error {
 
 // reregisterToolSurface is the tail of a rebuild: wipe the MCP tool table, then re-register the
 // recipe tools and every built-in registrar. ClearTools wipes the built-ins too, so this list is
-// the whole surface and the order is the one ApplyConfig has always used.
+// the whole surface and the order is the one ApplyConfig has always used. Pack plugin capabilities
+// come last, so a pack can never take over a name the shipped binary already answers to.
 func (l *ToolLayer) reregisterToolSurface(inj toolInject) {
 	l.srv.ClearTools()
 
@@ -315,4 +321,65 @@ func (l *ToolLayer) reregisterToolSurface(inj toolInject) {
 			l.log.Info("知识库工具已重新注册")
 		}
 	}
+
+	if n := l.registerPackPluginTools(); n > 0 {
+		l.log.Info("包内插件能力已挂上工具面", zap.Int("capabilities", n))
+	}
+}
+
+// registerPackPluginTools puts the capabilities a pack's plugin binary proved it provides onto the
+// MCP tool surface. A pack plugin has no recipe - the reviewed declaration in the pack is what
+// names its entry points, and the executor already routes a `plugin-host:*` runtime out of process -
+// so without this step the capability would sit in the table authorized, revocable and invisible to
+// the model, which is a long way of saying the pack installed and did nothing.
+//
+// It is recomposed from the registry on every rebuild, so switching a unit off (which drops its
+// subset) takes its tools back with no separate unregister path to forget. It runs last so the
+// shipped surface wins any name clash: a pack may add an entry point, never answer one itself.
+func (l *ToolLayer) registerPackPluginTools() int {
+	if l.srv == nil || l.exec == nil {
+		return 0
+	}
+	taken := map[string]bool{}
+	for _, tool := range l.srv.GetAllTools() {
+		taken[tool.Name] = true
+	}
+	registered := 0
+	for _, spec := range capability.Global().Specs() {
+		if !pluginhost.IsPluginRuntime(string(spec.Runtime)) || spec.Source != packPluginSource {
+			continue
+		}
+		name := strings.TrimSpace(spec.Name)
+		if name == "" {
+			continue
+		}
+		if taken[name] {
+			l.log.Warn("包内插件能力与既有工具同名，保留内置实现", zap.String("capability", spec.ID), zap.String("tool", name))
+			continue
+		}
+		taken[name] = true
+		description := strings.TrimSpace(spec.Description)
+		if description == "" {
+			description = strings.TrimSpace(spec.Title)
+		}
+		schema := map[string]interface{}{"type": "object"}
+		if len(spec.ParamsSchema) > 0 {
+			var declared map[string]interface{}
+			if err := json.Unmarshal(spec.ParamsSchema, &declared); err == nil && len(declared) > 0 {
+				schema = declared
+			}
+		}
+		toolName := name
+		handler := func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
+			return l.exec.ExecuteTool(ctx, toolName, args)
+		}
+		l.srv.RegisterTool(mcp.Tool{
+			Name:             toolName,
+			Description:      description,
+			ShortDescription: strings.TrimSpace(spec.Title),
+			InputSchema:      schema,
+		}, handler)
+		registered++
+	}
+	return registered
 }

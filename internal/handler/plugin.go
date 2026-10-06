@@ -234,7 +234,10 @@ func (h *PluginHandler) Install(c *gin.Context) {
 	}
 	declared, mcpMessage := h.installMCPDeclarations(bundle)
 	pluginDeclared, pluginMessage := h.declarePluginUnits(bundle)
-	report := h.republishCatalog(c, bundleHasKind(bundle, plugin.KindTool))
+	// A pack that brings a recipe or a plugin binary changes what the tool surface should hold, so
+	// both rebuild it. The plugin case is not optional: those capabilities have no recipe, so the
+	// surface is composed from the capability table on every rebuild.
+	report := h.republishCatalog(c, bundleHasKind(bundle, plugin.KindTool) || bundleHasKind(bundle, plugin.KindPlugin))
 	if h.audit != nil {
 		h.audit.RecordOK(c, "plugin", "bundle_install", "安装能力包", "plugin_bundle", bundle.ID, map[string]interface{}{
 			"version": bundle.Version,
@@ -317,7 +320,7 @@ func (h *PluginHandler) Uninstall(c *gin.Context) {
 	// The kinds this pack contributes decide whether the tool surface has to be rebuilt and
 	// whether the MCP manager loses a server, and the bundle is gone from the table once the
 	// uninstall succeeds, so read it first.
-	wantTools := bundleHasKind(existing, plugin.KindTool)
+	wantTools := bundleHasKind(existing, plugin.KindTool) || bundleHasKind(existing, plugin.KindPlugin)
 	if err := h.table.UninstallBundle(id); err != nil {
 		h.replyMutationError(c, "uninstall", id, err)
 		return
@@ -379,7 +382,7 @@ func (h *PluginHandler) EnableUnit(c *gin.Context) {
 		h.replyMutationError(c, "enable", id, err)
 		return
 	}
-	report := h.republishCatalog(c, unitIDKind(id) == plugin.KindTool)
+	report := h.republishCatalog(c, unitIDKind(id) == plugin.KindTool || unitIDKind(id) == plugin.KindPlugin)
 	mcpStarted, mcpMessage := false, ""
 	pluginCaps, pluginMessage := []string(nil), ""
 	if unitIDKind(id) == plugin.KindPlugin {
@@ -501,7 +504,7 @@ func (h *PluginHandler) RemoveLocalUnit(c *gin.Context) {
 	if victim.Kind == plugin.KindMCP {
 		dropped, mcpMessage = h.dropMCP([]plugin.Unit{victim})
 	}
-	report := h.republishCatalog(c, unitIDKind(id) == plugin.KindTool)
+	report := h.republishCatalog(c, unitIDKind(id) == plugin.KindTool || unitIDKind(id) == plugin.KindPlugin)
 	if h.audit != nil {
 		h.audit.RecordOK(c, "plugin", "unit_detach", "从能力表摘除单元", "plugin_unit", id, map[string]interface{}{"roles": report.roles})
 	}

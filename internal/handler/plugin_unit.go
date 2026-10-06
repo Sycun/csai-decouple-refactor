@@ -32,6 +32,10 @@ import (
 // segment is the trust domain a call is dispatched to.
 var pluginCapabilityID = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*\.[a-z0-9][a-z0-9_-]*$`)
 
+// packPluginSource marks a capability that a pack's plugin binary provides. It is how the tool
+// surface tells those apart from recipe tools without re-reading every pack manifest.
+const packPluginSource = "pack-plugin"
+
 type pluginCapabilityFile struct {
 	ID           string         `yaml:"id"`
 	Title        string         `yaml:"title"`
@@ -286,7 +290,7 @@ func (d *PluginUnitDeclaration) SpecFor(c PluginCapabilityDeclaration) *capabili
 		Approval:    c.Approval,
 		Grants:      parseGrantsOrEmpty(d.Grants),
 		Timeout:     c.Timeout,
-		Source:      "pack-plugin",
+		Source:      packPluginSource,
 		Publisher:   d.Publisher,
 		// Provenance is what the execution-path revocation stage keys on
 		// (app.capability_policy.go: CheckProvenance(Publisher, ArtifactDigest)). Without the
