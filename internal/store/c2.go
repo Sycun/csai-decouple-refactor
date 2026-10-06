@@ -1,16 +1,29 @@
-package database
+package store
 
 import (
-	"cyberstrike-ai/internal/store"
+	"cyberstrike-ai/internal/sqltime"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
-
-	"go.uber.org/zap"
 )
+
+// C2 owns the beacon-side ledger: listeners, sessions, tasks, files, events and malleable
+// profiles - the six tables' statements and their schema. internal/c2 drives them, but the SQL
+// belongs here, next to the tables.
+//
+// The statements were copied out of internal/database verbatim: same SELECT lists (COALESCE and
+// all), same ORDER BYs, same error strings, same "skip the row and continue" scan behaviour, and
+// the same per-write errors. The logger calls the connection wrapper used to make are gone - this
+// package holds no logger (the documented trade of every store, see batch_task.go).
+type C2 struct {
+	db *sql.DB
+}
+
+// NewC2 binds the store to a connection.
+func NewC2(db *sql.DB) *C2 { return &C2{db: db} }
 
 // ErrNoValidC2EventIDs 批量删除事件时未提供任何合法 ID
 var ErrNoValidC2EventIDs = errors.New("no valid event ids")
@@ -153,7 +166,10 @@ type C2Profile struct {
 // ----------------------------------------------------------------------------
 
 // CreateC2Listener 写入新监听器；ID/Name 由调用方生成校验
-func (db *DB) CreateC2Listener(l *C2Listener) error {
+func (c *C2) CreateC2Listener(l *C2Listener) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
 	if l == nil || strings.TrimSpace(l.ID) == "" {
 		return errors.New("listener id is required")
 	}
@@ -171,19 +187,21 @@ func (db *DB) CreateC2Listener(l *C2Listener) error {
 			implant_token, status, config_json, remark, owner_user_id, created_at, started_at, last_error)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := db.Exec(query,
+	_, err := c.db.Exec(query,
 		l.ID, strings.TrimSpace(l.ProjectID), l.Name, l.Type, l.BindHost, l.BindPort, l.ProfileID, l.EncryptionKey,
 		l.ImplantToken, l.Status, l.ConfigJSON, l.Remark, l.OwnerUserID, l.CreatedAt, l.StartedAt, l.LastError,
 	)
 	if err != nil {
-		db.logger.Error("创建 C2 监听器失败", zap.Error(err), zap.String("id", l.ID))
 		return err
 	}
 	return nil
 }
 
 // UpdateC2Listener 更新监听器；空字段也会被覆盖（请先 GetC2Listener 拿到完整对象再改）
-func (db *DB) UpdateC2Listener(l *C2Listener) error {
+func (c *C2) UpdateC2Listener(l *C2Listener) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
 	if l == nil || strings.TrimSpace(l.ID) == "" {
 		return errors.New("listener id is required")
 	}
@@ -196,12 +214,11 @@ func (db *DB) UpdateC2Listener(l *C2Listener) error {
 			implant_token = ?, status = ?, config_json = ?, remark = ?, owner_user_id = ?, started_at = ?, last_error = ?
 		WHERE id = ?
 	`
-	res, err := db.Exec(query,
+	res, err := c.db.Exec(query,
 		strings.TrimSpace(l.ProjectID), l.Name, l.Type, l.BindHost, l.BindPort, l.ProfileID, l.EncryptionKey,
 		l.ImplantToken, l.Status, l.ConfigJSON, l.Remark, l.OwnerUserID, l.StartedAt, l.LastError, l.ID,
 	)
 	if err != nil {
-		db.logger.Error("更新 C2 监听器失败", zap.Error(err), zap.String("id", l.ID))
 		return err
 	}
 	affected, _ := res.RowsAffected()
@@ -212,12 +229,15 @@ func (db *DB) UpdateC2Listener(l *C2Listener) error {
 }
 
 // SetC2ListenerStatus 仅更新状态/started_at/last_error 三个字段，避免与全量更新竞争
-func (db *DB) SetC2ListenerStatus(id, status, lastError string, startedAt *time.Time) error {
+func (c *C2) SetC2ListenerStatus(id, status, lastError string, startedAt *time.Time) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
 	query := `
 		UPDATE c2_listeners SET status = ?, last_error = ?, started_at = COALESCE(?, started_at)
 		WHERE id = ?
 	`
-	res, err := db.Exec(query, status, lastError, startedAt, id)
+	res, err := c.db.Exec(query, status, lastError, startedAt, id)
 	if err != nil {
 		return err
 	}
@@ -229,7 +249,10 @@ func (db *DB) SetC2ListenerStatus(id, status, lastError string, startedAt *time.
 }
 
 // GetC2Listener 单条查询
-func (db *DB) GetC2Listener(id string) (*C2Listener, error) {
+func (c *C2) GetC2Listener(id string) (*C2Listener, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	query := `
 		SELECT id, COALESCE(project_id, ''), name, type, bind_host, bind_port, COALESCE(profile_id, ''),
 			COALESCE(encryption_key, ''), COALESCE(implant_token, ''), status,
@@ -239,7 +262,7 @@ func (db *DB) GetC2Listener(id string) (*C2Listener, error) {
 	`
 	var l C2Listener
 	var startedAt sql.NullTime
-	err := db.QueryRow(query, id).Scan(
+	err := c.db.QueryRow(query, id).Scan(
 		&l.ID, &l.ProjectID, &l.Name, &l.Type, &l.BindHost, &l.BindPort, &l.ProfileID,
 		&l.EncryptionKey, &l.ImplantToken, &l.Status,
 		&l.ConfigJSON, &l.Remark,
@@ -259,7 +282,10 @@ func (db *DB) GetC2Listener(id string) (*C2Listener, error) {
 }
 
 // ListC2Listeners 全量列表，按创建时间倒序
-func (db *DB) ListC2Listeners() ([]*C2Listener, error) {
+func (c *C2) ListC2Listeners() ([]*C2Listener, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	query := `
 		SELECT id, COALESCE(project_id, ''), name, type, bind_host, bind_port, COALESCE(profile_id, ''),
 			COALESCE(encryption_key, ''), COALESCE(implant_token, ''), status,
@@ -267,7 +293,7 @@ func (db *DB) ListC2Listeners() ([]*C2Listener, error) {
 			COALESCE(owner_user_id, ''), created_at, started_at, COALESCE(last_error, '')
 		FROM c2_listeners ORDER BY created_at DESC
 	`
-	rows, err := db.Query(query)
+	rows, err := c.db.Query(query)
 	if err != nil {
 		return nil, err
 	}
@@ -282,8 +308,7 @@ func (db *DB) ListC2Listeners() ([]*C2Listener, error) {
 			&l.ConfigJSON, &l.Remark,
 			&l.OwnerUserID, &l.CreatedAt, &startedAt, &l.LastError,
 		); err != nil {
-			db.logger.Warn("扫描 c2_listeners 行失败", zap.Error(err))
-			continue
+			return nil, fmt.Errorf("扫描 c2_listeners 行失败: %w", err)
 		}
 		if startedAt.Valid {
 			t := startedAt.Time
@@ -295,10 +320,13 @@ func (db *DB) ListC2Listeners() ([]*C2Listener, error) {
 }
 
 // ListC2ListenersForAccess lists listeners visible to the resolved RBAC scope.
-func (db *DB) ListC2ListenersForAccess(access store.Access, projectID string) ([]*C2Listener, error) {
+func (c *C2) ListC2ListenersForAccess(access Access, projectID string) ([]*C2Listener, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	conditions := []string{"1=1"}
 	args := []interface{}{}
-	if projectID = strings.TrimSpace(projectID); projectID == store.ProjectUnbound {
+	if projectID = strings.TrimSpace(projectID); projectID == ProjectUnbound {
 		conditions = append(conditions, "COALESCE(project_id, '') = ''")
 	} else if projectID != "" {
 		conditions = append(conditions, "COALESCE(project_id, '') = ?")
@@ -314,7 +342,7 @@ func (db *DB) ListC2ListenersForAccess(access store.Access, projectID string) ([
 		WHERE ` + strings.Join(conditions, " AND ") + `
 		ORDER BY created_at DESC
 	`
-	rows, err := db.Query(query, args...)
+	rows, err := c.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -329,8 +357,7 @@ func (db *DB) ListC2ListenersForAccess(access store.Access, projectID string) ([
 			&l.ConfigJSON, &l.Remark, &l.OwnerUserID,
 			&l.CreatedAt, &startedAt, &l.LastError,
 		); err != nil {
-			db.logger.Warn("扫描 c2_listeners 行失败", zap.Error(err))
-			continue
+			return nil, fmt.Errorf("扫描 c2_listeners 行失败: %w", err)
 		}
 		if startedAt.Valid {
 			t := startedAt.Time
@@ -341,8 +368,8 @@ func (db *DB) ListC2ListenersForAccess(access store.Access, projectID string) ([
 	return list, rows.Err()
 }
 
-func appendC2ListenerAccessFilter(conditions *[]string, args *[]interface{}, access store.Access) {
-	if access.Scope == RBACScopeAll {
+func appendC2ListenerAccessFilter(conditions *[]string, args *[]interface{}, access Access) {
+	if access.Scope == ScopeAll {
 		return
 	}
 	if access.UserID == "" {
@@ -351,7 +378,7 @@ func appendC2ListenerAccessFilter(conditions *[]string, args *[]interface{}, acc
 	}
 	clauses := []string{"owner_user_id = ?"}
 	*args = append(*args, access.UserID)
-	if access.Scope == RBACScopeAssigned {
+	if access.Scope == ScopeAssigned {
 		clauses = append(clauses, `EXISTS (
 			SELECT 1 FROM rbac_resource_assignments ra
 			WHERE ra.user_id = ? AND ra.resource_type = 'c2_listener' AND ra.resource_id = c2_listeners.id
@@ -361,9 +388,22 @@ func appendC2ListenerAccessFilter(conditions *[]string, args *[]interface{}, acc
 	*conditions = append(*conditions, "("+strings.Join(clauses, " OR ")+")")
 }
 
+// UnlinkProject clears the binding a deleted project leaves behind: the listeners stay, unbound.
+// DeleteProject calls this the same way it calls the other domains' UnlinkProject.
+func (c *C2) UnlinkProject(projectID string) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
+	_, err := c.db.Exec(`UPDATE c2_listeners SET project_id = NULL WHERE project_id = ?`, projectID)
+	return err
+}
+
 // DeleteC2Listener 级联删除（会话/任务/文件/事件随之消失）
-func (db *DB) DeleteC2Listener(id string) error {
-	res, err := db.Exec(`DELETE FROM c2_listeners WHERE id = ?`, id)
+func (c *C2) DeleteC2Listener(id string) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
+	res, err := c.db.Exec(`DELETE FROM c2_listeners WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -379,7 +419,10 @@ func (db *DB) DeleteC2Listener(id string) error {
 // ----------------------------------------------------------------------------
 
 // UpsertC2Session 按 implant_uuid 唯一约束：首次插入 / 已存在则更新心跳和状态
-func (db *DB) UpsertC2Session(s *C2Session) error {
+func (c *C2) UpsertC2Session(s *C2Session) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
 	if s == nil || strings.TrimSpace(s.ID) == "" || strings.TrimSpace(s.ImplantUUID) == "" {
 		return errors.New("session id and implant_uuid are required")
 	}
@@ -425,25 +468,27 @@ func (db *DB) UpsertC2Session(s *C2Session) error {
 	if s.IsAdmin {
 		isAdminInt = 1
 	}
-	_, err := db.Exec(query,
+	_, err := c.db.Exec(query,
 		s.ID, s.ListenerID, s.ImplantUUID, s.Hostname, s.Username, s.OS, s.Arch,
 		s.PID, s.ProcessName, isAdminInt, s.InternalIP, s.ExternalIP, s.UserAgent,
 		s.SleepSeconds, s.JitterPercent, s.Status, s.FirstSeenAt, s.LastCheckIn,
 		metadataJSON, s.Note,
 	)
 	if err != nil {
-		db.logger.Error("upsert C2 会话失败", zap.Error(err), zap.String("implant_uuid", s.ImplantUUID))
 		return err
 	}
 	return nil
 }
 
 // TouchC2Session 仅更新 last_check_in / status，性能比 UpsertC2Session 高，给 beacon 高频心跳用
-func (db *DB) TouchC2Session(id, status string, t time.Time) error {
+func (c *C2) TouchC2Session(id, status string, t time.Time) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
 	if t.IsZero() {
 		t = time.Now()
 	}
-	res, err := db.Exec(`UPDATE c2_sessions SET last_check_in = ?, status = ? WHERE id = ?`, t, status, id)
+	res, err := c.db.Exec(`UPDATE c2_sessions SET last_check_in = ?, status = ? WHERE id = ?`, t, status, id)
 	if err != nil {
 		return err
 	}
@@ -455,8 +500,11 @@ func (db *DB) TouchC2Session(id, status string, t time.Time) error {
 }
 
 // SetC2SessionStatus 单独改状态
-func (db *DB) SetC2SessionStatus(id, status string) error {
-	res, err := db.Exec(`UPDATE c2_sessions SET status = ? WHERE id = ?`, status, id)
+func (c *C2) SetC2SessionStatus(id, status string) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
+	res, err := c.db.Exec(`UPDATE c2_sessions SET status = ? WHERE id = ?`, status, id)
 	if err != nil {
 		return err
 	}
@@ -468,7 +516,10 @@ func (db *DB) SetC2SessionStatus(id, status string) error {
 }
 
 // SetC2SessionSleep 改 sleep / jitter（操作员或 AI 主动调整心跳节律）
-func (db *DB) SetC2SessionSleep(id string, sleepSeconds, jitterPercent int) error {
+func (c *C2) SetC2SessionSleep(id string, sleepSeconds, jitterPercent int) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
 	if sleepSeconds < 0 {
 		sleepSeconds = 0
 	}
@@ -478,7 +529,7 @@ func (db *DB) SetC2SessionSleep(id string, sleepSeconds, jitterPercent int) erro
 	if jitterPercent > 100 {
 		jitterPercent = 100
 	}
-	res, err := db.Exec(`UPDATE c2_sessions SET sleep_seconds = ?, jitter_percent = ? WHERE id = ?`,
+	res, err := c.db.Exec(`UPDATE c2_sessions SET sleep_seconds = ?, jitter_percent = ? WHERE id = ?`,
 		sleepSeconds, jitterPercent, id)
 	if err != nil {
 		return err
@@ -491,22 +542,31 @@ func (db *DB) SetC2SessionSleep(id string, sleepSeconds, jitterPercent int) erro
 }
 
 // SetC2SessionNote 改备注
-func (db *DB) SetC2SessionNote(id, note string) error {
-	_, err := db.Exec(`UPDATE c2_sessions SET note = ? WHERE id = ?`, note, id)
+func (c *C2) SetC2SessionNote(id, note string) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
+	_, err := c.db.Exec(`UPDATE c2_sessions SET note = ? WHERE id = ?`, note, id)
 	return err
 }
 
 // GetC2Session 按内部 ID 查
-func (db *DB) GetC2Session(id string) (*C2Session, error) {
-	return db.queryC2SessionWhere(`id = ?`, id)
+func (c *C2) GetC2Session(id string) (*C2Session, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
+	return c.queryC2SessionWhere(`id = ?`, id)
 }
 
 // GetC2SessionByImplantUUID 按 implant 自报的 UUID 查（重连必需）
-func (db *DB) GetC2SessionByImplantUUID(uuid string) (*C2Session, error) {
-	return db.queryC2SessionWhere(`implant_uuid = ?`, uuid)
+func (c *C2) GetC2SessionByImplantUUID(uuid string) (*C2Session, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
+	return c.queryC2SessionWhere(`implant_uuid = ?`, uuid)
 }
 
-func (db *DB) queryC2SessionWhere(whereClause string, args ...interface{}) (*C2Session, error) {
+func (c *C2) queryC2SessionWhere(whereClause string, args ...interface{}) (*C2Session, error) {
 	query := `
 		SELECT id, listener_id, implant_uuid, COALESCE(hostname,''), COALESCE(username,''),
 			COALESCE(os,''), COALESCE(arch,''), COALESCE(pid, 0), COALESCE(process_name,''),
@@ -515,7 +575,7 @@ func (db *DB) queryC2SessionWhere(whereClause string, args ...interface{}) (*C2S
 			status, first_seen_at, last_check_in, COALESCE(metadata_json, '{}'),
 			COALESCE(note, '')
 		FROM c2_sessions WHERE ` + whereClause
-	row := db.QueryRow(query, args...)
+	row := c.db.QueryRow(query, args...)
 	var s C2Session
 	var isAdminInt int
 	var metadataJSON string
@@ -552,14 +612,17 @@ type ListC2SessionsFilter struct {
 }
 
 // ListC2Sessions 列表，按 last_check_in 倒序
-func (db *DB) ListC2Sessions(filter ListC2SessionsFilter) ([]*C2Session, error) {
+func (c *C2) ListC2Sessions(filter ListC2SessionsFilter) ([]*C2Session, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	conditions := []string{"1=1"}
 	args := []interface{}{}
 	if filter.ListenerID != "" {
 		conditions = append(conditions, "listener_id = ?")
 		args = append(args, filter.ListenerID)
 	}
-	if strings.TrimSpace(filter.ProjectID) == store.ProjectUnbound {
+	if strings.TrimSpace(filter.ProjectID) == ProjectUnbound {
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM c2_listeners l
 			WHERE l.id = c2_sessions.listener_id AND COALESCE(l.project_id, '') = ''
@@ -603,7 +666,7 @@ func (db *DB) ListC2Sessions(filter ListC2SessionsFilter) ([]*C2Session, error) 
 	if filter.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
-	rows, err := db.Query(query, args...)
+	rows, err := c.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -621,8 +684,7 @@ func (db *DB) ListC2Sessions(filter ListC2SessionsFilter) ([]*C2Session, error) 
 			&s.Status, &s.FirstSeenAt, &s.LastCheckIn, &metadataJSON,
 			&s.Note,
 		); err != nil {
-			db.logger.Warn("扫描 c2_sessions 行失败", zap.Error(err))
-			continue
+			return nil, fmt.Errorf("扫描 c2_sessions 行失败: %w", err)
 		}
 		s.IsAdmin = isAdminInt != 0
 		if metadataJSON != "" && metadataJSON != "{}" {
@@ -634,7 +696,10 @@ func (db *DB) ListC2Sessions(filter ListC2SessionsFilter) ([]*C2Session, error) 
 }
 
 // ListC2SessionsForAccess lists sessions whose parent listener is visible.
-func (db *DB) ListC2SessionsForAccess(filter ListC2SessionsFilter, access store.Access) ([]*C2Session, error) {
+func (c *C2) ListC2SessionsForAccess(filter ListC2SessionsFilter, access Access) ([]*C2Session, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	conditions, args := buildC2SessionsWhere(filter)
 	appendC2SessionAccessFilter(&conditions, &args, access)
 	query := `
@@ -651,12 +716,12 @@ func (db *DB) ListC2SessionsForAccess(filter ListC2SessionsFilter, access store.
 	if filter.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", filter.Limit)
 	}
-	rows, err := db.Query(query, args...)
+	rows, err := c.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return db.scanC2SessionRows(rows)
+	return c.scanC2SessionRows(rows)
 }
 
 func buildC2SessionsWhere(filter ListC2SessionsFilter) ([]string, []interface{}) {
@@ -666,7 +731,7 @@ func buildC2SessionsWhere(filter ListC2SessionsFilter) ([]string, []interface{})
 		conditions = append(conditions, "listener_id = ?")
 		args = append(args, filter.ListenerID)
 	}
-	if strings.TrimSpace(filter.ProjectID) == store.ProjectUnbound {
+	if strings.TrimSpace(filter.ProjectID) == ProjectUnbound {
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM c2_listeners l
 			WHERE l.id = c2_sessions.listener_id AND COALESCE(l.project_id, '') = ''
@@ -699,7 +764,7 @@ func buildC2SessionsWhere(filter ListC2SessionsFilter) ([]string, []interface{})
 	return conditions, args
 }
 
-func (db *DB) scanC2SessionRows(rows *sql.Rows) ([]*C2Session, error) {
+func (c *C2) scanC2SessionRows(rows *sql.Rows) ([]*C2Session, error) {
 	var list []*C2Session
 	for rows.Next() {
 		var s C2Session
@@ -713,8 +778,7 @@ func (db *DB) scanC2SessionRows(rows *sql.Rows) ([]*C2Session, error) {
 			&s.Status, &s.FirstSeenAt, &s.LastCheckIn, &metadataJSON,
 			&s.Note,
 		); err != nil {
-			db.logger.Warn("扫描 c2_sessions 行失败", zap.Error(err))
-			continue
+			return nil, fmt.Errorf("扫描 c2_sessions 行失败: %w", err)
 		}
 		s.IsAdmin = isAdminInt != 0
 		if metadataJSON != "" && metadataJSON != "{}" {
@@ -725,8 +789,8 @@ func (db *DB) scanC2SessionRows(rows *sql.Rows) ([]*C2Session, error) {
 	return list, rows.Err()
 }
 
-func appendC2SessionAccessFilter(conditions *[]string, args *[]interface{}, access store.Access) {
-	if access.Scope == RBACScopeAll {
+func appendC2SessionAccessFilter(conditions *[]string, args *[]interface{}, access Access) {
+	if access.Scope == ScopeAll {
 		return
 	}
 	if access.UserID == "" {
@@ -738,7 +802,7 @@ func appendC2SessionAccessFilter(conditions *[]string, args *[]interface{}, acce
 		WHERE c2_listeners.id = c2_sessions.listener_id AND c2_listeners.owner_user_id = ?
 	)`}
 	*args = append(*args, access.UserID)
-	if access.Scope == RBACScopeAssigned {
+	if access.Scope == ScopeAssigned {
 		clauses = append(clauses, `EXISTS (
 			SELECT 1 FROM rbac_resource_assignments ra
 			WHERE ra.user_id = ? AND ra.resource_type = 'c2_listener' AND ra.resource_id = c2_sessions.listener_id
@@ -749,8 +813,11 @@ func appendC2SessionAccessFilter(conditions *[]string, args *[]interface{}, acce
 }
 
 // DeleteC2Session 级联删除其 tasks/files
-func (db *DB) DeleteC2Session(id string) error {
-	res, err := db.Exec(`DELETE FROM c2_sessions WHERE id = ?`, id)
+func (c *C2) DeleteC2Session(id string) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
+	res, err := c.db.Exec(`DELETE FROM c2_sessions WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -762,7 +829,10 @@ func (db *DB) DeleteC2Session(id string) error {
 }
 
 // DeleteC2SessionsByIDs 按主键批量删除会话
-func (db *DB) DeleteC2SessionsByIDs(ids []string) (int64, error) {
+func (c *C2) DeleteC2SessionsByIDs(ids []string) (int64, error) {
+	if c == nil || c.db == nil {
+		return 0, errors.New("store: c2 requires a database")
+	}
 	if len(ids) == 0 {
 		return 0, nil
 	}
@@ -792,16 +862,19 @@ func (db *DB) DeleteC2SessionsByIDs(ids []string) (int64, error) {
 		args[i] = clean[i]
 	}
 	query := `DELETE FROM c2_sessions WHERE id IN (` + placeholders + `)`
-	res, err := db.Exec(query, args...)
+	res, err := c.db.Exec(query, args...)
 	if err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
 }
 
-func (db *DB) DeleteC2SessionsByIDsForAccess(ids []string, access store.Access) (int64, error) {
-	if access.Scope == RBACScopeAll {
-		return db.DeleteC2SessionsByIDs(ids)
+func (c *C2) DeleteC2SessionsByIDsForAccess(ids []string, access Access) (int64, error) {
+	if c == nil || c.db == nil {
+		return 0, errors.New("store: c2 requires a database")
+	}
+	if access.Scope == ScopeAll {
+		return c.DeleteC2SessionsByIDs(ids)
 	}
 	clean := cleanC2IDs(ids)
 	if len(clean) == 0 {
@@ -815,7 +888,7 @@ func (db *DB) DeleteC2SessionsByIDsForAccess(ids []string, access store.Access) 
 	conditions := []string{"id IN (" + placeholders + ")"}
 	appendC2SessionAccessFilter(&conditions, &args, access)
 	query := `DELETE FROM c2_sessions WHERE ` + strings.Join(conditions, " AND ")
-	res, err := db.Exec(query, args...)
+	res, err := c.db.Exec(query, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -827,7 +900,10 @@ func (db *DB) DeleteC2SessionsByIDsForAccess(ids []string, access store.Access) 
 // ----------------------------------------------------------------------------
 
 // CreateC2Task 入队一个新任务
-func (db *DB) CreateC2Task(t *C2Task) error {
+func (c *C2) CreateC2Task(t *C2Task) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
 	if t == nil || strings.TrimSpace(t.ID) == "" {
 		return errors.New("task id is required")
 	}
@@ -852,13 +928,12 @@ func (db *DB) CreateC2Task(t *C2Task) error {
 			created_at, sent_at, started_at, completed_at, duration_ms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := db.Exec(query,
+	_, err := c.db.Exec(query,
 		t.ID, t.SessionID, t.TaskType, payloadJSON, t.Status,
 		t.ResultText, t.ResultBlobPath, t.Error, t.Source, t.ConversationID, t.ApprovalStatus,
 		t.CreatedAt, t.SentAt, t.StartedAt, t.CompletedAt, t.DurationMS,
 	)
 	if err != nil {
-		db.logger.Error("创建 C2 任务失败", zap.Error(err), zap.String("id", t.ID))
 		return err
 	}
 	return nil
@@ -878,7 +953,10 @@ type C2TaskUpdate struct {
 }
 
 // UpdateC2Task 增量更新任务字段；nil 字段保持原值
-func (db *DB) UpdateC2Task(id string, u C2TaskUpdate) error {
+func (c *C2) UpdateC2Task(id string, u C2TaskUpdate) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
 	sets := []string{}
 	args := []interface{}{}
 	if u.Status != nil {
@@ -922,7 +1000,7 @@ func (db *DB) UpdateC2Task(id string, u C2TaskUpdate) error {
 	}
 	query := "UPDATE c2_tasks SET " + strings.Join(sets, ", ") + " WHERE id = ?"
 	args = append(args, id)
-	res, err := db.Exec(query, args...)
+	res, err := c.db.Exec(query, args...)
 	if err != nil {
 		return err
 	}
@@ -934,7 +1012,10 @@ func (db *DB) UpdateC2Task(id string, u C2TaskUpdate) error {
 }
 
 // GetC2Task 单条
-func (db *DB) GetC2Task(id string) (*C2Task, error) {
+func (c *C2) GetC2Task(id string) (*C2Task, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	query := `
 		SELECT id, session_id, task_type, COALESCE(payload_json, '{}'),
 			status, COALESCE(result_text, ''), COALESCE(result_blob_path, ''),
@@ -946,7 +1027,7 @@ func (db *DB) GetC2Task(id string) (*C2Task, error) {
 	var t C2Task
 	var payloadJSON string
 	var sentAt, startedAt, completedAt sql.NullTime
-	err := db.QueryRow(query, id).Scan(
+	err := c.db.QueryRow(query, id).Scan(
 		&t.ID, &t.SessionID, &t.TaskType, &payloadJSON,
 		&t.Status, &t.ResultText, &t.ResultBlobPath,
 		&t.Error, &t.Source,
@@ -995,7 +1076,7 @@ func buildC2TasksWhere(filter ListC2TasksFilter) (where string, args []interface
 		conditions = append(conditions, "session_id = ?")
 		args = append(args, filter.SessionID)
 	}
-	if strings.TrimSpace(filter.ProjectID) == store.ProjectUnbound {
+	if strings.TrimSpace(filter.ProjectID) == ProjectUnbound {
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM c2_sessions s
 			JOIN c2_listeners l ON l.id = s.listener_id
@@ -1018,14 +1099,14 @@ func buildC2TasksWhere(filter ListC2TasksFilter) (where string, args []interface
 		args = append(args, strings.TrimSpace(filter.TaskType))
 	}
 	if filter.Since != nil {
-		conditions = append(conditions, sqliteEpochGE("created_at", ">="))
-		args = append(args, formatSQLiteUTC(*filter.Since))
+		conditions = append(conditions, sqltime.Compare("created_at", ">="))
+		args = append(args, sqltime.UTC(*filter.Since))
 	}
 	return strings.Join(conditions, " AND "), args
 }
 
-func appendC2TaskAccessFilter(conditions *[]string, args *[]interface{}, access store.Access) {
-	if access.Scope == RBACScopeAll {
+func appendC2TaskAccessFilter(conditions *[]string, args *[]interface{}, access Access) {
+	if access.Scope == ScopeAll {
 		return
 	}
 	if access.UserID == "" {
@@ -1038,7 +1119,7 @@ func appendC2TaskAccessFilter(conditions *[]string, args *[]interface{}, access 
 		WHERE s.id = c2_tasks.session_id AND l.owner_user_id = ?
 	)`}
 	*args = append(*args, access.UserID)
-	if access.Scope == RBACScopeAssigned {
+	if access.Scope == ScopeAssigned {
 		clauses = append(clauses, `EXISTS (
 			SELECT 1 FROM c2_sessions s
 			JOIN rbac_resource_assignments ra ON ra.resource_id = s.listener_id
@@ -1050,26 +1131,32 @@ func appendC2TaskAccessFilter(conditions *[]string, args *[]interface{}, access 
 	*conditions = append(*conditions, "("+strings.Join(clauses, " OR ")+")")
 }
 
-func buildC2TasksWhereForAccess(filter ListC2TasksFilter, access store.Access) (string, []interface{}) {
+func buildC2TasksWhereForAccess(filter ListC2TasksFilter, access Access) (string, []interface{}) {
 	where, args := buildC2TasksWhere(filter)
 	conditions := []string{where}
 	appendC2TaskAccessFilter(&conditions, &args, access)
 	return strings.Join(conditions, " AND "), args
 }
 
-func (db *DB) CountC2TasksForAccess(filter ListC2TasksFilter, access store.Access) (int64, error) {
+func (c *C2) CountC2TasksForAccess(filter ListC2TasksFilter, access Access) (int64, error) {
+	if c == nil || c.db == nil {
+		return 0, errors.New("store: c2 requires a database")
+	}
 	where, args := buildC2TasksWhereForAccess(filter, access)
 	query := `SELECT COUNT(*) FROM c2_tasks WHERE ` + where
 	var n int64
-	err := db.QueryRow(query, args...).Scan(&n)
+	err := c.db.QueryRow(query, args...).Scan(&n)
 	return n, err
 }
 
 // CountC2TasksByStatusForAccess 与 ListC2Tasks 相同过滤条件下按状态统计
-func (db *DB) CountC2TasksByStatusForAccess(filter ListC2TasksFilter, access store.Access) (map[string]int64, error) {
+func (c *C2) CountC2TasksByStatusForAccess(filter ListC2TasksFilter, access Access) (map[string]int64, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	where, args := buildC2TasksWhereForAccess(filter, access)
 	query := `SELECT status, COUNT(*) FROM c2_tasks WHERE ` + where + ` GROUP BY status`
-	rows, err := db.Query(query, args...)
+	rows, err := c.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1088,7 +1175,7 @@ func (db *DB) CountC2TasksByStatusForAccess(filter ListC2TasksFilter, access sto
 		var status string
 		var n int64
 		if err := rows.Scan(&status, &n); err != nil {
-			continue
+			return nil, fmt.Errorf("扫描 c2_tasks 状态失败: %w", err)
 		}
 		if status == "pending" {
 			legacyPending = n
@@ -1102,17 +1189,23 @@ func (db *DB) CountC2TasksByStatusForAccess(filter ListC2TasksFilter, access sto
 	return counts, rows.Err()
 }
 
-func (db *DB) CountC2TasksQueuedOrPendingForAccess(sessionID, projectID string, access store.Access) (int64, error) {
+func (c *C2) CountC2TasksQueuedOrPendingForAccess(sessionID, projectID string, access Access) (int64, error) {
+	if c == nil || c.db == nil {
+		return 0, errors.New("store: c2 requires a database")
+	}
 	filter := ListC2TasksFilter{SessionID: sessionID, ProjectID: projectID}
 	where, args := buildC2TasksWhereForAccess(filter, access)
 	query := `SELECT COUNT(*) FROM c2_tasks WHERE status IN ('queued', 'pending') AND ` + where
 	var n int64
-	err := db.QueryRow(query, args...).Scan(&n)
+	err := c.db.QueryRow(query, args...).Scan(&n)
 	return n, err
 }
 
 // ListC2Tasks 任务列表，按创建时间倒序
-func (db *DB) ListC2Tasks(filter ListC2TasksFilter) ([]*C2Task, error) {
+func (c *C2) ListC2Tasks(filter ListC2TasksFilter) ([]*C2Task, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	where, args := buildC2TasksWhere(filter)
 	query := `
 		SELECT id, session_id, task_type, COALESCE(payload_json, '{}'),
@@ -1136,7 +1229,7 @@ func (db *DB) ListC2Tasks(filter ListC2TasksFilter) ([]*C2Task, error) {
 		query += ` LIMIT ? OFFSET ?`
 		args = append(args, limit, offset)
 	}
-	rows, err := db.Query(query, args...)
+	rows, err := c.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1153,8 +1246,7 @@ func (db *DB) ListC2Tasks(filter ListC2TasksFilter) ([]*C2Task, error) {
 			&t.ConversationID, &t.ApprovalStatus,
 			&t.CreatedAt, &sentAt, &startedAt, &completedAt, &t.DurationMS,
 		); err != nil {
-			db.logger.Warn("扫描 c2_tasks 行失败", zap.Error(err))
-			continue
+			return nil, fmt.Errorf("扫描 c2_tasks 行失败: %w", err)
 		}
 		if payloadJSON != "" && payloadJSON != "{}" {
 			_ = json.Unmarshal([]byte(payloadJSON), &t.Payload)
@@ -1176,7 +1268,10 @@ func (db *DB) ListC2Tasks(filter ListC2TasksFilter) ([]*C2Task, error) {
 	return list, rows.Err()
 }
 
-func (db *DB) ListC2TasksForAccess(filter ListC2TasksFilter, access store.Access) ([]*C2Task, error) {
+func (c *C2) ListC2TasksForAccess(filter ListC2TasksFilter, access Access) ([]*C2Task, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	where, args := buildC2TasksWhereForAccess(filter, access)
 	query := `
 		SELECT id, session_id, task_type, COALESCE(payload_json, '{}'),
@@ -1200,15 +1295,15 @@ func (db *DB) ListC2TasksForAccess(filter ListC2TasksFilter, access store.Access
 		query += ` LIMIT ? OFFSET ?`
 		args = append(args, limit, offset)
 	}
-	rows, err := db.Query(query, args...)
+	rows, err := c.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return db.scanC2TaskRows(rows)
+	return c.scanC2TaskRows(rows)
 }
 
-func (db *DB) scanC2TaskRows(rows *sql.Rows) ([]*C2Task, error) {
+func (c *C2) scanC2TaskRows(rows *sql.Rows) ([]*C2Task, error) {
 	var list []*C2Task
 	for rows.Next() {
 		var t C2Task
@@ -1221,8 +1316,7 @@ func (db *DB) scanC2TaskRows(rows *sql.Rows) ([]*C2Task, error) {
 			&t.ConversationID, &t.ApprovalStatus,
 			&t.CreatedAt, &sentAt, &startedAt, &completedAt, &t.DurationMS,
 		); err != nil {
-			db.logger.Warn("扫描 c2_tasks 行失败", zap.Error(err))
-			continue
+			return nil, fmt.Errorf("扫描 c2_tasks 行失败: %w", err)
 		}
 		if payloadJSON != "" && payloadJSON != "{}" {
 			_ = json.Unmarshal([]byte(payloadJSON), &t.Payload)
@@ -1245,11 +1339,14 @@ func (db *DB) scanC2TaskRows(rows *sql.Rows) ([]*C2Task, error) {
 }
 
 // PopQueuedC2Tasks 取出某会话所有 queued/approved 任务（用于 beacon 拉取），原子置为 sent
-func (db *DB) PopQueuedC2Tasks(sessionID string, limit int) ([]*C2Task, error) {
+func (c *C2) PopQueuedC2Tasks(sessionID string, limit int) ([]*C2Task, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	if limit <= 0 {
 		limit = 50
 	}
-	tx, err := db.Begin()
+	tx, err := c.db.Begin()
 	if err != nil {
 		return nil, err
 	}
@@ -1306,7 +1403,10 @@ func (db *DB) PopQueuedC2Tasks(sessionID string, limit int) ([]*C2Task, error) {
 }
 
 // DeleteC2TasksByIDs 按主键批量删除任务
-func (db *DB) DeleteC2TasksByIDs(ids []string) (int64, error) {
+func (c *C2) DeleteC2TasksByIDs(ids []string) (int64, error) {
+	if c == nil || c.db == nil {
+		return 0, errors.New("store: c2 requires a database")
+	}
 	if len(ids) == 0 {
 		return 0, nil
 	}
@@ -1336,16 +1436,19 @@ func (db *DB) DeleteC2TasksByIDs(ids []string) (int64, error) {
 		args[i] = clean[i]
 	}
 	query := `DELETE FROM c2_tasks WHERE id IN (` + placeholders + `)`
-	res, err := db.Exec(query, args...)
+	res, err := c.db.Exec(query, args...)
 	if err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
 }
 
-func (db *DB) DeleteC2TasksByIDsForAccess(ids []string, access store.Access) (int64, error) {
-	if access.Scope == RBACScopeAll {
-		return db.DeleteC2TasksByIDs(ids)
+func (c *C2) DeleteC2TasksByIDsForAccess(ids []string, access Access) (int64, error) {
+	if c == nil || c.db == nil {
+		return 0, errors.New("store: c2 requires a database")
+	}
+	if access.Scope == ScopeAll {
+		return c.DeleteC2TasksByIDs(ids)
 	}
 	clean := cleanC2IDs(ids)
 	if len(clean) == 0 {
@@ -1359,7 +1462,7 @@ func (db *DB) DeleteC2TasksByIDsForAccess(ids []string, access store.Access) (in
 	conditions := []string{"id IN (" + placeholders + ")"}
 	appendC2TaskAccessFilter(&conditions, &args, access)
 	query := `DELETE FROM c2_tasks WHERE ` + strings.Join(conditions, " AND ")
-	res, err := db.Exec(query, args...)
+	res, err := c.db.Exec(query, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -1371,7 +1474,10 @@ func (db *DB) DeleteC2TasksByIDsForAccess(ids []string, access store.Access) (in
 // ----------------------------------------------------------------------------
 
 // CreateC2File 记录上传/下载凭证（实际文件落盘由调用方处理）
-func (db *DB) CreateC2File(f *C2File) error {
+func (c *C2) CreateC2File(f *C2File) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
 	if f == nil || strings.TrimSpace(f.ID) == "" {
 		return errors.New("file id is required")
 	}
@@ -1383,19 +1489,22 @@ func (db *DB) CreateC2File(f *C2File) error {
 			local_path, size_bytes, sha256, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := db.Exec(query, f.ID, f.SessionID, f.TaskID, f.Direction,
+	_, err := c.db.Exec(query, f.ID, f.SessionID, f.TaskID, f.Direction,
 		f.RemotePath, f.LocalPath, f.SizeBytes, f.SHA256, f.CreatedAt)
 	return err
 }
 
 // ListC2FilesBySession 列出某会话下所有上传/下载凭证
-func (db *DB) ListC2FilesBySession(sessionID string) ([]*C2File, error) {
+func (c *C2) ListC2FilesBySession(sessionID string) ([]*C2File, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	query := `
 		SELECT id, session_id, COALESCE(task_id, ''), direction, remote_path, local_path,
 			COALESCE(size_bytes, 0), COALESCE(sha256, ''), created_at
 		FROM c2_files WHERE session_id = ? ORDER BY created_at DESC
 	`
-	rows, err := db.Query(query, sessionID)
+	rows, err := c.db.Query(query, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -1405,7 +1514,7 @@ func (db *DB) ListC2FilesBySession(sessionID string) ([]*C2File, error) {
 		var f C2File
 		if err := rows.Scan(&f.ID, &f.SessionID, &f.TaskID, &f.Direction,
 			&f.RemotePath, &f.LocalPath, &f.SizeBytes, &f.SHA256, &f.CreatedAt); err != nil {
-			continue
+			return nil, fmt.Errorf("扫描 c2_files 行失败: %w", err)
 		}
 		list = append(list, &f)
 	}
@@ -1438,7 +1547,10 @@ func cleanC2IDs(ids []string) []string {
 // ----------------------------------------------------------------------------
 
 // AppendC2Event 写一条审计事件
-func (db *DB) AppendC2Event(e *C2Event) error {
+func (c *C2) AppendC2Event(e *C2Event) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
 	if e == nil {
 		return errors.New("event is nil")
 	}
@@ -1463,7 +1575,7 @@ func (db *DB) AppendC2Event(e *C2Event) error {
 		INSERT INTO c2_events (id, level, category, session_id, task_id, message, data_json, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := db.Exec(query, e.ID, e.Level, e.Category, e.SessionID, e.TaskID, e.Message, dataJSON, formatSQLiteUTC(e.CreatedAt))
+	_, err := c.db.Exec(query, e.ID, e.Level, e.Category, e.SessionID, e.TaskID, e.Message, dataJSON, sqltime.UTC(e.CreatedAt))
 	return err
 }
 
@@ -1490,7 +1602,7 @@ func buildC2EventsWhere(filter ListC2EventsFilter) (where string, args []interfa
 		conditions = append(conditions, "category = ?")
 		args = append(args, filter.Category)
 	}
-	if strings.TrimSpace(filter.ProjectID) == store.ProjectUnbound {
+	if strings.TrimSpace(filter.ProjectID) == ProjectUnbound {
 		conditions = append(conditions, `(
 			EXISTS (
 				SELECT 1 FROM c2_sessions s
@@ -1542,14 +1654,14 @@ func buildC2EventsWhere(filter ListC2EventsFilter) (where string, args []interfa
 		args = append(args, filter.TaskID)
 	}
 	if filter.Since != nil {
-		conditions = append(conditions, sqliteEpochGE("created_at", ">="))
-		args = append(args, formatSQLiteUTC(*filter.Since))
+		conditions = append(conditions, sqltime.Compare("created_at", ">="))
+		args = append(args, sqltime.UTC(*filter.Since))
 	}
 	return strings.Join(conditions, " AND "), args
 }
 
-func appendC2EventAccessFilter(conditions *[]string, args *[]interface{}, access store.Access) {
-	if access.Scope == RBACScopeAll {
+func appendC2EventAccessFilter(conditions *[]string, args *[]interface{}, access Access) {
+	if access.Scope == ScopeAll {
 		return
 	}
 	if access.UserID == "" {
@@ -1562,7 +1674,7 @@ func appendC2EventAccessFilter(conditions *[]string, args *[]interface{}, access
 		WHERE s.id = c2_events.session_id AND l.owner_user_id = ?
 	)`}
 	*args = append(*args, access.UserID)
-	if access.Scope == RBACScopeAssigned {
+	if access.Scope == ScopeAssigned {
 		clauses = append(clauses, `EXISTS (
 			SELECT 1 FROM c2_sessions s
 			JOIN rbac_resource_assignments ra ON ra.resource_id = s.listener_id
@@ -1578,7 +1690,7 @@ func appendC2EventAccessFilter(conditions *[]string, args *[]interface{}, access
 		WHERE t.id = c2_events.task_id AND l.owner_user_id = ?
 	)`)
 	*args = append(*args, access.UserID)
-	if access.Scope == RBACScopeAssigned {
+	if access.Scope == ScopeAssigned {
 		clauses = append(clauses, `EXISTS (
 			SELECT 1 FROM c2_tasks t
 			JOIN c2_sessions s ON s.id = t.session_id
@@ -1591,26 +1703,32 @@ func appendC2EventAccessFilter(conditions *[]string, args *[]interface{}, access
 	*conditions = append(*conditions, "("+strings.Join(clauses, " OR ")+")")
 }
 
-func buildC2EventsWhereForAccess(filter ListC2EventsFilter, access store.Access) (string, []interface{}) {
+func buildC2EventsWhereForAccess(filter ListC2EventsFilter, access Access) (string, []interface{}) {
 	where, args := buildC2EventsWhere(filter)
 	conditions := []string{where}
 	appendC2EventAccessFilter(&conditions, &args, access)
 	return strings.Join(conditions, " AND "), args
 }
 
-func (db *DB) CountC2EventsForAccess(filter ListC2EventsFilter, access store.Access) (int64, error) {
+func (c *C2) CountC2EventsForAccess(filter ListC2EventsFilter, access Access) (int64, error) {
+	if c == nil || c.db == nil {
+		return 0, errors.New("store: c2 requires a database")
+	}
 	where, args := buildC2EventsWhereForAccess(filter, access)
 	query := `SELECT COUNT(*) FROM c2_events WHERE ` + where
 	var n int64
-	err := db.QueryRow(query, args...).Scan(&n)
+	err := c.db.QueryRow(query, args...).Scan(&n)
 	return n, err
 }
 
 // CountC2EventsByLevelForAccess 与 ListC2Events 相同过滤条件下按级别统计
-func (db *DB) CountC2EventsByLevelForAccess(filter ListC2EventsFilter, access store.Access) (map[string]int64, error) {
+func (c *C2) CountC2EventsByLevelForAccess(filter ListC2EventsFilter, access Access) (map[string]int64, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	where, args := buildC2EventsWhereForAccess(filter, access)
 	query := `SELECT level, COUNT(*) FROM c2_events WHERE ` + where + ` GROUP BY level`
-	rows, err := db.Query(query, args...)
+	rows, err := c.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1624,7 +1742,7 @@ func (db *DB) CountC2EventsByLevelForAccess(filter ListC2EventsFilter, access st
 		var level string
 		var n int64
 		if err := rows.Scan(&level, &n); err != nil {
-			continue
+			return nil, fmt.Errorf("扫描 c2_events 级别失败: %w", err)
 		}
 		if _, ok := counts[level]; ok {
 			counts[level] = n
@@ -1633,7 +1751,10 @@ func (db *DB) CountC2EventsByLevelForAccess(filter ListC2EventsFilter, access st
 	return counts, rows.Err()
 }
 
-func (db *DB) ListC2EventsForAccess(filter ListC2EventsFilter, access store.Access) ([]*C2Event, error) {
+func (c *C2) ListC2EventsForAccess(filter ListC2EventsFilter, access Access) ([]*C2Event, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	where, args := buildC2EventsWhereForAccess(filter, access)
 	limit := filter.Limit
 	if limit <= 0 || limit > 1000 {
@@ -1652,7 +1773,7 @@ func (db *DB) ListC2EventsForAccess(filter ListC2EventsFilter, access store.Acce
 		LIMIT ? OFFSET ?
 	`
 	args = append(args, limit, offset)
-	rows, err := db.Query(query, args...)
+	rows, err := c.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1667,7 +1788,7 @@ func scanC2EventRows(rows *sql.Rows) ([]*C2Event, error) {
 		var dataJSON string
 		if err := rows.Scan(&e.ID, &e.Level, &e.Category, &e.SessionID, &e.TaskID,
 			&e.Message, &dataJSON, &e.CreatedAt); err != nil {
-			continue
+			return nil, fmt.Errorf("扫描 c2_events 行失败: %w", err)
 		}
 		if dataJSON != "" {
 			_ = json.Unmarshal([]byte(dataJSON), &e.Data)
@@ -1678,7 +1799,10 @@ func scanC2EventRows(rows *sql.Rows) ([]*C2Event, error) {
 }
 
 // DeleteC2EventsByIDs 按主键批量删除事件，返回实际删除行数
-func (db *DB) DeleteC2EventsByIDs(ids []string) (int64, error) {
+func (c *C2) DeleteC2EventsByIDs(ids []string) (int64, error) {
+	if c == nil || c.db == nil {
+		return 0, errors.New("store: c2 requires a database")
+	}
 	if len(ids) == 0 {
 		return 0, nil
 	}
@@ -1708,16 +1832,19 @@ func (db *DB) DeleteC2EventsByIDs(ids []string) (int64, error) {
 		args[i] = clean[i]
 	}
 	query := `DELETE FROM c2_events WHERE id IN (` + placeholders + `)`
-	res, err := db.Exec(query, args...)
+	res, err := c.db.Exec(query, args...)
 	if err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()
 }
 
-func (db *DB) DeleteC2EventsByIDsForAccess(ids []string, access store.Access) (int64, error) {
-	if access.Scope == RBACScopeAll {
-		return db.DeleteC2EventsByIDs(ids)
+func (c *C2) DeleteC2EventsByIDsForAccess(ids []string, access Access) (int64, error) {
+	if c == nil || c.db == nil {
+		return 0, errors.New("store: c2 requires a database")
+	}
+	if access.Scope == ScopeAll {
+		return c.DeleteC2EventsByIDs(ids)
 	}
 	clean := cleanC2IDs(ids)
 	if len(clean) == 0 {
@@ -1731,7 +1858,7 @@ func (db *DB) DeleteC2EventsByIDsForAccess(ids []string, access store.Access) (i
 	conditions := []string{"id IN (" + placeholders + ")"}
 	appendC2EventAccessFilter(&conditions, &args, access)
 	query := `DELETE FROM c2_events WHERE ` + strings.Join(conditions, " AND ")
-	res, err := db.Exec(query, args...)
+	res, err := c.db.Exec(query, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -1743,7 +1870,10 @@ func (db *DB) DeleteC2EventsByIDsForAccess(ids []string, access store.Access) (i
 // ----------------------------------------------------------------------------
 
 // CreateC2Profile 创建/覆盖 Profile（按 name 唯一）
-func (db *DB) CreateC2Profile(p *C2Profile) error {
+func (c *C2) CreateC2Profile(p *C2Profile) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
 	if p == nil || strings.TrimSpace(p.ID) == "" {
 		return errors.New("profile id is required")
 	}
@@ -1758,14 +1888,17 @@ func (db *DB) CreateC2Profile(p *C2Profile) error {
 			response_headers_json, body_template, jitter_min_ms, jitter_max_ms, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
-	_, err := db.Exec(query, p.ID, p.Name, p.UserAgent, string(urisJSON),
+	_, err := c.db.Exec(query, p.ID, p.Name, p.UserAgent, string(urisJSON),
 		string(reqHdrJSON), string(resHdrJSON), p.BodyTemplate,
 		p.JitterMinMS, p.JitterMaxMS, p.CreatedAt)
 	return err
 }
 
 // UpdateC2Profile 全量更新 Profile
-func (db *DB) UpdateC2Profile(p *C2Profile) error {
+func (c *C2) UpdateC2Profile(p *C2Profile) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
 	if p == nil || strings.TrimSpace(p.ID) == "" {
 		return errors.New("profile id is required")
 	}
@@ -1778,7 +1911,7 @@ func (db *DB) UpdateC2Profile(p *C2Profile) error {
 			jitter_min_ms = ?, jitter_max_ms = ?
 		WHERE id = ?
 	`
-	res, err := db.Exec(query, p.Name, p.UserAgent, string(urisJSON),
+	res, err := c.db.Exec(query, p.Name, p.UserAgent, string(urisJSON),
 		string(reqHdrJSON), string(resHdrJSON), p.BodyTemplate,
 		p.JitterMinMS, p.JitterMaxMS, p.ID)
 	if err != nil {
@@ -1792,7 +1925,10 @@ func (db *DB) UpdateC2Profile(p *C2Profile) error {
 }
 
 // GetC2Profile 单条
-func (db *DB) GetC2Profile(id string) (*C2Profile, error) {
+func (c *C2) GetC2Profile(id string) (*C2Profile, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	query := `
 		SELECT id, name, COALESCE(user_agent, ''), COALESCE(uris_json, '[]'),
 			COALESCE(request_headers_json, '{}'), COALESCE(response_headers_json, '{}'),
@@ -1802,7 +1938,7 @@ func (db *DB) GetC2Profile(id string) (*C2Profile, error) {
 	`
 	var p C2Profile
 	var urisJSON, reqHdrJSON, resHdrJSON string
-	err := db.QueryRow(query, id).Scan(&p.ID, &p.Name, &p.UserAgent, &urisJSON,
+	err := c.db.QueryRow(query, id).Scan(&p.ID, &p.Name, &p.UserAgent, &urisJSON,
 		&reqHdrJSON, &resHdrJSON, &p.BodyTemplate, &p.JitterMinMS, &p.JitterMaxMS, &p.CreatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -1817,7 +1953,10 @@ func (db *DB) GetC2Profile(id string) (*C2Profile, error) {
 }
 
 // ListC2Profiles 全量列表
-func (db *DB) ListC2Profiles() ([]*C2Profile, error) {
+func (c *C2) ListC2Profiles() ([]*C2Profile, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: c2 requires a database")
+	}
 	query := `
 		SELECT id, name, COALESCE(user_agent, ''), COALESCE(uris_json, '[]'),
 			COALESCE(request_headers_json, '{}'), COALESCE(response_headers_json, '{}'),
@@ -1825,7 +1964,7 @@ func (db *DB) ListC2Profiles() ([]*C2Profile, error) {
 			created_at
 		FROM c2_profiles ORDER BY created_at DESC
 	`
-	rows, err := db.Query(query)
+	rows, err := c.db.Query(query)
 	if err != nil {
 		return nil, err
 	}
@@ -1836,7 +1975,7 @@ func (db *DB) ListC2Profiles() ([]*C2Profile, error) {
 		var urisJSON, reqHdrJSON, resHdrJSON string
 		if err := rows.Scan(&p.ID, &p.Name, &p.UserAgent, &urisJSON,
 			&reqHdrJSON, &resHdrJSON, &p.BodyTemplate, &p.JitterMinMS, &p.JitterMaxMS, &p.CreatedAt); err != nil {
-			continue
+			return nil, fmt.Errorf("扫描 c2_profiles 行失败: %w", err)
 		}
 		_ = json.Unmarshal([]byte(urisJSON), &p.URIs)
 		_ = json.Unmarshal([]byte(reqHdrJSON), &p.RequestHeaders)
@@ -1847,11 +1986,14 @@ func (db *DB) ListC2Profiles() ([]*C2Profile, error) {
 }
 
 // DeleteC2Profile 删除 Profile（不影响已用此 Profile 的 listener，仅断开关联）
-func (db *DB) DeleteC2Profile(id string) error {
-	if _, err := db.Exec(`UPDATE c2_listeners SET profile_id = '' WHERE profile_id = ?`, id); err != nil {
+func (c *C2) DeleteC2Profile(id string) error {
+	if c == nil || c.db == nil {
+		return errors.New("store: c2 requires a database")
+	}
+	if _, err := c.db.Exec(`UPDATE c2_listeners SET profile_id = '' WHERE profile_id = ?`, id); err != nil {
 		return err
 	}
-	res, err := db.Exec(`DELETE FROM c2_profiles WHERE id = ?`, id)
+	res, err := c.db.Exec(`DELETE FROM c2_profiles WHERE id = ?`, id)
 	if err != nil {
 		return err
 	}
@@ -1860,45 +2002,4 @@ func (db *DB) DeleteC2Profile(id string) error {
 		return sql.ErrNoRows
 	}
 	return nil
-}
-
-// ListC2Events 事件查询，按创建时间倒序
-func (db *DB) ListC2Events(filter ListC2EventsFilter) ([]*C2Event, error) {
-	where, args := buildC2EventsWhere(filter)
-	limit := filter.Limit
-	if limit <= 0 || limit > 1000 {
-		limit = 200
-	}
-	offset := filter.Offset
-	if offset < 0 {
-		offset = 0
-	}
-	query := `
-		SELECT id, level, category, COALESCE(session_id, ''), COALESCE(task_id, ''),
-			message, COALESCE(data_json, ''), created_at
-		FROM c2_events
-		WHERE ` + where + `
-		ORDER BY created_at DESC
-		LIMIT ? OFFSET ?
-	`
-	args = append(args, limit, offset)
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var list []*C2Event
-	for rows.Next() {
-		var e C2Event
-		var dataJSON string
-		if err := rows.Scan(&e.ID, &e.Level, &e.Category, &e.SessionID, &e.TaskID,
-			&e.Message, &dataJSON, &e.CreatedAt); err != nil {
-			continue
-		}
-		if dataJSON != "" {
-			_ = json.Unmarshal([]byte(dataJSON), &e.Data)
-		}
-		list = append(list, &e)
-	}
-	return list, rows.Err()
 }

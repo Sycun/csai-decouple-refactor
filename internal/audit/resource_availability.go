@@ -3,7 +3,6 @@ package audit
 import (
 	"strings"
 
-	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/store"
 )
@@ -22,17 +21,16 @@ var auditActionsResourceRemoved = map[string]bool{
 	"markdown_delete":        true,
 }
 
-// ResourceExistenceSource is the read surface this check needs: given the resource an audit row
-// points at, does that row still exist? Declared here because internal/audit is the consumer, and
-// listing seven lookups is cheaper than handing the audit log reader the whole connection wrapper.
+// ResourceExistenceSource is the read surface this check needs for the resources whose queries are
+// still on the connection wrapper: given the resource an audit row points at, does that row still
+// exist? Declared here because internal/audit is the consumer, and listing the lookups is cheaper
+// than handing the audit log reader the whole connection wrapper.
 //
 // The handlers' own store interfaces must be a superset of this one, since they pass their storage
-// in - internal/database/stores.go keeps ResourceExistence aligned with it.
+// in - internal/database/stores.go keeps ResourceExistence aligned with it. The C2 lookups are not
+// part of it any more: the caller passes store.C2 itself (see ApplyResourceAvailability).
 type ResourceExistenceSource interface {
 	ConversationExists(id string) (bool, error)
-	GetC2Listener(id string) (*database.C2Listener, error)
-	GetC2Session(id string) (*database.C2Session, error)
-	GetC2Task(id string) (*database.C2Task, error)
 	GetToolExecution(id string) (*mcp.ToolExecution, error)
 }
 
@@ -59,8 +57,9 @@ type WebshellLookup interface {
 //
 // db is an interface, so callers must pass one built by database.Narrow: a nil *database.DB stored
 // in an interface is not nil, and the guard below would then fall through into method calls on a nil
-// receiver instead of reporting "availability unknown".
-func ApplyResourceAvailability(db ResourceExistenceSource, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, log *store.AuditLog) {
+// receiver instead of reporting "availability unknown". c2 is a concrete pointer, so a plain nil
+// check is exact there and the c2 branches answer "unknown" without a database.
+func ApplyResourceAvailability(db ResourceExistenceSource, c2 *store.C2, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, log *store.AuditLog) {
 	if log == nil || strings.TrimSpace(log.ResourceID) == "" {
 		return
 	}
@@ -72,13 +71,13 @@ func ApplyResourceAvailability(db ResourceExistenceSource, findings FindingLooku
 	if db == nil {
 		return
 	}
-	available, known := resourceStillExists(db, findings, webshells, batches, log.ResourceType, log.ResourceID)
+	available, known := resourceStillExists(db, c2, findings, webshells, batches, log.ResourceType, log.ResourceID)
 	if known {
 		log.ResourceAvailable = &available
 	}
 }
 
-func resourceStillExists(db ResourceExistenceSource, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, resourceType, resourceID string) (bool, bool) {
+func resourceStillExists(db ResourceExistenceSource, c2 *store.C2, findings FindingLookup, webshells WebshellLookup, batches BatchQueueLookup, resourceType, resourceID string) (bool, bool) {
 	resourceID = strings.TrimSpace(resourceID)
 	if resourceID == "" {
 		return false, false
@@ -111,13 +110,22 @@ func resourceStillExists(db ResourceExistenceSource, findings FindingLookup, web
 		_, err := batches.GetBatchQueue(resourceID)
 		return err == nil, true
 	case "c2_listener":
-		_, err := db.GetC2Listener(resourceID)
+		if c2 == nil {
+			return false, false
+		}
+		_, err := c2.GetC2Listener(resourceID)
 		return err == nil, true
 	case "c2_session":
-		_, err := db.GetC2Session(resourceID)
+		if c2 == nil {
+			return false, false
+		}
+		_, err := c2.GetC2Session(resourceID)
 		return err == nil, true
 	case "c2_task":
-		_, err := db.GetC2Task(resourceID)
+		if c2 == nil {
+			return false, false
+		}
+		_, err := c2.GetC2Task(resourceID)
 		return err == nil, true
 	case "webshell_connection":
 		if webshells == nil {

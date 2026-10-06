@@ -153,16 +153,16 @@ func (b *C2HITLBridge) RequestApproval(ctx context.Context, req c2.HITLApprovalR
 
 // C2HooksConfig 配置 C2 Manager 的 Hooks
 type C2HooksConfig struct {
-	DB                *database.DB
+	C2                *store.C2
 	Logger            *zap.Logger
-	AttackChainRecord func(session *database.C2Session, phase string, description string)
-	VulnRecord        func(session *database.C2Session, title string, severity string)
+	AttackChainRecord func(session *store.C2Session, phase string, description string)
+	VulnRecord        func(session *store.C2Session, title string, severity string)
 }
 
 // SetupC2Hooks 设置 C2 Manager 的业务钩子
 func SetupC2Hooks(cfg *C2HooksConfig) c2.Hooks {
 	return c2.Hooks{
-		OnSessionFirstSeen: func(session *database.C2Session) {
+		OnSessionFirstSeen: func(session *store.C2Session) {
 			// 新会话上线
 			cfg.Logger.Info("C2 Session first seen",
 				zap.String("session_id", session.ID),
@@ -181,7 +181,7 @@ func SetupC2Hooks(cfg *C2HooksConfig) c2.Hooks {
 				cfg.AttackChainRecord(session, "initial-access", fmt.Sprintf("Implant beacon from %s/%s", session.Hostname, session.InternalIP))
 			}
 		},
-		OnTaskCompleted: func(task *database.C2Task, sessionID string) {
+		OnTaskCompleted: func(task *store.C2Task, sessionID string) {
 			// 任务完成
 			cfg.Logger.Debug("C2 Task completed",
 				zap.String("task_id", task.ID),
@@ -191,7 +191,7 @@ func SetupC2Hooks(cfg *C2HooksConfig) c2.Hooks {
 
 			// 根据任务类型记录攻击链
 			if cfg.AttackChainRecord != nil {
-				session, _ := cfg.DB.GetC2Session(sessionID)
+				session, _ := cfg.C2.GetC2Session(sessionID)
 				if session != nil {
 					phase := taskToAttackPhase(task.TaskType)
 					if phase != "" {

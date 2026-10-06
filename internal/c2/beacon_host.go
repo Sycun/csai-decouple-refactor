@@ -3,14 +3,14 @@ package c2
 import (
 	"strings"
 
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
 
 // ResolveBeaconDialHost 决定植入端应连接的主机名（不含端口）。
 // 优先级：explicitOverride > 监听器 config_json 中的 callback_host > bind_host（0.0.0.0/::/空 时 detectExternalIP，失败则 127.0.0.1）。
-func ResolveBeaconDialHost(listener *database.C2Listener, explicitOverride string, logger *zap.Logger, listenerID string) string {
+func ResolveBeaconDialHost(listener *store.C2Listener, explicitOverride string, logger *zap.Logger, listenerID string) string {
 	if h := strings.TrimSpace(explicitOverride); h != "" {
 		return h
 	}

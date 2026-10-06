@@ -92,7 +92,12 @@ import (
 // out. Two setters became one, and the six directory helpers (the scoped remove, the uploads date
 // walk, the project-scoped remove, the two default-resolving roots) moved to internal/storage; the
 // two exported roots stay because the handler reads them through its own store interface.
-const dbMethodCeiling = 181
+// 181 -> 133: the C2 domain moved whole - the forty-seven methods over listeners, sessions, tasks,
+// files, events and malleable profiles, plus the listener's project_id backfill that had no reason
+// to sit on a connection. One of the forty-seven, ListC2Events, was the dead one the surface
+// allow-list had been holding; it was deleted rather than relocated, and its data-layer test moved
+// onto the live sibling ListC2EventsForAccess.
+const dbMethodCeiling = 133
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

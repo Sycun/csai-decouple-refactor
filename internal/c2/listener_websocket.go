@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gorilla/websocket"
 	"go.uber.org/zap"
@@ -29,7 +29,7 @@ import (
 //	client → server：{"type":"checkin"|"result", "data": <ImplantCheckInRequest|TaskResultReport>}
 //	server → client：{"type":"task", "data": <TaskEnvelope>} 或 {"type":"sleep","data":{"sleep":N,"jitter":J}}
 type WebSocketListener struct {
-	rec     *database.C2Listener
+	rec     *store.C2Listener
 	cfg     *ListenerConfig
 	manager *Manager
 	logger  *zap.Logger
@@ -219,7 +219,7 @@ func (l *WebSocketListener) handleConn(ws *websocket.Conn) {
 			// 心跳更新：beacon 周期性送上心跳
 			var hb ImplantCheckInRequest
 			if err := json.Unmarshal(body, &hb); err == nil {
-				_ = l.manager.DB().TouchC2Session(session.ID, string(SessionActive), time.Now())
+				_ = l.manager.C2().TouchC2Session(session.ID, string(SessionActive), time.Now())
 			}
 		}
 	}

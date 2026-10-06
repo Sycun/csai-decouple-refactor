@@ -7,6 +7,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/handler"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -32,16 +33,16 @@ func setupC2Runtime(
 		return agentHandler.HITLNeedsToolApproval(conversationID, toolName)
 	})
 	c2Hooks := SetupC2Hooks(&C2HooksConfig{
-		DB:     db,
+		C2:     database.NewC2(db),
 		Logger: logger,
-		AttackChainRecord: func(session *database.C2Session, phase string, description string) {
+		AttackChainRecord: func(session *store.C2Session, phase string, description string) {
 			logger.Info("C2 Attack Chain",
 				zap.String("session_id", session.ID),
 				zap.String("phase", phase),
 				zap.String("desc", description),
 			)
 		},
-		VulnRecord: func(session *database.C2Session, title string, severity string) {
+		VulnRecord: func(session *store.C2Session, title string, severity string) {
 			logger.Info("C2 Vulnerability",
 				zap.String("session_id", session.ID),
 				zap.String("title", title),

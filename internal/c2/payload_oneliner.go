@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 )
 
 // OnelinerKind 单行 payload 的语言/形式
@@ -83,7 +83,7 @@ type OnelinerInput struct {
 }
 
 // ValidateOnelinerForListener 校验 oneliner 与监听器配置是否匹配（如 tcp_reverse 默认要求加密 Beacon）。
-func ValidateOnelinerForListener(listener *database.C2Listener, kind OnelinerKind) error {
+func ValidateOnelinerForListener(listener *store.C2Listener, kind OnelinerKind) error {
 	if listener == nil {
 		return fmt.Errorf("listener is nil")
 	}

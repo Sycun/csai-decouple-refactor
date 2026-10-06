@@ -61,7 +61,7 @@ func (h *C2Handler) SetManager(m *c2.Manager) {
 
 // ListListeners 获取监听器列表
 func (h *C2Handler) ListListeners(c *gin.Context) {
-	listeners, err := h.mgr().DB().ListC2ListenersForAccess(c2AccessFromContext(c), c.Query("project_id"))
+	listeners, err := h.mgr().C2().ListC2ListenersForAccess(c2AccessFromContext(c), c.Query("project_id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -136,7 +136,7 @@ func (h *C2Handler) CreateListener(c *gin.Context) {
 // GetListener 获取单个监听器
 func (h *C2Handler) GetListener(c *gin.Context) {
 	id := c.Param("id")
-	listener, err := h.mgr().DB().GetC2Listener(id)
+	listener, err := h.mgr().C2().GetC2Listener(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -153,7 +153,7 @@ func (h *C2Handler) GetListener(c *gin.Context) {
 // UpdateListener 更新监听器
 func (h *C2Handler) UpdateListener(c *gin.Context) {
 	id := c.Param("id")
-	listener, err := h.mgr().DB().GetC2Listener(id)
+	listener, err := h.mgr().C2().GetC2Listener(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -217,7 +217,7 @@ func (h *C2Handler) UpdateListener(c *gin.Context) {
 		listener.ConfigJSON = string(cfgJSON)
 	}
 
-	if err := h.mgr().DB().UpdateC2Listener(listener); err != nil {
+	if err := h.mgr().C2().UpdateC2Listener(listener); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -286,7 +286,7 @@ func (h *C2Handler) StopListener(c *gin.Context) {
 
 // ListSessions 获取会话列表
 func (h *C2Handler) ListSessions(c *gin.Context) {
-	filter := database.ListC2SessionsFilter{
+	filter := store.ListC2SessionsFilter{
 		ListenerID: c.Query("listener_id"),
 		ProjectID:  c.Query("project_id"),
 		Status:     c.Query("status"),
@@ -302,7 +302,7 @@ func (h *C2Handler) ListSessions(c *gin.Context) {
 		filter.Suspicious = true
 	}
 
-	sessions, err := h.mgr().DB().ListC2SessionsForAccess(filter, c2AccessFromContext(c))
+	sessions, err := h.mgr().C2().ListC2SessionsForAccess(filter, c2AccessFromContext(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -313,7 +313,7 @@ func (h *C2Handler) ListSessions(c *gin.Context) {
 // GetSession 获取单个会话
 func (h *C2Handler) GetSession(c *gin.Context) {
 	id := c.Param("id")
-	session, err := h.mgr().DB().GetC2Session(id)
+	session, err := h.mgr().C2().GetC2Session(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -324,7 +324,7 @@ func (h *C2Handler) GetSession(c *gin.Context) {
 	}
 
 	// 获取最近任务
-	tasks, _ := h.mgr().DB().ListC2TasksForAccess(database.ListC2TasksFilter{
+	tasks, _ := h.mgr().C2().ListC2TasksForAccess(store.ListC2TasksFilter{
 		SessionID: id,
 		Limit:     20,
 	}, c2AccessFromContext(c))
@@ -338,7 +338,7 @@ func (h *C2Handler) GetSession(c *gin.Context) {
 // DeleteSession 删除会话
 func (h *C2Handler) DeleteSession(c *gin.Context) {
 	id := c.Param("id")
-	if err := h.mgr().DB().DeleteC2Session(id); err != nil {
+	if err := h.mgr().C2().DeleteC2Session(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -361,9 +361,9 @@ func (h *C2Handler) DeleteSessions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ids is required"})
 		return
 	}
-	n, err := h.mgr().DB().DeleteC2SessionsByIDsForAccess(req.IDs, c2AccessFromContext(c))
+	n, err := h.mgr().C2().DeleteC2SessionsByIDsForAccess(req.IDs, c2AccessFromContext(c))
 	if err != nil {
-		if errors.Is(err, database.ErrNoValidC2SessionIDs) {
+		if errors.Is(err, store.ErrNoValidC2SessionIDs) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -434,7 +434,7 @@ func (h *C2Handler) SetSessionNote(c *gin.Context) {
 		return
 	}
 
-	session, err := h.mgr().DB().GetC2Session(id)
+	session, err := h.mgr().C2().GetC2Session(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -444,7 +444,7 @@ func (h *C2Handler) SetSessionNote(c *gin.Context) {
 		return
 	}
 
-	if err := h.mgr().DB().SetC2SessionNote(id, note); err != nil {
+	if err := h.mgr().C2().SetC2SessionNote(id, note); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -465,7 +465,7 @@ func (h *C2Handler) SetSessionNote(c *gin.Context) {
 
 // ListTasks 获取任务列表
 func (h *C2Handler) ListTasks(c *gin.Context) {
-	filter := database.ListC2TasksFilter{
+	filter := store.ListC2TasksFilter{
 		SessionID: c.Query("session_id"),
 		ProjectID: c.Query("project_id"),
 		Status:    c.Query("status"),
@@ -502,14 +502,14 @@ func (h *C2Handler) ListTasks(c *gin.Context) {
 	}
 
 	access := c2AccessFromContext(c)
-	tasks, err := h.mgr().DB().ListC2TasksForAccess(filter, access)
+	tasks, err := h.mgr().C2().ListC2TasksForAccess(filter, access)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// 仪表盘「待审任务」为全局 queued/pending 数量，与列表 session 过滤无关
-	pendingN, _ := h.mgr().DB().CountC2TasksQueuedOrPendingForAccess("", filter.ProjectID, access)
+	pendingN, _ := h.mgr().C2().CountC2TasksQueuedOrPendingForAccess("", filter.ProjectID, access)
 
 	if !paginated {
 		c.JSON(http.StatusOK, gin.H{
@@ -519,12 +519,12 @@ func (h *C2Handler) ListTasks(c *gin.Context) {
 		return
 	}
 
-	total, err := h.mgr().DB().CountC2TasksForAccess(filter, access)
+	total, err := h.mgr().C2().CountC2TasksForAccess(filter, access)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	statusCounts, err := h.mgr().DB().CountC2TasksByStatusForAccess(filter, access)
+	statusCounts, err := h.mgr().C2().CountC2TasksByStatusForAccess(filter, access)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -552,9 +552,9 @@ func (h *C2Handler) DeleteTasks(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ids is required"})
 		return
 	}
-	n, err := h.mgr().DB().DeleteC2TasksByIDsForAccess(req.IDs, c2AccessFromContext(c))
+	n, err := h.mgr().C2().DeleteC2TasksByIDsForAccess(req.IDs, c2AccessFromContext(c))
 	if err != nil {
-		if errors.Is(err, database.ErrNoValidC2TaskIDs) {
+		if errors.Is(err, store.ErrNoValidC2TaskIDs) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -572,7 +572,7 @@ func (h *C2Handler) DeleteTasks(c *gin.Context) {
 // GetTask 获取单个任务
 func (h *C2Handler) GetTask(c *gin.Context) {
 	id := c.Param("id")
-	task, err := h.mgr().DB().GetC2Task(id)
+	task, err := h.mgr().C2().GetC2Task(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -668,7 +668,7 @@ func (h *C2Handler) WaitTask(c *gin.Context) {
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		task, err := h.mgr().DB().GetC2Task(id)
+		task, err := h.mgr().C2().GetC2Task(id)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -702,7 +702,7 @@ func (h *C2Handler) PayloadOneliner(c *gin.Context) {
 		return
 	}
 
-	listener, err := h.mgr().DB().GetC2Listener(req.ListenerID)
+	listener, err := h.mgr().C2().GetC2Listener(req.ListenerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -769,7 +769,7 @@ func (h *C2Handler) PayloadBuild(c *gin.Context) {
 		return
 	}
 
-	listener, err := h.mgr().DB().GetC2Listener(req.ListenerID)
+	listener, err := h.mgr().C2().GetC2Listener(req.ListenerID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -849,7 +849,7 @@ func (h *C2Handler) PayloadDownload(c *gin.Context) {
 
 // ListEvents 获取事件列表
 func (h *C2Handler) ListEvents(c *gin.Context) {
-	filter := database.ListC2EventsFilter{
+	filter := store.ListC2EventsFilter{
 		Level:     c.Query("level"),
 		Category:  c.Query("category"),
 		ProjectID: c.Query("project_id"),
@@ -887,7 +887,7 @@ func (h *C2Handler) ListEvents(c *gin.Context) {
 	}
 
 	access := c2AccessFromContext(c)
-	events, err := h.mgr().DB().ListC2EventsForAccess(filter, access)
+	events, err := h.mgr().C2().ListC2EventsForAccess(filter, access)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -896,12 +896,12 @@ func (h *C2Handler) ListEvents(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"events": events})
 		return
 	}
-	total, err := h.mgr().DB().CountC2EventsForAccess(filter, access)
+	total, err := h.mgr().C2().CountC2EventsForAccess(filter, access)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	levelCounts, err := h.mgr().DB().CountC2EventsByLevelForAccess(filter, access)
+	levelCounts, err := h.mgr().C2().CountC2EventsByLevelForAccess(filter, access)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -928,9 +928,9 @@ func (h *C2Handler) DeleteEvents(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "ids is required"})
 		return
 	}
-	n, err := h.mgr().DB().DeleteC2EventsByIDsForAccess(req.IDs, c2AccessFromContext(c))
+	n, err := h.mgr().C2().DeleteC2EventsByIDsForAccess(req.IDs, c2AccessFromContext(c))
 	if err != nil {
-		if errors.Is(err, database.ErrNoValidC2EventIDs) {
+		if errors.Is(err, store.ErrNoValidC2EventIDs) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -996,7 +996,7 @@ func (h *C2Handler) EventStream(c *gin.Context) {
 
 // ListProfiles 获取 Malleable Profile 列表
 func (h *C2Handler) ListProfiles(c *gin.Context) {
-	profiles, err := h.mgr().DB().ListC2Profiles()
+	profiles, err := h.mgr().C2().ListC2Profiles()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1007,7 +1007,7 @@ func (h *C2Handler) ListProfiles(c *gin.Context) {
 // GetProfile 获取单个 Profile
 func (h *C2Handler) GetProfile(c *gin.Context) {
 	id := c.Param("id")
-	profile, err := h.mgr().DB().GetC2Profile(id)
+	profile, err := h.mgr().C2().GetC2Profile(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1021,7 +1021,7 @@ func (h *C2Handler) GetProfile(c *gin.Context) {
 
 // CreateProfile 创建 Profile
 func (h *C2Handler) CreateProfile(c *gin.Context) {
-	var req database.C2Profile
+	var req store.C2Profile
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1030,7 +1030,7 @@ func (h *C2Handler) CreateProfile(c *gin.Context) {
 	req.ID = "p_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:14]
 	req.CreatedAt = time.Now()
 
-	if err := h.mgr().DB().CreateC2Profile(&req); err != nil {
+	if err := h.mgr().C2().CreateC2Profile(&req); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1040,7 +1040,7 @@ func (h *C2Handler) CreateProfile(c *gin.Context) {
 // UpdateProfile 更新 Profile
 func (h *C2Handler) UpdateProfile(c *gin.Context) {
 	id := c.Param("id")
-	profile, err := h.mgr().DB().GetC2Profile(id)
+	profile, err := h.mgr().C2().GetC2Profile(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1050,7 +1050,7 @@ func (h *C2Handler) UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	var req database.C2Profile
+	var req store.C2Profile
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -1065,7 +1065,7 @@ func (h *C2Handler) UpdateProfile(c *gin.Context) {
 	profile.JitterMinMS = req.JitterMinMS
 	profile.JitterMaxMS = req.JitterMaxMS
 
-	if err := h.mgr().DB().UpdateC2Profile(profile); err != nil {
+	if err := h.mgr().C2().UpdateC2Profile(profile); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1075,7 +1075,7 @@ func (h *C2Handler) UpdateProfile(c *gin.Context) {
 // DeleteProfile 删除 Profile
 func (h *C2Handler) DeleteProfile(c *gin.Context) {
 	id := c.Param("id")
-	if err := h.mgr().DB().DeleteC2Profile(id); err != nil {
+	if err := h.mgr().C2().DeleteC2Profile(id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -1126,7 +1126,7 @@ func (h *C2Handler) UploadFileForImplant(c *gin.Context) {
 	}
 
 	// Record in DB
-	dbFile := &database.C2File{
+	dbFile := &store.C2File{
 		ID:         fileID,
 		SessionID:  sessionID,
 		Direction:  "upload",
@@ -1135,7 +1135,7 @@ func (h *C2Handler) UploadFileForImplant(c *gin.Context) {
 		SizeBytes:  n,
 		CreatedAt:  time.Now(),
 	}
-	_ = h.mgr().DB().CreateC2File(dbFile)
+	_ = h.mgr().C2().CreateC2File(dbFile)
 
 	c.JSON(http.StatusOK, gin.H{
 		"file_id":     fileID,
@@ -1156,7 +1156,7 @@ func (h *C2Handler) ListFiles(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该资源"})
 		return
 	}
-	files, err := h.mgr().DB().ListC2FilesBySession(sessionID)
+	files, err := h.mgr().C2().ListC2FilesBySession(sessionID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -1167,7 +1167,7 @@ func (h *C2Handler) ListFiles(c *gin.Context) {
 // DownloadResultFile 下载任务结果文件（截图等 blob 结果）
 func (h *C2Handler) DownloadResultFile(c *gin.Context) {
 	taskID := c.Param("id")
-	task, err := h.mgr().DB().GetC2Task(taskID)
+	task, err := h.mgr().C2().GetC2Task(taskID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

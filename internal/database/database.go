@@ -265,115 +265,8 @@ func (db *DB) initTables() error {
 
 	// WebShell 两张表（连接配置与工作区状态）的 DDL 与三条索引在 store.Webshell 的 EnsureSchema 里。
 
-	// ========================================================================
-	// C2 模块（监听器 / 会话 / 任务 / 文件 / 事件 / Malleable Profile）
-	// ========================================================================
-	createC2ListenersTable := `
-	CREATE TABLE IF NOT EXISTS c2_listeners (
-		id TEXT PRIMARY KEY,
-		project_id TEXT,
-		name TEXT NOT NULL,
-		type TEXT NOT NULL,
-		bind_host TEXT NOT NULL DEFAULT '127.0.0.1',
-		bind_port INTEGER NOT NULL,
-		profile_id TEXT,
-		encryption_key TEXT NOT NULL DEFAULT '',
-		implant_token TEXT NOT NULL DEFAULT '',
-		status TEXT NOT NULL DEFAULT 'stopped',
-		config_json TEXT NOT NULL DEFAULT '{}',
-		remark TEXT NOT NULL DEFAULT '',
-		owner_user_id TEXT,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		started_at DATETIME,
-		last_error TEXT
-	);`
-
-	createC2SessionsTable := `
-	CREATE TABLE IF NOT EXISTS c2_sessions (
-		id TEXT PRIMARY KEY,
-		listener_id TEXT NOT NULL,
-		implant_uuid TEXT NOT NULL UNIQUE,
-		hostname TEXT,
-		username TEXT,
-		os TEXT,
-		arch TEXT,
-		pid INTEGER DEFAULT 0,
-		process_name TEXT,
-		is_admin INTEGER DEFAULT 0,
-		internal_ip TEXT,
-		external_ip TEXT,
-		user_agent TEXT,
-		sleep_seconds INTEGER NOT NULL DEFAULT 5,
-		jitter_percent INTEGER NOT NULL DEFAULT 0,
-		status TEXT NOT NULL DEFAULT 'active',
-		first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		last_check_in DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		metadata_json TEXT DEFAULT '{}',
-		note TEXT NOT NULL DEFAULT '',
-		FOREIGN KEY (listener_id) REFERENCES c2_listeners(id) ON DELETE CASCADE
-	);`
-
-	createC2TasksTable := `
-	CREATE TABLE IF NOT EXISTS c2_tasks (
-		id TEXT PRIMARY KEY,
-		session_id TEXT NOT NULL,
-		task_type TEXT NOT NULL,
-		payload_json TEXT NOT NULL DEFAULT '{}',
-		status TEXT NOT NULL DEFAULT 'queued',
-		result_text TEXT,
-		result_blob_path TEXT,
-		error TEXT,
-		source TEXT NOT NULL DEFAULT 'manual',
-		conversation_id TEXT,
-		approval_status TEXT,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		sent_at DATETIME,
-		started_at DATETIME,
-		completed_at DATETIME,
-		duration_ms INTEGER DEFAULT 0,
-		FOREIGN KEY (session_id) REFERENCES c2_sessions(id) ON DELETE CASCADE
-	);`
-
-	createC2FilesTable := `
-	CREATE TABLE IF NOT EXISTS c2_files (
-		id TEXT PRIMARY KEY,
-		session_id TEXT NOT NULL,
-		task_id TEXT,
-		direction TEXT NOT NULL,
-		remote_path TEXT NOT NULL,
-		local_path TEXT NOT NULL,
-		size_bytes INTEGER DEFAULT 0,
-		sha256 TEXT,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (session_id) REFERENCES c2_sessions(id) ON DELETE CASCADE
-	);`
-
-	createC2EventsTable := `
-	CREATE TABLE IF NOT EXISTS c2_events (
-		id TEXT PRIMARY KEY,
-		level TEXT NOT NULL DEFAULT 'info',
-		category TEXT NOT NULL,
-		session_id TEXT,
-		task_id TEXT,
-		message TEXT NOT NULL,
-		data_json TEXT,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);`
-
-	createC2ProfilesTable := `
-	CREATE TABLE IF NOT EXISTS c2_profiles (
-		id TEXT PRIMARY KEY,
-		name TEXT NOT NULL UNIQUE,
-		user_agent TEXT,
-		uris_json TEXT NOT NULL DEFAULT '[]',
-		request_headers_json TEXT,
-		response_headers_json TEXT,
-		body_template TEXT,
-		jitter_min_ms INTEGER DEFAULT 0,
-		jitter_max_ms INTEGER DEFAULT 0,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);`
-
+	// C2 六张表（监听器 / 会话 / 任务 / 文件 / 事件 / Malleable Profile）的 DDL、project_id
+	// 补列与十四条索引都在 store.C2 里，由启动那三步按 建表 → 补列 → 建索引 的顺序跑。
 	// workflow 五张表的 DDL 与九条索引都在 store.Workflows 的 EnsureSchema 里。
 
 	// 创建索引
@@ -386,20 +279,6 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 	CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at);
 	CREATE INDEX IF NOT EXISTS idx_conversations_project_id ON conversations(project_id);
-	CREATE INDEX IF NOT EXISTS idx_c2_listeners_created_at ON c2_listeners(created_at);
-	CREATE INDEX IF NOT EXISTS idx_c2_listeners_project_id ON c2_listeners(project_id);
-	CREATE INDEX IF NOT EXISTS idx_c2_listeners_status ON c2_listeners(status);
-	CREATE INDEX IF NOT EXISTS idx_c2_sessions_listener ON c2_sessions(listener_id);
-	CREATE INDEX IF NOT EXISTS idx_c2_sessions_status ON c2_sessions(status);
-	CREATE INDEX IF NOT EXISTS idx_c2_sessions_last_check_in ON c2_sessions(last_check_in);
-	CREATE INDEX IF NOT EXISTS idx_c2_tasks_session ON c2_tasks(session_id);
-	CREATE INDEX IF NOT EXISTS idx_c2_tasks_status ON c2_tasks(status);
-	CREATE INDEX IF NOT EXISTS idx_c2_tasks_created_at ON c2_tasks(created_at);
-	CREATE INDEX IF NOT EXISTS idx_c2_tasks_conversation ON c2_tasks(conversation_id);
-	CREATE INDEX IF NOT EXISTS idx_c2_files_session ON c2_files(session_id);
-	CREATE INDEX IF NOT EXISTS idx_c2_events_created_at ON c2_events(created_at);
-	CREATE INDEX IF NOT EXISTS idx_c2_events_category ON c2_events(category);
-	CREATE INDEX IF NOT EXISTS idx_c2_events_session ON c2_events(session_id);
 										`
 
 	if _, err := db.Exec(createConversationsTable); err != nil {
@@ -470,17 +349,10 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("创建workflow表失败: %w", err)
 	}
 
-	for tableName, ddl := range map[string]string{
-		"c2_listeners": createC2ListenersTable,
-		"c2_sessions":  createC2SessionsTable,
-		"c2_tasks":     createC2TasksTable,
-		"c2_files":     createC2FilesTable,
-		"c2_events":    createC2EventsTable,
-		"c2_profiles":  createC2ProfilesTable,
-	} {
-		if _, err := db.Exec(ddl); err != nil {
-			return fmt.Errorf("创建%s表失败: %w", tableName, err)
-		}
+	// C2 六张表建在它们的主人那里；c2_sessions 指向 c2_listeners、两张子表指向 c2_sessions，
+	// 所以六个 CREATE 由 EnsureSchema 自己按外键顺序排。
+	if err := store.NewC2(db.DB).EnsureSchema(); err != nil {
+		return err
 	}
 
 	// 为已有表添加新字段（如果不存在）- 必须在创建索引之前
@@ -530,8 +402,12 @@ func (db *DB) initTables() error {
 		db.logger.Warn("迁移webshell_connections表失败", zap.Error(err))
 		// 不返回错误，允许继续运行
 	}
-	if err := db.migrateC2ListenersTable(); err != nil {
+	if err := store.NewC2(db.DB).MigrateListenerColumns(); err != nil {
 		db.logger.Warn("迁移c2_listeners表失败", zap.Error(err))
+	}
+	// c2 十四条索引里有一条坐在 project_id 上；补列跑完之前它建不出来。
+	if err := store.NewC2(db.DB).EnsureIndexes(); err != nil {
+		return fmt.Errorf("创建C2索引失败: %w", err)
 	}
 	// 列补写也归表的拥有者；这里保持原来的"记一条 warn 就继续"，建表失败才拦启动。
 	if err := store.NewWorkflows(db.DB).MigrateRunsTable(); err != nil {
@@ -712,12 +588,6 @@ func (db *DB) migrateProjectsTable() error {
 func (db *DB) dropProjectFactVersionsTable() error {
 	_, err := db.Exec(`DROP TABLE IF EXISTS project_fact_versions`)
 	return err
-}
-
-// migrateWebshellConnectionsTable 迁移 webshell_connections 表，补充新字段
-
-func (db *DB) migrateC2ListenersTable() error {
-	return db.addColumnIfMissing("c2_listeners", "project_id", "ALTER TABLE c2_listeners ADD COLUMN project_id TEXT")
 }
 
 // NewKnowledgeDB 创建知识库数据库连接（只包含知识库相关的表）

@@ -233,7 +233,7 @@ func (db *DB) DeleteProject(id string) error {
 	if err := NewWebshell(db).UnlinkProject(id); err != nil {
 		return fmt.Errorf("解除 WebShell 项目关联失败: %w", err)
 	}
-	if _, err := db.Exec(`UPDATE c2_listeners SET project_id = NULL WHERE project_id = ?`, id); err != nil {
+	if err := NewC2(db).UnlinkProject(id); err != nil {
 		return fmt.Errorf("解除 C2 监听器项目关联失败: %w", err)
 	}
 	_, err := db.Exec(`DELETE FROM projects WHERE id = ?`, id)

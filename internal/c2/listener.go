@@ -4,7 +4,7 @@ import (
 	"strings"
 	"sync"
 
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -22,7 +22,7 @@ type Listener interface {
 
 // ListenerCreationCtx 工厂初始化 listener 时收到的上下文
 type ListenerCreationCtx struct {
-	Listener *database.C2Listener
+	Listener *store.C2Listener
 	Config   *ListenerConfig
 	Manager  *Manager
 	Logger   *zap.Logger

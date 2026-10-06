@@ -89,7 +89,7 @@ tcp_reverse 默认仅接受 CSB1 加密 Beacon（AES-GCM + ImplantToken）才登
 
 		switch action {
 		case "list":
-			listeners, err := m.DB().ListC2ListenersForAccess(c2ToolAccess(ctx), mcpEffectiveProjectFilter(ctx, m.DB()))
+			listeners, err := m.C2().ListC2ListenersForAccess(c2ToolAccess(ctx), mcpEffectiveProjectFilter(ctx, m.DB()))
 			if err != nil {
 				return makeC2Result(nil, err)
 			}
@@ -100,7 +100,7 @@ tcp_reverse 默认仅接受 CSB1 加密 Beacon（AES-GCM + ImplantToken）才登
 			return makeC2Result(map[string]interface{}{"listeners": listeners, "count": len(listeners)}, nil)
 
 		case "get":
-			listener, err := m.DB().GetC2Listener(id)
+			listener, err := m.C2().GetC2Listener(id)
 			if err != nil {
 				return makeC2Result(nil, err)
 			}
@@ -153,7 +153,7 @@ tcp_reverse 默认仅接受 CSB1 加密 Beacon（AES-GCM + ImplantToken）才登
 			}, nil)
 
 		case "update":
-			listener, err := m.DB().GetC2Listener(id)
+			listener, err := m.C2().GetC2Listener(id)
 			if err != nil {
 				return makeC2Result(nil, err)
 			}
@@ -201,7 +201,7 @@ tcp_reverse 默认仅接受 CSB1 加密 Beacon（AES-GCM + ImplantToken）才登
 				}
 				listener.ConfigJSON = string(cfgBytes)
 			}
-			if err := m.DB().UpdateC2Listener(listener); err != nil {
+			if err := m.C2().UpdateC2Listener(listener); err != nil {
 				return makeC2Result(nil, err)
 			}
 			listener.EncryptionKey = ""
@@ -268,7 +268,7 @@ func registerC2SessionTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 
 		switch action {
 		case "list":
-			filter := database.ListC2SessionsFilter{
+			filter := store.ListC2SessionsFilter{
 				ListenerID: getString(params, "listener_id"),
 				ProjectID:  mcpEffectiveProjectFilter(ctx, m.DB()),
 				Status:     getString(params, "status"),
@@ -281,18 +281,18 @@ func registerC2SessionTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 			if v, ok := params["suspicious"].(bool); ok && v {
 				filter.Suspicious = true
 			}
-			sessions, err := m.DB().ListC2SessionsForAccess(filter, c2ToolAccess(ctx))
+			sessions, err := m.C2().ListC2SessionsForAccess(filter, c2ToolAccess(ctx))
 			return makeC2Result(map[string]interface{}{"sessions": sessions, "count": len(sessions)}, err)
 
 		case "get":
-			session, err := m.DB().GetC2Session(id)
+			session, err := m.C2().GetC2Session(id)
 			if err != nil {
 				return makeC2Result(nil, err)
 			}
 			if session == nil {
 				return makeC2Result(nil, fmt.Errorf("session not found"))
 			}
-			tasks, _ := m.DB().ListC2Tasks(database.ListC2TasksFilter{SessionID: id, Limit: 10})
+			tasks, _ := m.C2().ListC2Tasks(store.ListC2TasksFilter{SessionID: id, Limit: 10})
 			return makeC2Result(map[string]interface{}{"session": session, "tasks": tasks}, nil)
 
 		case "set_sleep":
@@ -321,7 +321,7 @@ func registerC2SessionTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 			return makeC2Result(map[string]interface{}{"task": task}, err)
 
 		case "delete":
-			err := m.DB().DeleteC2Session(id)
+			err := m.C2().DeleteC2Session(id)
 			return makeC2Result(map[string]interface{}{"deleted": err == nil}, err)
 
 		case "delete_batch":
@@ -332,7 +332,7 @@ func registerC2SessionTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 					ids = append(ids, strings.TrimSpace(s))
 				}
 			}
-			n, err := m.DB().DeleteC2SessionsByIDs(ids)
+			n, err := m.C2().DeleteC2SessionsByIDs(ids)
 			return makeC2Result(map[string]interface{}{"deleted": n}, err)
 
 		default:
@@ -468,7 +468,7 @@ func registerC2TaskManageTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 		switch action {
 		case "get_result":
 			id := getString(params, "task_id")
-			task, err := m.DB().GetC2Task(id)
+			task, err := m.C2().GetC2Task(id)
 			if err != nil {
 				return makeC2Result(nil, err)
 			}
@@ -485,7 +485,7 @@ func registerC2TaskManageTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 			}
 			deadline := time.Now().Add(time.Duration(timeout) * time.Second)
 			for time.Now().Before(deadline) {
-				task, err := m.DB().GetC2Task(id)
+				task, err := m.C2().GetC2Task(id)
 				if err != nil {
 					return makeC2Result(nil, err)
 				}
@@ -504,7 +504,7 @@ func registerC2TaskManageTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 			return makeC2Result(nil, fmt.Errorf("timeout waiting for task completion"))
 
 		case "list":
-			filter := database.ListC2TasksFilter{
+			filter := store.ListC2TasksFilter{
 				SessionID: getString(params, "session_id"),
 				ProjectID: mcpEffectiveProjectFilter(ctx, m.DB()),
 				Status:    getString(params, "status"),
@@ -512,7 +512,7 @@ func registerC2TaskManageTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 			if limit := int(getFloat64(params, "limit")); limit > 0 {
 				filter.Limit = limit
 			}
-			tasks, err := m.DB().ListC2TasksForAccess(filter, c2ToolAccess(ctx))
+			tasks, err := m.C2().ListC2TasksForAccess(filter, c2ToolAccess(ctx))
 			return makeC2Result(map[string]interface{}{"tasks": tasks, "count": len(tasks)}, err)
 
 		case "cancel":
@@ -561,7 +561,7 @@ func registerC2PayloadTool(s *mcp.Server, m *c2.Manager, l *zap.Logger, webListe
 
 		switch action {
 		case "oneliner":
-			listener, err := m.DB().GetC2Listener(listenerID)
+			listener, err := m.C2().GetC2Listener(listenerID)
 			if err != nil {
 				return makeC2Result(nil, err)
 			}
@@ -654,7 +654,7 @@ func registerC2EventTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 			},
 		},
 	}, func(ctx context.Context, params map[string]interface{}) (*mcp.ToolResult, error) {
-		filter := database.ListC2EventsFilter{
+		filter := store.ListC2EventsFilter{
 			Level:     getString(params, "level"),
 			Category:  getString(params, "category"),
 			ProjectID: mcpEffectiveProjectFilter(ctx, m.DB()),
@@ -670,7 +670,7 @@ func registerC2EventTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 				filter.Since = &t
 			}
 		}
-		events, err := m.DB().ListC2EventsForAccess(filter, c2ToolAccess(ctx))
+		events, err := m.C2().ListC2EventsForAccess(filter, c2ToolAccess(ctx))
 		return makeC2Result(map[string]interface{}{"events": events, "count": len(events)}, err)
 	})
 }
@@ -718,11 +718,11 @@ func registerC2ProfileTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 
 		switch action {
 		case "list":
-			profiles, err := m.DB().ListC2Profiles()
+			profiles, err := m.C2().ListC2Profiles()
 			return makeC2Result(map[string]interface{}{"profiles": profiles, "count": len(profiles)}, err)
 
 		case "get":
-			profile, err := m.DB().GetC2Profile(id)
+			profile, err := m.C2().GetC2Profile(id)
 			if err != nil {
 				return makeC2Result(nil, err)
 			}
@@ -732,7 +732,7 @@ func registerC2ProfileTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 			return makeC2Result(map[string]interface{}{"profile": profile}, nil)
 
 		case "create":
-			profile := &database.C2Profile{
+			profile := &store.C2Profile{
 				ID:           "p_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:14],
 				Name:         getString(params, "name"),
 				UserAgent:    getString(params, "user_agent"),
@@ -766,13 +766,13 @@ func registerC2ProfileTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 					}
 				}
 			}
-			if err := m.DB().CreateC2Profile(profile); err != nil {
+			if err := m.C2().CreateC2Profile(profile); err != nil {
 				return makeC2Result(nil, err)
 			}
 			return makeC2Result(map[string]interface{}{"profile": profile}, nil)
 
 		case "update":
-			profile, err := m.DB().GetC2Profile(id)
+			profile, err := m.C2().GetC2Profile(id)
 			if err != nil {
 				return makeC2Result(nil, err)
 			}
@@ -820,13 +820,13 @@ func registerC2ProfileTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 					}
 				}
 			}
-			if err := m.DB().UpdateC2Profile(profile); err != nil {
+			if err := m.C2().UpdateC2Profile(profile); err != nil {
 				return makeC2Result(nil, err)
 			}
 			return makeC2Result(map[string]interface{}{"profile": profile}, nil)
 
 		case "delete":
-			err := m.DB().DeleteC2Profile(id)
+			err := m.C2().DeleteC2Profile(id)
 			return makeC2Result(map[string]interface{}{"deleted": err == nil}, err)
 
 		default:
@@ -863,12 +863,12 @@ func registerC2FileTool(s *mcp.Server, m *c2.Manager, l *zap.Logger) {
 			if sessionID == "" {
 				return makeC2Result(nil, fmt.Errorf("session_id required"))
 			}
-			files, err := m.DB().ListC2FilesBySession(sessionID)
+			files, err := m.C2().ListC2FilesBySession(sessionID)
 			return makeC2Result(map[string]interface{}{"files": files, "count": len(files)}, err)
 
 		case "get_result":
 			taskID := getString(params, "task_id")
-			task, err := m.DB().GetC2Task(taskID)
+			task, err := m.C2().GetC2Task(taskID)
 			if err != nil {
 				return makeC2Result(nil, err)
 			}

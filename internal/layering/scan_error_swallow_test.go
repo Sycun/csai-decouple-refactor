@@ -30,12 +30,12 @@ import (
 // and the two-statement form where the scan is the previous statement.
 
 // scanSwallowDataLayerCeilings is the debt ledger for internal/database, measured as this gate was
-// written: 27 sites across these five files, and zero in internal/store. When a domain moves to a
-// store it takes its share with it; when one of these reaches zero the entry is deleted rather than
-// left behind. The seven sites in the store layer that this sweep cleared are listed with their
-// reasons in docs/zh-CN/capability-platform-decoupling-research.md §11 第二十五刀.
+// written: 27 sites across five files, and zero in internal/store. When a domain moves to a store it
+// takes its share with it, and its entry is deleted rather than left behind - the C2 domain's twelve
+// sites left on 2026-10-07, eleven of which the store converted into returned errors (the twelfth was
+// the now-deleted ListC2Events). The seven sites in the store layer that the first sweep cleared are
+// listed with their reasons in docs/zh-CN/capability-platform-decoupling-research.md §11 第二十五刀.
 var scanSwallowDataLayerCeilings = map[string]int{
-	"internal/database/c2.go":           12,
 	"internal/database/conversation.go": 3,
 	"internal/database/monitor.go":      8,
 	"internal/database/database.go":     3,

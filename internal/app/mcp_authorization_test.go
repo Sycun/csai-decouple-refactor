@@ -98,15 +98,15 @@ func TestMCPToolAuthorizerEnforcesConversationProjectBoundary(t *testing.T) {
 	}
 
 	now := time.Now()
-	listener := &database.C2Listener{ID: "l_project", ProjectID: project.ID, Name: "project listener", Type: "tcp_reverse", BindHost: "127.0.0.1", BindPort: 5555, OwnerUserID: user.ID, CreatedAt: now}
-	if err := db.CreateC2Listener(listener); err != nil {
+	listener := &store.C2Listener{ID: "l_project", ProjectID: project.ID, Name: "project listener", Type: "tcp_reverse", BindHost: "127.0.0.1", BindPort: 5555, OwnerUserID: user.ID, CreatedAt: now}
+	if err := database.NewC2(db).CreateC2Listener(listener); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.AssignResourceToUser(user.ID, "c2_listener", listener.ID); err != nil {
 		t.Fatal(err)
 	}
-	session := &database.C2Session{ID: "s_project", ListenerID: listener.ID, ImplantUUID: "implant-project", Status: "active", FirstSeenAt: now, LastCheckIn: now}
-	if err := db.UpsertC2Session(session); err != nil {
+	session := &store.C2Session{ID: "s_project", ListenerID: listener.ID, ImplantUUID: "implant-project", Status: "active", FirstSeenAt: now, LastCheckIn: now}
+	if err := database.NewC2(db).UpsertC2Session(session); err != nil {
 		t.Fatal(err)
 	}
 

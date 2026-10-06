@@ -14,7 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -24,7 +24,7 @@ import (
 // 可选经典模式（config.allow_legacy_shell=true）：纯交互式 raw shell，与 nc / bash -i >& /dev/tcp 兼容，无鉴权，仅建议内网实验。
 // 任务派发（经典模式）：同步 exec —— 收到 task 时直接 send 命令字节并读取输出（带结束标记）。
 type TCPReverseListener struct {
-	rec     *database.C2Listener
+	rec     *store.C2Listener
 	cfg     *ListenerConfig
 	manager *Manager
 	logger  *zap.Logger
@@ -219,7 +219,7 @@ func (l *TCPReverseListener) handleShellConn(conn net.Conn, br *bufio.Reader) {
 		n, err := tc.reader.Read(buf)
 		if n > 0 {
 			// 收到数据也刷新心跳
-			_ = l.manager.DB().TouchC2Session(session.ID, string(SessionActive), time.Now())
+			_ = l.manager.C2().TouchC2Session(session.ID, string(SessionActive), time.Now())
 			if atomic.LoadInt32(&tc.taskMode) == 0 {
 				l.manager.publishEvent("info", "task", session.ID, "",
 					"stdout(unsolicited)", map[string]interface{}{
@@ -233,7 +233,7 @@ func (l *TCPReverseListener) handleShellConn(conn net.Conn, br *bufio.Reader) {
 			}
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				// 读超时 = 连接仍存活但无数据，刷新心跳防止看门狗误判
-				_ = l.manager.DB().TouchC2Session(session.ID, string(SessionActive), time.Now())
+				_ = l.manager.C2().TouchC2Session(session.ID, string(SessionActive), time.Now())
 				continue
 			}
 			return

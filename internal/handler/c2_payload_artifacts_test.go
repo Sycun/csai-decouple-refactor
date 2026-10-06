@@ -7,6 +7,7 @@ import (
 	"cyberstrike-ai/internal/c2"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -48,7 +49,7 @@ func TestPayloadArtifactDownloadGate(t *testing.T) {
 	// Assignments are validated against the listener table, so the two listeners the artifacts name
 	// have to exist as records - which is exactly what makes this an end-to-end check of the gate.
 	for _, id := range []string{"lis-1", "lis-2"} {
-		if err := db.CreateC2Listener(&database.C2Listener{ID: id, Name: id, Type: "http", BindHost: "127.0.0.1", BindPort: 9001}); err != nil {
+		if err := database.NewC2(db).CreateC2Listener(&store.C2Listener{ID: id, Name: id, Type: "http", BindHost: "127.0.0.1", BindPort: 9001}); err != nil {
 			t.Fatalf("create listener %s: %v", id, err)
 		}
 	}

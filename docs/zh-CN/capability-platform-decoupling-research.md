@@ -3039,6 +3039,80 @@ NewVulnerabilities owns`；② 把启动那行 `EnsureSchema()` 换成一句无�
 也在 `*DB` 上）与 `conversationArtifactsDir` 的**写入侧**（handler 上传附件的路径拼接）——
 前者是运行期调度、后者是产物读写，都还要从连接对象上搬走。
 
+### P6 第四十刀 —— C2 域整片进 `store.C2`：六张表、一个死方法、两个被搬动照出来的族
+
+**这一刀搬了什么**：`internal/database/c2.go`（1,904 行）整文件进 `internal/store/c2.go`——监听器 / 会话 /
+任务 / 文件 / 事件 / Malleable Profile 六张表的 47 个 `*DB` 方法（CRUD、访问过滤、原子认领、
+批量删除）与它们全部的类型（`C2Listener` / `C2Session` / `C2Task` / `C2File` / `C2Event` / `C2Profile`
++ 三个过滤器 + 三个 `ErrNoValidC2*` 哨兵）。DDL 侧：六个 `CREATE TABLE`、`c2_listeners.project_id`
+补列、十四条 `idx_c2_*` 索引原来分散在 `database.go` 的 `initTables` 内联块与全局 `createIndexes`
+串里，现在整体进 `store.C2` 的 **建表 → 补列 → 建索引** 三步（`EnsureSchema` /
+`MigrateListenerColumns` / `EnsureIndexes`），顺序由 `TestSchemaEnsuresAreWiredAtBoot` 的新用例与
+`TestMultiPhaseSchemaStepsRunInOrder`（第 4 条）逐条盯住——`idx_c2_listeners_project_id` 坐在补列
+才产生的列上，这不是风格问题，是"第一版开出来的库升上来的那天"才会踩的坑。
+
+**水位**：`*database.DB` **181 → 133**（−48：c2.go 的 47 个，加上 `database.go` 里那个
+`migrateC2ListenersTable` 补列函数——它本来就只认这一张表）。**死方法处理**：`ListC2Events` 是
+死方法白名单上的一条（被 `ListC2EventsForAccess` 取代），这一刀按既有规矩**删除而不是搬走**——
+白名单条目随之删掉，它唯一的数据层用例（`rbac_access_test.go` 里"删了可见的、隐藏的还在"）
+改用活着的兄弟 `ListC2EventsForAccess(..., store.Access{Scope: store.ScopeAll})` 继续钉。
+
+**接收者逃逸面（这一刀真正贵的地方）**：C2 的读写在 handler / MCP 工具里一直借
+`c2.Manager.DB()` 拿到的 `*database.DB` 直接调。这一刀把 Manager 劈成两个句柄：
+新增 **`Manager.C2()`（`*store.C2`，本域六张表）**，`DB()` 只留给还没轮到搬迁的域——
+RBAC 的归属三连（`SetResourceOwner` / `AssignResourceToUser` / `UserCanAccessResource`）、
+会话的项目查询（`mcpEffectiveProjectFilter`）、payload 落盘记录——每一处都在注释里点名，
+下一刀扫的就是它们。`internal/c2` 包内其他文件（beacon、listener、watchdog）只经 Manager 方法，
+一行没动；`store.NewC2(db)` 的构造收在 `database.NewC2` 桥里（nil-safe，照 `NewAssets` 的判据）。
+
+**搬动照出来的两个族（都不是 C2 专属，是这一类搬动的通病）**：
+
+1. **scan 吞错**：数据层债务台账里 `c2.go` 记着 **12 处**"scan 失败就丢这一行"。
+   `internal/store` 对此是**硬零**（store 自己拥有 DDL，scan 失败是故障，不是可跳过的行），
+   所以其中 **11 处**在这一刀里改成 `return nil, fmt.Errorf("扫描 c2_xxx 行失败: %w", err)`——
+   错误文案沿用原来那 10 条日志的中文串，日志本身按 store 惯例删掉（batch_task.go 记过这笔账）；
+   第 12 处就是被删的 `ListC2Events`。台账随之 **27 处 / 5 文件 → 15 处 / 4 文件**。
+2. **nil 语义**：`store.C2` 的 43 个导出方法全部带 `c == nil || c.db == nil` 守卫（照其余 store 域），
+   于是"没有数据库"是 error 而不是 panic。`audit.ApplyResourceAvailability` 因此多收一个
+   `*store.C2` 参数：**具体指针**判 nil 才准（`*database.DB` 装进接口后 `== nil` 失真的坑，
+   那条注释里写了两遍，这次把两种参数并列摆在一起），并补两条分支用例
+   （未接线 → "availability unknown"；无连接的 store → 错误 → 按既有规则读作 "removed"）。
+
+**跨域写按"以表定主人"收口**：`project.go` 的 `DeleteProject` 原来内联
+`UPDATE c2_listeners SET project_id = NULL WHERE project_id = ?`——`TestWriteLedgerTablesHaveOneWriterEach`
+当场抓住"`c2_listeners` 的第二个写者"。按既有 `UnlinkProject` 模式改成
+`NewC2(db).UnlinkProject(id)`，错误文案一字不变；写账本 **35 → 41 张表**
+（`internal/store writes 171 statements over 41 tables in 27 files`，`-v` 会打印）。
+
+**证明（都能复跑）**：
+
+- **字符串字面量双向差分**（搬动只许改名、不许改字节；`git show HEAD:internal/database/c2.go`
+  与新文件的所有字符串/反引号字面量各取多重集相减）：原始侧只多出 **4 条未转换的 Error 级日志文案**
+  （`创建 C2 监听器失败` / `更新 C2 监听器失败` / `upsert C2 会话失败` / `创建 C2 任务失败`——
+  写入错误照旧返回，只是不再多打一行日志）、**6 条扫描告警的裸文案**（它们在新侧以
+  `…行失败: %w` 的错误文案复用，所以以"裸串"计只在原始侧）、死方法的两段 SQL 片段、
+  `zap`/`internal/store` 两个 import 名与 4 个 zap 字段名（`id`×3、`implant_uuid`）；
+  新侧只多出 **44 条 `store: c2 requires a database` 守卫**（43 个搬来的导出方法 + 新写的
+  `UnlinkProject`）、**11 条 scan 错误文案**（中文字面沿用原日志）、`sqltime` import 名与
+  `UnlinkProject` 的那句 `UPDATE c2_listeners SET project_id = NULL WHERE project_id = ?`
+  （它原本写在 `project.go` 里，按所有权搬入，SQL 逐字节相同）。**六张表的 SQL 与全部报错串逐字节保留**。
+- **行为**：`internal/c2` 的既有真机测试（manager_start / manager_sleep / listener_http ——真起
+  listener、真发心跳、真删文件）全绿；新增 `internal/store/c2_test.go` 七条真库用例：
+  fresh schema 幂等 + 二十个对象齐全、legacy 表补列、upsert 一行一 implant、级联删除
+  （listener→session→task/file，靠 `_foreign_keys=1` 真跑 FK）、`PopQueuedC2Tasks` 原子认领
+  （第二次拉取为空）、profile 的 JSON 列往返、`UnlinkProject` 只清绑定不删行。
+- **门禁数字（本会话实测）**：`dbMethodCeiling` 181 → **133**；死方法地板 157 → **113**；
+  consumer-surface 地板 162 → **158**（ResourceExistence 减 3、NotificationStore 减 1）；
+  scan-swallow 台账删 `c2.go` 条；`writeLedger` 35 → **41**；schema-boot 新增 `NewC2` 用例。
+- **全仓**：`go test -count=1 ./...` **48 包全绿**；`gofmt -l` 空；`make js-check` 220 条；
+  `make generate` 无漂移（SSE/capability/provider 三套生成物与源码一致）。
+  `internal/store` 包内测试 **219 条**、生产文件 **32 个**；全仓测试函数 **1,598**。
+
+**留下的账（点名的，不是揣测）**：`Manager.DB()` 这个口子还在（RBAC / 会话 / payload 三个去处）；
+`*DB` 上还剩 **133** 个方法，按族大小：conversation 42 / rbac 40 / monitor 22 / project 10 /
+database.go 10（开机接线）/ project_stats 3 / storage_activity 2 / plantask 2 / tool_guard_migration 1 /
+project_dashboard 1；`internal/database` 23 文件 193 条 SQL、`internal/store` 32 文件 432 条。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
@@ -3088,7 +3162,7 @@ NewVulnerabilities owns`；② 把启动那行 `EnsureSchema()` 换成一句无�
 | P3 契约与前端 | **部分：三套事件名契约已完成并双侧比对**；逐文件 ES 模块未做 | `go test -count=1 -run 'TestSSEPage|TestPersistedDetail|TestGeneratedSSEEnum|TestPageLoads' ./internal/handler/`；手拼帧基线 0 |
 | P4 进程外插件宿主 | **部分：进程外 ABI + 软出网已落**；netns/seccomp 硬边界与内嵌 CPython **未做** | `ls internal/pluginhost`；`grep -rl 'seccomp\|CLONE_NEWNET' internal/` → **无匹配**（这就是"未做"的证据） |
 | P5 审核流水线/商店 | **部分：客户端强制 + 制品签名/撤销已落**；registry 服务端、气隙离线包、沙箱引爆自动化 **未做** | `ls internal/artifact`；`ls internal/registry` → **不存在** |
-| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、**数据层按域切出 21 个 store / `internal/store` 26 个生产文件、包内 192 条测试**（`*database.DB` 361 → **232**，只降门禁；漏洞域两片 + 攻击链一片 + workflow 一片已交，`internal/database/vulnerability.go`、`vulnerability_alert.go`、`attackchain.go`、`workflow.go` + `workflow_package.go`、`project_fact_edges.go` 六个文件删除）、**分层裸 SQL 归零**（两个自有层之外 0 条）、DATETIME 读法 24 处 → 1 处、应用回调不再挂在连接包装上、**handler 层不持有任何数据库句柄**、`vulnerabilities` 表按"唯一写入者"认领（`TestFindingsTableHasOneWriter`），告警两张表、`robot_user_bindings` 与攻击链两张表进归属清单；**黑板两张表（`project_facts` / `project_fact_edges`）的 SQL 与 DDL 整体进 `store.Facts`**，`TestProjectFactsHasOneWriter` 按写入者认领（事实 6 条写、边 9 条写，各自只有一个主人文件），store 的写面由 `TestStoreWritesOnlyTablesItOwns` 双向核对（账本 31 张表）+ `TestWriteLedgerTablesHaveOneWriterEach` 全仓反第二写者（含只降的债务台账）；黑板账本已彻底离开连接包装（`ProjectFactStore` 劈成 `ProjectRowStore` + `BlackboardLedger`，18 个转发删掉）；搬走的 DDL 由 `TestSchemaEnsuresAreWiredAtBoot` 逐条盯开机接线、外键顺序与"老家不许再提这张表"、Eino 6 包（适配外 3 包）、`AgentHandler` 六刀至 **88 方法 / 20 文件**、审计注入门禁、手写 OpenAPI 文档按域拆成 5 个分组文件 + golden（157 操作逐字节等值） | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `transport layer: 0 structs hold *database.DB, 18 fields hold a narrowed database interface, 28 hold their own table store, 1160 struct fields scanned (started 19/0)`；`go test -count=1 -v -run TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt ./internal/layering/` 报 `0 statements in 0 files, over 511 production files scanned`；`go test -count=1 -run 'TestFindingContract' ./internal/handler/` 9 条契约用例；`go test -count=1 -run 'TestOpenAPI' ./internal/handler/` |
+| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、**数据层按域切出 22 个 store / `internal/store` 32 个生产文件、包内 219 条测试**（`*database.DB` 361 → **133**，只降门禁；C2 域六张表整片交回 `store.C2`，见 §11 第四十刀；漏洞域两片 + 攻击链一片 + workflow 一片已交，`internal/database/vulnerability.go`、`vulnerability_alert.go`、`attackchain.go`、`workflow.go` + `workflow_package.go`、`project_fact_edges.go` 六个文件删除）、**分层裸 SQL 归零**（两个自有层之外 0 条）、DATETIME 读法 24 处 → 1 处、应用回调不再挂在连接包装上、**handler 层不持有任何数据库句柄**、`vulnerabilities` 表按"唯一写入者"认领（`TestFindingsTableHasOneWriter`），告警两张表、`robot_user_bindings` 与攻击链两张表进归属清单；**黑板两张表（`project_facts` / `project_fact_edges`）的 SQL 与 DDL 整体进 `store.Facts`**，`TestProjectFactsHasOneWriter` 按写入者认领（事实 6 条写、边 9 条写，各自只有一个主人文件），store 的写面由 `TestStoreWritesOnlyTablesItOwns` 双向核对（账本 41 张表）+ `TestWriteLedgerTablesHaveOneWriterEach` 全仓反第二写者（含只降的债务台账）；黑板账本已彻底离开连接包装（`ProjectFactStore` 劈成 `ProjectRowStore` + `BlackboardLedger`，18 个转发删掉）；搬走的 DDL 由 `TestSchemaEnsuresAreWiredAtBoot` 逐条盯开机接线、外键顺序与"老家不许再提这张表"、Eino 6 包（适配外 3 包）、`AgentHandler` 六刀至 **88 方法 / 20 文件**、审计注入门禁、手写 OpenAPI 文档按域拆成 5 个分组文件 + golden（157 操作逐字节等值） | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `transport layer: 0 structs hold *database.DB, 18 fields hold a narrowed database interface, 28 hold their own table store, 1160 struct fields scanned (started 19/0)`；`go test -count=1 -v -run TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt ./internal/layering/` 报 `0 statements in 0 files, over 511 production files scanned`；`go test -count=1 -run 'TestFindingContract' ./internal/handler/` 9 条契约用例；`go test -count=1 -run 'TestOpenAPI' ./internal/handler/` |
 | §6.1 社区知识控制 | **代码层已落**（围栏 + 入库拒绝 + 装配点守卫）；是否按运行期不可信处理仍待裁决（决策项 4） | `go test -count=1 ./internal/contentpolicy/` |
 
 **没有做成的事**（不假装完成）：`AgentHandler` 分解本体（88 方法 / 20 文件，仍是全仓最大的类型；
@@ -3097,11 +3171,11 @@ NewVulnerabilities owns`；② 把启动那行 `EnsureSchema()` 换成一句无�
 ~~剩余 3 个域的窄接口~~（**已在第五片做完**：阻塞点是 `h.db` 逃逸进别包签名，解法是给那些函数
 声明消费者接口——`project.Store`/`agentfinalizer.Store`/`attackchain.Store`/`workflow.Store`，
 19 → 0）、Eino 收到 ≤1 包、
-session 事件溯源、逐文件 ES 模块、`internal/database` 剩下的 **241** 个方法继续按域切
-（漏洞域两片、攻击链一片、告警一片、workflow 一片、黑板两片已交完；实测族大小为 conversation 48 /
-c2 47 / rbac 40 / monitor 22 / batch_task 22 / database 18 / asset 17 / project 10 / webshell 7 /
-project_stats 3 / plantask 2 / storage_activity 2 / project_dashboard 1 / tool_execution_args_lookup 1 /
-tool_guard_migration 1，合计 **241**；细节见 §11 第二十一至二十七刀）、
+session 事件溯源、逐文件 ES 模块、`internal/database` 剩下的 **133** 个方法继续按域切
+（漏洞、攻击链、告警、workflow、黑板、资产、批量任务、WebShell、C2 等片已交完；实测族大小
+conversation 42 / rbac 40 / monitor 22 / project 10 / database.go 10 / project_stats 3 /
+storage_activity 2 / plantask 2 / tool_guard_migration 1 / project_dashboard 1，合计 **133**；
+细节见 §11 第二十一至四十刀）、
 P4 硬网络边界、P4 内嵌 CPython、P5 registry / 气隙包 / 引爆自动化、
 以及 **§10 的 9 个决策项一个都没有被裁决**（其中 1、4、5、6 直接决定 P4/P5 的形态）。
 因此**目标未达成**，本表就是"还差什么"的清单。
@@ -3189,27 +3263,30 @@ origin  https://github.com/AIPentest/CyberStrikeAI.git  # 上游父仓库，只�
    后端 API 错误串未 i18n——口径与数字都要可复验：
    `grep -rhoE '"(error|message)": "[^"]*"' internal/handler/*.go | grep -c '[一-龥]'` = **391 条中文**
    （同一条命令去掉 `grep -c` 换 `-vc` = 132 条 ASCII）。属契约变更，要连同前端字典一起动。
-   再往后才是 `internal/database` 那 **262** 个方法（**分层裸 SQL 已归零**：`internal/knowledge` 是
+   再往后才是 `internal/database` 那 **133** 个方法（**分层裸 SQL 已归零**：`internal/knowledge` 是
    `internal/handler` 之后最后一个在两个自有层之外写 SQL 的包，见 §11「P6 数据层第十一片」；
    剩下的 SQL 全在主人手里——复现：
    `for d in internal/database internal/store; do echo -n "$d "; ls $d/*.go | grep -v _test | wc -l | tr -d ' '; grep -rhoE '\b(SELECT|INSERT INTO|UPDATE|DELETE FROM)\b' $(ls $d/*.go | grep -v _test) | wc -l | tr -d ' '; done`
-   → 实测 **database 410 处 / 23 文件、store 213 处 / 22 文件**；store 那一侧的 79 条**写**语句
-   全部落在 `writeLedger` 登记的 27 张表上，`go test -count=1 -v -run TestStoreWritesOnlyTablesItOwns ./internal/store/`
-   会把三个数打印出来）：按 `*DB` 接收者当场数的大水面是
-   **`conversation.go 48 / c2.go 47 / rbac.go 40 / monitor.go 22 / batch_task.go 22 / project.go 18 / database.go 18 / asset.go 17 / project_fact_edges.go 12 / webshell.go 7 / project_stats.go 4 / plantask.go 2 / storage_activity.go 2 / tool_execution_args_lookup.go 1 / tool_guard_migration.go 1 / project_dashboard.go 1`**，
+   → 实测 **database 193 处 / 23 文件、store 432 处 / 32 文件**；store 那一侧的 171 条**写**语句
+   全部落在 `writeLedger` 登记的 41 张表上，`go test -count=1 -v -run TestStoreWritesOnlyTablesItOwns ./internal/store/`
+   会把三个数打印出来）：按 `*DB` 接收者当场数的**大水面（第四十刀后复测）**是
+   **`conversation.go 42 / rbac.go 40 / monitor.go 22 / project.go 10 / database.go 10 / project_stats.go 3 / storage_activity.go 2 / plantask.go 2 / tool_guard_migration.go 1 / project_dashboard.go 1`**，
    复现命令：`for f in internal/database/*.go; do case "$f" in *_test.go) continue;; esac; n=$(grep -cE '^func \([a-zA-Z_]+ \*DB\)' "$f"); [ "$n" -gt 0 ] && printf "%4d %s\n" "$n" "$f"; done | sort -rn`，
-   **合计 262**（`TestDatabaseSurfaceOnlyShrinks` 的上限就是它，只降不升）。
+   **合计 133**（`TestDatabaseSurfaceOnlyShrinks` 的上限就是它，只降不升）。
    **黑板这一族已经彻底交完（第二十七刀（一）～（四））**：SQL 与两张表的 DDL 在 `store.Facts` 里，
    `ProjectFactStore` 已劈成 `ProjectRowStore`（`*DB` 答）与 `BlackboardLedger`（`*store.Facts` 答），
    `facts_store.go` 那 18 个一行式转发全部删除，水位 259 → **241**。
    复现"账本不再经过连接包装"：
    `grep -rn '\.db\.\(UpsertProjectFact\|ListProjectFacts\|AddProjectFactEdge\)' internal --include='*.go' | wc -l` → **0**。
    **下一轮按域切的候选（按实测族大小挑，别再照文档里的旧数字）**：
-   `conversation.go` 48、`c2.go` 47、`rbac.go` 40、`monitor.go` 22、`batch_task.go` 22、`database.go` 18
-   （里面全是开机接线，不是域方法）、`asset.go` 17、`webshell.go` 7。
-   其中 `tool_execution_args_lookup.go`(1) 与 `tool_guard_migration.go`(1) 是两个"整文件就一个方法"的
+   `conversation.go` 42、`rbac.go` 40、`monitor.go` 22、`project.go` 10、`database.go` 10
+   （里面全是开机接线，不是域方法）。
+   其中 `tool_guard_migration.go`(1) 是最后一个"整文件就一个方法"的
    最快收口；`storage_activity.go` / `plantask.go` / `project_dashboard.go` 读的是**别人家**的表，
    按"以表定主人"要随会话与项目那两片一起走，先搬只会造出第二个写者。
+   C2 域（第四十刀）已整片交完：六张表的 SQL、DDL、补列与十四条索引都在 `store.C2`，
+   `internal/c2` 与两个 MCP 工具面经 `Manager.C2()` 取它；`Manager.DB()` 只剩 RBAC / 会话 / payload
+   三个还没轮到搬迁的去处，点过名。
    动手前先做调用点盘点（`grep -rlE '\.db\.(<该族方法名>)' internal cmd | grep -v _test`）：
    本会话里每一片真正的成本都在"这个方法的接收者还逃逸进谁的签名"，不在 SQL 本身。第十六刀之后发现的那条**排序约束**仍然成立（它现在是判据，不再是待办）：
    `vulnerability_alert_subscriptions` + `vulnerability_alert_deliveries` 这两张表（8 个方法）**不能**
@@ -3219,8 +3296,8 @@ origin  https://github.com/AIPentest/CyberStrikeAI.git  # 上游父仓库，只�
    所以漏洞域必须**一次搬两个文件**（19 个方法、`store.Vulnerability` 已在位、只差行结构体与 3 个消费者），
    搬完才能把 `robot_user_bindings` 补进归属清单。**这条已照做并交完**（第二十一至二十三刀）：
    `vulnerabilities`、告警两张表与 `robot_user_bindings` 都在归属清单里，`c2_payload.go` 也已并进 store。
-   其余小文件里 `tool_execution_args_lookup.go`(1) / `tool_guard_migration.go`(1)
-   是最后两个"单域小文件"，各 1 个方法即可整文件删掉；
+   其余小文件里 `tool_guard_migration.go`(1) 是最后一个"单域小文件"，
+   1 个方法即可整文件删掉；
    `storage_activity.go` / `plantask.go` / `project_dashboard.go` 读的是**别人家**的表
    （conversations / projects / process_details），按"以表定主人"应当随会话与项目那两片一起走，
    先搬只会造出第二个写者。

@@ -396,139 +396,140 @@ func TestRBACWebshellAndBatchListAccess(t *testing.T) {
 
 func TestRBACC2AccessInheritsListener(t *testing.T) {
 	db := newRBACTestDB(t)
+	c2store := NewC2(db)
 	now := time.Now()
-	l1 := &C2Listener{ID: "l_visible", ProjectID: "p1", Name: "visible", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9001, OwnerUserID: "u1", CreatedAt: now}
-	l2 := &C2Listener{ID: "l_hidden", ProjectID: "p2", Name: "hidden", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9002, OwnerUserID: "u2", CreatedAt: now}
-	l3 := &C2Listener{ID: "l_other_project", ProjectID: "p2", Name: "other project", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9003, OwnerUserID: "u1", CreatedAt: now}
-	l4 := &C2Listener{ID: "l_unbound", Name: "unbound", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9004, OwnerUserID: "u1", CreatedAt: now}
-	if err := db.CreateC2Listener(l1); err != nil {
+	l1 := &store.C2Listener{ID: "l_visible", ProjectID: "p1", Name: "visible", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9001, OwnerUserID: "u1", CreatedAt: now}
+	l2 := &store.C2Listener{ID: "l_hidden", ProjectID: "p2", Name: "hidden", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9002, OwnerUserID: "u2", CreatedAt: now}
+	l3 := &store.C2Listener{ID: "l_other_project", ProjectID: "p2", Name: "other project", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9003, OwnerUserID: "u1", CreatedAt: now}
+	l4 := &store.C2Listener{ID: "l_unbound", Name: "unbound", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9004, OwnerUserID: "u1", CreatedAt: now}
+	if err := c2store.CreateC2Listener(l1); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateC2Listener(l2); err != nil {
+	if err := c2store.CreateC2Listener(l2); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateC2Listener(l3); err != nil {
+	if err := c2store.CreateC2Listener(l3); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateC2Listener(l4); err != nil {
+	if err := c2store.CreateC2Listener(l4); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertC2Session(&C2Session{ID: "s_visible", ListenerID: l1.ID, ImplantUUID: "implant-visible", Status: "active", FirstSeenAt: now, LastCheckIn: now}); err != nil {
+	if err := c2store.UpsertC2Session(&store.C2Session{ID: "s_visible", ListenerID: l1.ID, ImplantUUID: "implant-visible", Status: "active", FirstSeenAt: now, LastCheckIn: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertC2Session(&C2Session{ID: "s_hidden", ListenerID: l2.ID, ImplantUUID: "implant-hidden", Status: "active", FirstSeenAt: now, LastCheckIn: now}); err != nil {
+	if err := c2store.UpsertC2Session(&store.C2Session{ID: "s_hidden", ListenerID: l2.ID, ImplantUUID: "implant-hidden", Status: "active", FirstSeenAt: now, LastCheckIn: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertC2Session(&C2Session{ID: "s_other_project", ListenerID: l3.ID, ImplantUUID: "implant-other-project", Status: "active", FirstSeenAt: now, LastCheckIn: now}); err != nil {
+	if err := c2store.UpsertC2Session(&store.C2Session{ID: "s_other_project", ListenerID: l3.ID, ImplantUUID: "implant-other-project", Status: "active", FirstSeenAt: now, LastCheckIn: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.UpsertC2Session(&C2Session{ID: "s_unbound", ListenerID: l4.ID, ImplantUUID: "implant-unbound", Status: "active", FirstSeenAt: now, LastCheckIn: now}); err != nil {
+	if err := c2store.UpsertC2Session(&store.C2Session{ID: "s_unbound", ListenerID: l4.ID, ImplantUUID: "implant-unbound", Status: "active", FirstSeenAt: now, LastCheckIn: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateC2Task(&C2Task{ID: "t_visible", SessionID: "s_visible", TaskType: "shell", Status: "queued", CreatedAt: now}); err != nil {
+	if err := c2store.CreateC2Task(&store.C2Task{ID: "t_visible", SessionID: "s_visible", TaskType: "shell", Status: "queued", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateC2Task(&C2Task{ID: "t_hidden", SessionID: "s_hidden", TaskType: "shell", Status: "queued", CreatedAt: now}); err != nil {
+	if err := c2store.CreateC2Task(&store.C2Task{ID: "t_hidden", SessionID: "s_hidden", TaskType: "shell", Status: "queued", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateC2Task(&C2Task{ID: "t_other_project", SessionID: "s_other_project", TaskType: "shell", Status: "queued", CreatedAt: now}); err != nil {
+	if err := c2store.CreateC2Task(&store.C2Task{ID: "t_other_project", SessionID: "s_other_project", TaskType: "shell", Status: "queued", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateC2Task(&C2Task{ID: "t_unbound", SessionID: "s_unbound", TaskType: "shell", Status: "queued", CreatedAt: now}); err != nil {
+	if err := c2store.CreateC2Task(&store.C2Task{ID: "t_unbound", SessionID: "s_unbound", TaskType: "shell", Status: "queued", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AppendC2Event(&C2Event{ID: "e_visible", Level: "info", Category: "task", SessionID: "s_visible", TaskID: "t_visible", Message: "visible", CreatedAt: now}); err != nil {
+	if err := c2store.AppendC2Event(&store.C2Event{ID: "e_visible", Level: "info", Category: "task", SessionID: "s_visible", TaskID: "t_visible", Message: "visible", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AppendC2Event(&C2Event{ID: "e_hidden", Level: "info", Category: "task", SessionID: "s_hidden", TaskID: "t_hidden", Message: "hidden", CreatedAt: now}); err != nil {
+	if err := c2store.AppendC2Event(&store.C2Event{ID: "e_hidden", Level: "info", Category: "task", SessionID: "s_hidden", TaskID: "t_hidden", Message: "hidden", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AppendC2Event(&C2Event{ID: "e_other_project", Level: "info", Category: "task", SessionID: "s_other_project", TaskID: "t_other_project", Message: "other project", CreatedAt: now}); err != nil {
+	if err := c2store.AppendC2Event(&store.C2Event{ID: "e_other_project", Level: "info", Category: "task", SessionID: "s_other_project", TaskID: "t_other_project", Message: "other project", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AppendC2Event(&C2Event{ID: "e_unbound", Level: "info", Category: "task", SessionID: "s_unbound", TaskID: "t_unbound", Message: "unbound", CreatedAt: now}); err != nil {
+	if err := c2store.AppendC2Event(&store.C2Event{ID: "e_unbound", Level: "info", Category: "task", SessionID: "s_unbound", TaskID: "t_unbound", Message: "unbound", CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 
 	access := store.Access{UserID: "u1", Scope: store.ScopeOwn}
-	listeners, err := db.ListC2ListenersForAccess(access, "")
+	listeners, err := c2store.ListC2ListenersForAccess(access, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(listeners) != 3 {
 		t.Fatalf("listeners = %#v, want 3 owned listeners including unbound", listeners)
 	}
-	listeners, err = db.ListC2ListenersForAccess(access, "p1")
+	listeners, err = c2store.ListC2ListenersForAccess(access, "p1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(listeners) != 1 || listeners[0].ID != l1.ID {
 		t.Fatalf("listeners scoped to p1 = %#v, want only %s", listeners, l1.ID)
 	}
-	listeners, err = db.ListC2ListenersForAccess(access, store.ProjectUnbound)
+	listeners, err = c2store.ListC2ListenersForAccess(access, store.ProjectUnbound)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(listeners) != 1 || listeners[0].ID != l4.ID {
 		t.Fatalf("unbound listeners = %#v, want only %s", listeners, l4.ID)
 	}
-	sessions, err := db.ListC2SessionsForAccess(ListC2SessionsFilter{}, access)
+	sessions, err := c2store.ListC2SessionsForAccess(store.ListC2SessionsFilter{}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(sessions) != 3 {
 		t.Fatalf("sessions = %#v, want 3 owned sessions including unbound", sessions)
 	}
-	sessions, err = db.ListC2SessionsForAccess(ListC2SessionsFilter{ProjectID: "p1"}, access)
+	sessions, err = c2store.ListC2SessionsForAccess(store.ListC2SessionsFilter{ProjectID: "p1"}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(sessions) != 1 || sessions[0].ID != "s_visible" {
 		t.Fatalf("sessions scoped to p1 = %#v, want only s_visible", sessions)
 	}
-	sessions, err = db.ListC2SessionsForAccess(ListC2SessionsFilter{ProjectID: store.ProjectUnbound}, access)
+	sessions, err = c2store.ListC2SessionsForAccess(store.ListC2SessionsFilter{ProjectID: store.ProjectUnbound}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(sessions) != 1 || sessions[0].ID != "s_unbound" {
 		t.Fatalf("unbound sessions = %#v, want only s_unbound", sessions)
 	}
-	tasks, err := db.ListC2TasksForAccess(ListC2TasksFilter{}, access)
+	tasks, err := c2store.ListC2TasksForAccess(store.ListC2TasksFilter{}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(tasks) != 3 {
 		t.Fatalf("tasks = %#v, want 3 owned tasks including unbound", tasks)
 	}
-	tasks, err = db.ListC2TasksForAccess(ListC2TasksFilter{ProjectID: "p1"}, access)
+	tasks, err = c2store.ListC2TasksForAccess(store.ListC2TasksFilter{ProjectID: "p1"}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(tasks) != 1 || tasks[0].ID != "t_visible" {
 		t.Fatalf("tasks scoped to p1 = %#v, want only t_visible", tasks)
 	}
-	tasks, err = db.ListC2TasksForAccess(ListC2TasksFilter{ProjectID: store.ProjectUnbound}, access)
+	tasks, err = c2store.ListC2TasksForAccess(store.ListC2TasksFilter{ProjectID: store.ProjectUnbound}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(tasks) != 1 || tasks[0].ID != "t_unbound" {
 		t.Fatalf("unbound tasks = %#v, want only t_unbound", tasks)
 	}
-	events, err := db.ListC2EventsForAccess(ListC2EventsFilter{}, access)
+	events, err := c2store.ListC2EventsForAccess(store.ListC2EventsFilter{}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(events) != 3 {
 		t.Fatalf("events = %#v, want 3 owned events including unbound", events)
 	}
-	events, err = db.ListC2EventsForAccess(ListC2EventsFilter{ProjectID: "p1"}, access)
+	events, err = c2store.ListC2EventsForAccess(store.ListC2EventsFilter{ProjectID: "p1"}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(events) != 1 || events[0].ID != "e_visible" {
 		t.Fatalf("events scoped to p1 = %#v, want only e_visible", events)
 	}
-	events, err = db.ListC2EventsForAccess(ListC2EventsFilter{ProjectID: store.ProjectUnbound}, access)
+	events, err = c2store.ListC2EventsForAccess(store.ListC2EventsFilter{ProjectID: store.ProjectUnbound}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -545,15 +546,16 @@ func TestRBACC2AccessInheritsListener(t *testing.T) {
 
 func TestRBACC2AssignedDeleteIsScoped(t *testing.T) {
 	db := newRBACTestDB(t)
+	c2store := NewC2(db)
 	user, err := db.CreateRBACUser("u1", "User 1", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	if err := db.CreateC2Listener(&C2Listener{ID: "l_assigned", Name: "assigned", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9001, CreatedAt: now}); err != nil {
+	if err := c2store.CreateC2Listener(&store.C2Listener{ID: "l_assigned", Name: "assigned", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9001, CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateC2Listener(&C2Listener{ID: "l_hidden", Name: "hidden", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9002, CreatedAt: now}); err != nil {
+	if err := c2store.CreateC2Listener(&store.C2Listener{ID: "l_hidden", Name: "hidden", Type: "http_beacon", BindHost: "127.0.0.1", BindPort: 9002, CreatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.AssignResourceToUser(user.ID, "c2_listener", "l_assigned"); err != nil {
@@ -568,35 +570,35 @@ func TestRBACC2AssignedDeleteIsScoped(t *testing.T) {
 		{"s_assigned", "l_assigned", "t_assigned", "e_assigned"},
 		{"s_hidden", "l_hidden", "t_hidden", "e_hidden"},
 	} {
-		if err := db.UpsertC2Session(&C2Session{ID: row.sessionID, ListenerID: row.listener, ImplantUUID: row.sessionID + "_uuid", Status: "active", FirstSeenAt: now, LastCheckIn: now}); err != nil {
+		if err := c2store.UpsertC2Session(&store.C2Session{ID: row.sessionID, ListenerID: row.listener, ImplantUUID: row.sessionID + "_uuid", Status: "active", FirstSeenAt: now, LastCheckIn: now}); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.CreateC2Task(&C2Task{ID: row.taskID, SessionID: row.sessionID, TaskType: "shell", Status: "queued", CreatedAt: now}); err != nil {
+		if err := c2store.CreateC2Task(&store.C2Task{ID: row.taskID, SessionID: row.sessionID, TaskType: "shell", Status: "queued", CreatedAt: now}); err != nil {
 			t.Fatal(err)
 		}
-		if err := db.AppendC2Event(&C2Event{ID: row.eventID, Level: "info", Category: "task", SessionID: row.sessionID, TaskID: row.taskID, Message: row.eventID, CreatedAt: now}); err != nil {
+		if err := c2store.AppendC2Event(&store.C2Event{ID: row.eventID, Level: "info", Category: "task", SessionID: row.sessionID, TaskID: row.taskID, Message: row.eventID, CreatedAt: now}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	access := store.Access{UserID: user.ID, Scope: RBACScopeAssigned}
-	n, err := db.DeleteC2TasksByIDsForAccess([]string{"t_assigned", "t_hidden"}, access)
+	n, err := c2store.DeleteC2TasksByIDsForAccess([]string{"t_assigned", "t_hidden"}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
 		t.Fatalf("deleted tasks = %d, want 1", n)
 	}
-	if task, _ := db.GetC2Task("t_hidden"); task == nil {
+	if task, _ := c2store.GetC2Task("t_hidden"); task == nil {
 		t.Fatalf("hidden task was deleted")
 	}
-	n, err = db.DeleteC2EventsByIDsForAccess([]string{"e_assigned", "e_hidden"}, access)
+	n, err = c2store.DeleteC2EventsByIDsForAccess([]string{"e_assigned", "e_hidden"}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
 		t.Fatalf("deleted events = %d, want 1", n)
 	}
-	hiddenEvents, err := db.ListC2Events(ListC2EventsFilter{TaskID: "t_hidden"})
+	hiddenEvents, err := c2store.ListC2EventsForAccess(store.ListC2EventsFilter{TaskID: "t_hidden"}, store.Access{Scope: store.ScopeAll})
 	if err != nil {
 		t.Fatal(err)
 	}

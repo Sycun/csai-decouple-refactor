@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -26,6 +27,7 @@ import (
 // 实例化由 internal/app 负责，注入到全局 App 之后再分别交给 handler / mcp.
 type Manager struct {
 	db       *database.DB
+	c2       *store.C2
 	logger   *zap.Logger
 	bus      *EventBus
 	registry *ListenerRegistry
@@ -68,8 +70,8 @@ type HITLApprovalRequest struct {
 
 // Hooks 给上层（漏洞管理 / 攻击链）注入回调
 type Hooks struct {
-	OnSessionFirstSeen func(session *database.C2Session)             // 新会话首次上线
-	OnTaskCompleted    func(task *database.C2Task, sessionID string) // 任务完成（success/failed）
+	OnSessionFirstSeen func(session *store.C2Session)             // 新会话首次上线
+	OnTaskCompleted    func(task *store.C2Task, sessionID string) // 任务完成（success/failed）
 }
 
 // NewManager 创建 Manager；不会启动任何 listener，请显式调 RestoreRunningListeners
@@ -82,6 +84,7 @@ func NewManager(db *database.DB, logger *zap.Logger, storageDir string) *Manager
 	}
 	return &Manager{
 		db:               db,
+		c2:               database.NewC2(db),
 		logger:           logger,
 		bus:              NewEventBus(),
 		registry:         NewListenerRegistry(),
@@ -115,8 +118,12 @@ func (m *Manager) SetHooks(h Hooks) {
 // EventBus 暴露事件总线给 SSE handler
 func (m *Manager) EventBus() *EventBus { return m.bus }
 
-// DB 暴露 DB 句柄给 handler/mcptools 直接读写（避免到处包装）
+// DB 暴露连接包装，供 handler/mcptools 调用还没轮到搬迁的域（RBAC 归属、会话的项目查询、
+// payload 落盘记录等）。C2 六张表一律走 C2()，不要再从这里穿。
 func (m *Manager) DB() *database.DB { return m.db }
+
+// C2 暴露 C2 域存储：监听器 / 会话 / 任务 / 文件 / 事件 / Profile 六张表的读写都在它上面。
+func (m *Manager) C2() *store.C2 { return m.c2 }
 
 // Logger 暴露日志句柄
 func (m *Manager) Logger() *zap.Logger { return m.logger }
@@ -161,7 +168,7 @@ type CreateListenerInput struct {
 }
 
 // CreateListener 校验并落库；不自动启动（与 systemd unit 一致：先创建后启动）
-func (m *Manager) CreateListener(in CreateListenerInput) (*database.C2Listener, error) {
+func (m *Manager) CreateListener(in CreateListenerInput) (*store.C2Listener, error) {
 	if strings.TrimSpace(in.Name) == "" {
 		return nil, ErrInvalidInput
 	}
@@ -199,7 +206,7 @@ func (m *Manager) CreateListener(in CreateListenerInput) (*database.C2Listener, 
 		return nil, fmt.Errorf("generate token: %w", err)
 	}
 
-	listener := &database.C2Listener{
+	listener := &store.C2Listener{
 		ID:            "l_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:14],
 		ProjectID:     strings.TrimSpace(in.ProjectID),
 		Name:          strings.TrimSpace(in.Name),
@@ -214,7 +221,7 @@ func (m *Manager) CreateListener(in CreateListenerInput) (*database.C2Listener, 
 		Remark:        strings.TrimSpace(in.Remark),
 		CreatedAt:     time.Now(),
 	}
-	if err := m.db.CreateC2Listener(listener); err != nil {
+	if err := m.c2.CreateC2Listener(listener); err != nil {
 		return nil, err
 	}
 	m.publishEvent("info", "listener", "", "", fmt.Sprintf("监听器 %s 已创建", listener.Name), map[string]interface{}{
@@ -225,8 +232,8 @@ func (m *Manager) CreateListener(in CreateListenerInput) (*database.C2Listener, 
 }
 
 // StartListener 启动指定 listener；幂等（已运行时返回 ErrListenerRunning）
-func (m *Manager) StartListener(id string) (*database.C2Listener, error) {
-	rec, err := m.db.GetC2Listener(id)
+func (m *Manager) StartListener(id string) (*store.C2Listener, error) {
+	rec, err := m.c2.GetC2Listener(id)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +271,7 @@ func (m *Manager) StartListener(id string) (*database.C2Listener, error) {
 	}
 	if err := inst.Start(); err != nil {
 		now := time.Now()
-		_ = m.db.SetC2ListenerStatus(rec.ID, "error", err.Error(), &now)
+		_ = m.c2.SetC2ListenerStatus(rec.ID, "error", err.Error(), &now)
 		m.publishEvent("warn", "listener", "", "", fmt.Sprintf("监听器 %s 启动失败: %v", rec.Name, err), map[string]interface{}{
 			"listener_id": rec.ID,
 		})
@@ -274,7 +281,7 @@ func (m *Manager) StartListener(id string) (*database.C2Listener, error) {
 	m.runningListeners[rec.ID] = inst
 	m.mu.Unlock()
 	now := time.Now()
-	_ = m.db.SetC2ListenerStatus(rec.ID, "running", "", &now)
+	_ = m.c2.SetC2ListenerStatus(rec.ID, "running", "", &now)
 	rec.Status = "running"
 	rec.StartedAt = &now
 	rec.LastError = ""
@@ -299,8 +306,8 @@ func (m *Manager) StopListener(id string) error {
 	if err := inst.Stop(); err != nil {
 		return err
 	}
-	_ = m.db.SetC2ListenerStatus(id, "stopped", "", nil)
-	rec, _ := m.db.GetC2Listener(id)
+	_ = m.c2.SetC2ListenerStatus(id, "stopped", "", nil)
+	rec, _ := m.c2.GetC2Listener(id)
 	name := id
 	if rec != nil {
 		name = rec.Name
@@ -314,7 +321,7 @@ func (m *Manager) StopListener(id string) error {
 // DeleteListener 停止并删除（级联 sessions/tasks/files）
 func (m *Manager) DeleteListener(id string) error {
 	_ = m.StopListener(id)
-	return m.db.DeleteC2Listener(id)
+	return m.c2.DeleteC2Listener(id)
 }
 
 // IsListenerRunning 内存中的运行状态（DB 中的 status 可能因崩溃而过时）
@@ -328,7 +335,7 @@ func (m *Manager) IsListenerRunning(id string) bool {
 // RestoreRunningListeners 启动期把 DB 中 status=running 的 listener 重新拉起；
 // 失败的会被改为 status=error，不会阻塞整个 App 启动。
 func (m *Manager) RestoreRunningListeners() {
-	listeners, err := m.db.ListC2Listeners()
+	listeners, err := m.c2.ListC2Listeners()
 	if err != nil {
 		m.logger.Warn("恢复 C2 listener 失败：列表查询出错", zap.Error(err))
 		return
@@ -351,11 +358,11 @@ func (m *Manager) RestoreRunningListeners() {
 // 行为：
 //  1. 若 implant_uuid 已有会话 → 更新心跳/状态
 //  2. 否则创建新会话，触发 OnSessionFirstSeen 钩子
-func (m *Manager) IngestCheckIn(listenerID string, req ImplantCheckInRequest) (*database.C2Session, error) {
+func (m *Manager) IngestCheckIn(listenerID string, req ImplantCheckInRequest) (*store.C2Session, error) {
 	if strings.TrimSpace(req.ImplantUUID) == "" {
 		return nil, ErrInvalidInput
 	}
-	existing, err := m.db.GetC2SessionByImplantUUID(req.ImplantUUID)
+	existing, err := m.c2.GetC2SessionByImplantUUID(req.ImplantUUID)
 	if err != nil {
 		return nil, err
 	}
@@ -367,7 +374,7 @@ func (m *Manager) IngestCheckIn(listenerID string, req ImplantCheckInRequest) (*
 	} else {
 		sessID = "s_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:14]
 	}
-	session := &database.C2Session{
+	session := &store.C2Session{
 		ID:            sessID,
 		ListenerID:    listenerID,
 		ImplantUUID:   req.ImplantUUID,
@@ -396,7 +403,7 @@ func (m *Manager) IngestCheckIn(listenerID string, req ImplantCheckInRequest) (*
 			session.Note = existing.Note
 		}
 	}
-	if err := m.db.UpsertC2Session(session); err != nil {
+	if err := m.c2.UpsertC2Session(session); err != nil {
 		return nil, err
 	}
 	if isFirstSeen {
@@ -423,7 +430,7 @@ func (m *Manager) IngestCheckIn(listenerID string, req ImplantCheckInRequest) (*
 }
 
 // SetSessionSleep 更新会话期望的心跳间隔，并向植入体下发 sleep 任务以尽快生效。
-func (m *Manager) SetSessionSleep(sessionID string, sleepSeconds, jitterPercent int) (*database.C2Task, error) {
+func (m *Manager) SetSessionSleep(sessionID string, sleepSeconds, jitterPercent int) (*store.C2Task, error) {
 	if strings.TrimSpace(sessionID) == "" {
 		return nil, ErrInvalidInput
 	}
@@ -436,7 +443,7 @@ func (m *Manager) SetSessionSleep(sessionID string, sleepSeconds, jitterPercent 
 	if jitterPercent > 100 {
 		jitterPercent = 100
 	}
-	if err := m.db.SetC2SessionSleep(sessionID, sleepSeconds, jitterPercent); err != nil {
+	if err := m.c2.SetC2SessionSleep(sessionID, sleepSeconds, jitterPercent); err != nil {
 		return nil, err
 	}
 	task, err := m.EnqueueTask(EnqueueTaskInput{
@@ -462,7 +469,7 @@ func (m *Manager) SetSessionSleep(sessionID string, sleepSeconds, jitterPercent 
 
 // MarkSessionDead 心跳超时检测器调用：标记会话为 dead
 func (m *Manager) MarkSessionDead(sessionID string) error {
-	if err := m.db.SetC2SessionStatus(sessionID, string(SessionDead)); err != nil {
+	if err := m.c2.SetC2SessionStatus(sessionID, string(SessionDead)); err != nil {
 		return err
 	}
 	m.publishEvent("warn", "session", sessionID, "", "会话已离线（心跳超时）", nil)
@@ -486,11 +493,11 @@ type EnqueueTaskInput struct {
 
 // EnqueueTask 入队一个新任务；若任务类型危险且未 BypassHITL，且 SetHITLDangerousGate 对当前会话与 MCPToolC2Task 返回 true，才会调 HITL 桥审批。
 // 返回任务记录；任务派发由 PopTasksForBeacon 在 beacon 拉任务时完成。
-func (m *Manager) EnqueueTask(in EnqueueTaskInput) (*database.C2Task, error) {
+func (m *Manager) EnqueueTask(in EnqueueTaskInput) (*store.C2Task, error) {
 	if strings.TrimSpace(in.SessionID) == "" {
 		return nil, ErrInvalidInput
 	}
-	session, err := m.db.GetC2Session(in.SessionID)
+	session, err := m.c2.GetC2Session(in.SessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -528,11 +535,11 @@ func (m *Manager) EnqueueTask(in EnqueueTaskInput) (*database.C2Task, error) {
 	// OPSEC: max_concurrent_tasks enforcement
 	listenerCfg := m.getListenerConfig(session.ListenerID)
 	if listenerCfg != nil && listenerCfg.MaxConcurrentTasks > 0 {
-		activeTasks, _ := m.db.ListC2Tasks(database.ListC2TasksFilter{
+		activeTasks, _ := m.c2.ListC2Tasks(store.ListC2TasksFilter{
 			SessionID: in.SessionID,
 			Status:    string(TaskQueued),
 		})
-		sentTasks, _ := m.db.ListC2Tasks(database.ListC2TasksFilter{
+		sentTasks, _ := m.c2.ListC2Tasks(store.ListC2TasksFilter{
 			SessionID: in.SessionID,
 			Status:    string(TaskSent),
 		})
@@ -547,7 +554,7 @@ func (m *Manager) EnqueueTask(in EnqueueTaskInput) (*database.C2Task, error) {
 	}
 
 	taskID := "t_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:14]
-	task := &database.C2Task{
+	task := &store.C2Task{
 		ID:             taskID,
 		SessionID:      in.SessionID,
 		TaskType:       string(in.TaskType),
@@ -568,7 +575,7 @@ func (m *Manager) EnqueueTask(in EnqueueTaskInput) (*database.C2Task, error) {
 		useBridge := bridge != nil && gate != nil && gate(convID, MCPToolC2Task)
 		if useBridge {
 			task.ApprovalStatus = "pending"
-			if err := m.db.CreateC2Task(task); err != nil {
+			if err := m.c2.CreateC2Task(task); err != nil {
 				return nil, err
 			}
 			m.publishEvent("warn", "task", in.SessionID, taskID, fmt.Sprintf("危险任务待审批: %s", in.TaskType), map[string]interface{}{
@@ -594,7 +601,7 @@ func (m *Manager) EnqueueTask(in EnqueueTaskInput) (*database.C2Task, error) {
 					rejected := "rejected"
 					failed := string(TaskFailed)
 					errMsg := "HITL 拒绝: " + err.Error()
-					_ = m.db.UpdateC2Task(taskID, database.C2TaskUpdate{
+					_ = m.c2.UpdateC2Task(taskID, store.C2TaskUpdate{
 						ApprovalStatus: &rejected,
 						Status:         &failed,
 						Error:          &errMsg,
@@ -603,7 +610,7 @@ func (m *Manager) EnqueueTask(in EnqueueTaskInput) (*database.C2Task, error) {
 					return
 				}
 				approved := "approved"
-				_ = m.db.UpdateC2Task(taskID, database.C2TaskUpdate{ApprovalStatus: &approved})
+				_ = m.c2.UpdateC2Task(taskID, store.C2TaskUpdate{ApprovalStatus: &approved})
 				m.publishEvent("info", "task", in.SessionID, taskID, "危险任务已批准", nil)
 			}()
 			return task, nil
@@ -612,7 +619,7 @@ func (m *Manager) EnqueueTask(in EnqueueTaskInput) (*database.C2Task, error) {
 		task.ApprovalStatus = "approved"
 	}
 
-	if err := m.db.CreateC2Task(task); err != nil {
+	if err := m.c2.CreateC2Task(task); err != nil {
 		return nil, err
 	}
 	m.publishEvent("info", "task", in.SessionID, taskID, fmt.Sprintf("任务已入队: %s", in.TaskType), map[string]interface{}{
@@ -625,7 +632,7 @@ func (m *Manager) EnqueueTask(in EnqueueTaskInput) (*database.C2Task, error) {
 
 // CancelTask 取消队列中的任务（已 sent/running 的暂不支持回滚）
 func (m *Manager) CancelTask(taskID string) error {
-	t, err := m.db.GetC2Task(taskID)
+	t, err := m.c2.GetC2Task(taskID)
 	if err != nil {
 		return err
 	}
@@ -637,7 +644,7 @@ func (m *Manager) CancelTask(taskID string) error {
 	}
 	cancelled := string(TaskCancelled)
 	now := time.Now()
-	if err := m.db.UpdateC2Task(taskID, database.C2TaskUpdate{Status: &cancelled, CompletedAt: &now}); err != nil {
+	if err := m.c2.UpdateC2Task(taskID, store.C2TaskUpdate{Status: &cancelled, CompletedAt: &now}); err != nil {
 		return err
 	}
 	m.publishEvent("info", "task", t.SessionID, taskID, "任务已取消", nil)
@@ -647,7 +654,7 @@ func (m *Manager) CancelTask(taskID string) error {
 // PopTasksForBeacon beacon check_in 后调用：取该会话所有 queued+approved 的任务，
 // 内部已置为 sent；返回 TaskEnvelope，便于 listener 直接编码下发。
 func (m *Manager) PopTasksForBeacon(sessionID string, limit int) ([]TaskEnvelope, error) {
-	tasks, err := m.db.PopQueuedC2Tasks(sessionID, limit)
+	tasks, err := m.c2.PopQueuedC2Tasks(sessionID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -663,7 +670,7 @@ func (m *Manager) IngestTaskResult(report TaskResultReport) error {
 	if strings.TrimSpace(report.TaskID) == "" {
 		return ErrInvalidInput
 	}
-	t, err := m.db.GetC2Task(report.TaskID)
+	t, err := m.c2.GetC2Task(report.TaskID)
 	if err != nil {
 		return err
 	}
@@ -687,13 +694,13 @@ func (m *Manager) IngestTaskResult(report TaskResultReport) error {
 	duration := endedAt.Sub(startedAt).Milliseconds()
 
 	sessionOS := ""
-	if sess, serr := m.db.GetC2Session(t.SessionID); serr == nil && sess != nil {
+	if sess, serr := m.c2.GetC2Session(t.SessionID); serr == nil && sess != nil {
 		sessionOS = sess.OS
 	}
 	resultText := ResolveTaskResultText(report.Output, report.OutputB64, sessionOS)
 	errText := ResolveTaskResultText(report.Error, report.ErrorB64, sessionOS)
 
-	upd := database.C2TaskUpdate{
+	upd := store.C2TaskUpdate{
 		Status:      &status,
 		ResultText:  &resultText,
 		Error:       &errText,
@@ -712,7 +719,7 @@ func (m *Manager) IngestTaskResult(report TaskResultReport) error {
 		}
 	}
 
-	if err := m.db.UpdateC2Task(t.ID, upd); err != nil {
+	if err := m.c2.UpdateC2Task(t.ID, upd); err != nil {
 		return err
 	}
 	t.Status = status
@@ -823,7 +830,7 @@ func ensurePathInDir(dir, path string) error {
 func (m *Manager) publishEvent(level, category, sessionID, taskID, message string, data map[string]interface{}) {
 	id := "e_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:14]
 	now := time.Now()
-	e := &database.C2Event{
+	e := &store.C2Event{
 		ID:        id,
 		Level:     level,
 		Category:  category,
@@ -833,7 +840,7 @@ func (m *Manager) publishEvent(level, category, sessionID, taskID, message strin
 		Data:      data,
 		CreatedAt: now,
 	}
-	if err := m.db.AppendC2Event(e); err != nil {
+	if err := m.c2.AppendC2Event(e); err != nil {
 		m.logger.Warn("写 C2 事件失败", zap.Error(err), zap.String("category", category))
 	}
 	m.bus.Publish(&Event{
@@ -866,7 +873,7 @@ func strOr(s, def string) string {
 
 // getListenerConfig loads and parses the listener's config JSON from DB.
 func (m *Manager) getListenerConfig(listenerID string) *ListenerConfig {
-	listener, err := m.db.GetC2Listener(listenerID)
+	listener, err := m.c2.GetC2Listener(listenerID)
 	if err != nil || listener == nil {
 		return nil
 	}
@@ -878,9 +885,9 @@ func (m *Manager) getListenerConfig(listenerID string) *ListenerConfig {
 }
 
 // GetProfile loads a C2Profile from DB by ID.
-func (m *Manager) GetProfile(profileID string) (*database.C2Profile, error) {
+func (m *Manager) GetProfile(profileID string) (*store.C2Profile, error) {
 	if strings.TrimSpace(profileID) == "" {
 		return nil, nil
 	}
-	return m.db.GetC2Profile(profileID)
+	return m.c2.GetC2Profile(profileID)
 }

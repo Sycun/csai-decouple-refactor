@@ -91,9 +91,6 @@ var _ AttackChainStore = (*DB)(nil)
 // one thing. The findings lookup is absent for the same reason - it is store.Vulnerabilities.Get.
 type ResourceExistence interface {
 	ConversationExists(id string) (bool, error)
-	GetC2Listener(id string) (*C2Listener, error)
-	GetC2Session(id string) (*C2Session, error)
-	GetC2Task(id string) (*C2Task, error)
 	GetToolExecution(id string) (*mcp.ToolExecution, error)
 }
 
@@ -173,7 +170,6 @@ var _ MonitorStore = (*DB)(nil)
 
 // NotificationStore is the persistence surface required by NotificationHandler.
 type NotificationStore interface {
-	ListC2EventsForAccess(filter ListC2EventsFilter, access store.Access) ([]*C2Event, error)
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 	Begin() (*sql.Tx, error)
 	Query(query string, args ...any) (*sql.Rows, error)

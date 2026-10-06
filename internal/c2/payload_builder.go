@@ -75,7 +75,7 @@ type BuildResult struct {
 
 // BuildBeacon 交叉编译生成 beacon 二进制
 func (b *PayloadBuilder) BuildBeacon(in PayloadBuilderInput) (*BuildResult, error) {
-	listener, err := b.manager.DB().GetC2Listener(in.ListenerID)
+	listener, err := b.manager.C2().GetC2Listener(in.ListenerID)
 	if err != nil {
 		return nil, fmt.Errorf("get listener: %w", err)
 	}

@@ -20,6 +20,9 @@ type NotificationHandler struct {
 	db           database.NotificationStore
 	agentHandler *AgentHandler
 	logger       *zap.Logger
+	// c2 is the beacon ledger this digest reads events from. The query lives with the table's owner,
+	// so this handler holds store.C2 instead of asking the connection wrapper.
+	c2 *store.C2
 	// reads owns notification_reads_by_user. The handler builds no SQL for it.
 	reads notificationReadStore
 	// hitl is the approval queue this surface reports on; the interrupt table
@@ -96,6 +99,7 @@ func NewNotificationHandler(db *database.DB, agentHandler *AgentHandler, logger 
 		handler.hitl = store.NewHITL(db.DB)
 		handler.findings = store.NewVulnerabilities(db.DB, nil)
 		handler.failedRuns = store.NewExecution(db.DB)
+		handler.c2 = database.NewC2(db)
 	}
 	return handler
 }
@@ -280,7 +284,7 @@ func (h *NotificationHandler) loadVulnerabilityItems(sinceMs int64, limit int, e
 // loadC2SessionOnlineEvents 新会话上线（c2_events：session + critical，与 Manager.IngestCheckIn 一致）
 func (h *NotificationHandler) loadC2SessionOnlineEvents(sinceMs int64, limit int, english bool, access store.Access) ([]NotificationSummaryItem, int, error) {
 	sinceSec := normalizedSinceSec(sinceMs)
-	events, err := h.db.ListC2EventsForAccess(database.ListC2EventsFilter{
+	events, err := h.c2.ListC2EventsForAccess(store.ListC2EventsFilter{
 		Category: "session",
 		Level:    "critical",
 		Since:    ptrTime(time.Unix(sinceSec, 0)),

@@ -193,7 +193,13 @@ var writeLedger = map[string][]string{
 	"audit_logs":                        {"audit_logs.go"},
 	"capability_unit_switches":          {"capability_switches.go"},
 	"chat_upload_artifacts":             {"chat_upload.go"},
+	"c2_events":                         {"c2.go"},
+	"c2_files":                          {"c2.go"},
+	"c2_listeners":                      {"c2.go"},
 	"c2_payload_artifacts":              {"c2_payload.go"},
+	"c2_profiles":                       {"c2.go"},
+	"c2_sessions":                       {"c2.go"},
+	"c2_tasks":                          {"c2.go"},
 	"hitl_conversation_configs":         {"hitl_lifecycle.go"},
 	"hitl_interrupts":                   {"hitl.go", "hitl_lifecycle.go"},
 	"knowledge_base_items":              {"knowledge_items.go"},
@@ -288,9 +294,10 @@ func TestStoreWritesOnlyTablesItOwns(t *testing.T) {
 	// The ledger size is exact while the scan's coverage is a floor: this package grows as domains are
 	// extracted, but every added table has to be an intentional edit with a file behind it. A floor on
 	// the ledger would let a failing offender be silenced by listing the table it names.
-	if len(writeLedger) != 35 {
-		t.Fatalf("the write ledger lists %d tables, want exactly 35 - measured 2026-10-06 when the blackboard "+
-			"arrived: %d statements over %d tables from %d files", len(writeLedger), statements, distinct, len(writes))
+	if len(writeLedger) != 41 {
+		t.Fatalf("the write ledger lists %d tables, want exactly 41 - 35 measured 2026-10-06 when the blackboard "+
+			"arrived, 41 after the C2 ledger of six tables joined on 2026-10-07: %d statements over %d tables "+
+			"from %d files", len(writeLedger), statements, distinct, len(writes))
 	}
 	if len(writes) < 20 {
 		t.Fatalf("write ledger covers %d files, want at least 20 - the scan has gone blind", len(writes))

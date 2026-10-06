@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -44,7 +45,7 @@ func TestHTTPBeaconListener_CheckInMatrix(t *testing.T) {
 	token := "test-implant-token-fixed"
 
 	lid := "l_testhttpbeacon01"
-	rec := &database.C2Listener{
+	rec := &store.C2Listener{
 		ID:            lid,
 		Name:          "t",
 		Type:          string(ListenerTypeHTTPBeacon),
@@ -56,7 +57,7 @@ func TestHTTPBeaconListener_CheckInMatrix(t *testing.T) {
 		ConfigJSON:    `{"beacon_check_in_path":"/check_in"}`,
 		CreatedAt:     time.Now(),
 	}
-	if err := db.CreateC2Listener(rec); err != nil {
+	if err := store.NewC2(db.DB).CreateC2Listener(rec); err != nil {
 		t.Fatal(err)
 	}
 
@@ -154,7 +155,7 @@ func TestHTTPBeaconListener_HandleFileServe(t *testing.T) {
 	token := "test-implant-token-file"
 
 	lid := "l_testhttpfile01"
-	rec := &database.C2Listener{
+	rec := &store.C2Listener{
 		ID:            lid,
 		Name:          "t",
 		Type:          string(ListenerTypeHTTPBeacon),
@@ -166,12 +167,12 @@ func TestHTTPBeaconListener_HandleFileServe(t *testing.T) {
 		ConfigJSON:    `{"beacon_file_path":"/file/"}`,
 		CreatedAt:     time.Now(),
 	}
-	if err := db.CreateC2Listener(rec); err != nil {
+	if err := store.NewC2(db.DB).CreateC2Listener(rec); err != nil {
 		t.Fatal(err)
 	}
 
-	store := filepath.Join(tmp, "c2store")
-	m := NewManager(db, zap.NewNop(), store)
+	storageDir := filepath.Join(tmp, "c2store")
+	m := NewManager(db, zap.NewNop(), storageDir)
 	m.Registry().Register(string(ListenerTypeHTTPBeacon), NewHTTPBeaconListener)
 	if _, err := m.StartListener(lid); err != nil {
 		t.Fatal(err)
@@ -179,7 +180,7 @@ func TestHTTPBeaconListener_HandleFileServe(t *testing.T) {
 	t.Cleanup(func() { _ = m.StopListener(lid) })
 
 	fileID := "f_testfile123"
-	downDir := filepath.Join(store, "downstream")
+	downDir := filepath.Join(storageDir, "downstream")
 	if err := os.MkdirAll(downDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -231,18 +232,18 @@ func TestHTTPBeaconListener_HandleFileServe(t *testing.T) {
 
 func TestHTTPBeaconListener_HandleUploadConfinesTaskID(t *testing.T) {
 	tmp := t.TempDir()
-	store := filepath.Join(tmp, "c2store")
+	storageDir := filepath.Join(tmp, "c2store")
 	keyB64, err := GenerateAESKey()
 	if err != nil {
 		t.Fatal(err)
 	}
 	token := "test-implant-token-upload"
 	l := &HTTPBeaconListener{
-		rec: &database.C2Listener{
+		rec: &store.C2Listener{
 			EncryptionKey: keyB64,
 			ImplantToken:  token,
 		},
-		manager: NewManager(nil, zap.NewNop(), store),
+		manager: NewManager(nil, zap.NewNop(), storageDir),
 		logger:  zap.NewNop(),
 	}
 
@@ -259,7 +260,7 @@ func TestHTTPBeaconListener_HandleUploadConfinesTaskID(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%q", rr.Code, rr.Body.String())
 	}
-	got, err := os.ReadFile(filepath.Join(store, "uploads", "t_safe123.bin"))
+	got, err := os.ReadFile(filepath.Join(storageDir, "uploads", "t_safe123.bin"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,7 +281,7 @@ func TestHTTPBeaconListener_HandleUploadConfinesTaskID(t *testing.T) {
 	if evilRR.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%q", evilRR.Code, evilRR.Body.String())
 	}
-	if _, err := os.Stat(filepath.Join(store, "owned.bin")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(storageDir, "owned.bin")); !os.IsNotExist(err) {
 		t.Fatalf("outside file exists or stat failed unexpectedly: %v", err)
 	}
 }
@@ -291,7 +292,7 @@ func TestHTTPBeaconListener_HandleResultRejectsPlaintextJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := &HTTPBeaconListener{
-		rec: &database.C2Listener{
+		rec: &store.C2Listener{
 			EncryptionKey: keyB64,
 			ImplantToken:  "test-implant-token-result",
 		},

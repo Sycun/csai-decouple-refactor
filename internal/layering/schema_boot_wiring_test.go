@@ -107,6 +107,13 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 			anchorReason:     "both blackboard tables have a foreign key onto projects",
 			mustNotChangeSQL: "project_fact",
 		},
+		{
+			storeConstructor: "NewC2",
+			tablePrefix:      "c2_",
+			anchorCall:       "createConversationsTable",
+			anchorReason:     "the six C2 tables only reference each other, so the anchor is any stable earlier boot step (c2_tasks keeps a conversation_id column, but no foreign key onto conversations)",
+			mustNotChangeSQL: "c2_",
+		},
 	}
 
 	root, err := filepath.Abs(filepath.Join("..", ".."))
@@ -269,6 +276,8 @@ func TestMultiPhaseSchemaStepsRunInOrder(t *testing.T) {
 			"the connection row reads columns the backfill adds"},
 		{"NewWorkflows", []string{"EnsureSchema", "MigrateRunsTable"},
 			"the run table reads columns the backfill adds"},
+		{"NewC2", []string{"EnsureSchema", "MigrateListenerColumns", "EnsureIndexes"},
+			"idx_c2_listeners_project_id sits on the column only the backfill creates"},
 	}
 	checked := 0
 	for _, tc := range cases {
@@ -289,8 +298,8 @@ func TestMultiPhaseSchemaStepsRunInOrder(t *testing.T) {
 		}
 		checked++
 	}
-	if checked < 3 {
-		t.Fatalf("only %d multi-phase boot sequences inspected (want 3): the scan has gone blind", checked)
+	if checked < 4 {
+		t.Fatalf("only %d multi-phase boot sequences inspected (want 4): the scan has gone blind", checked)
 	}
 	// A one-phase owner must not quietly grow a second sweep: assets builds table, columns and indexes
 	// inside its own EnsureSchema, so any extra phase call here is a split nobody asked for.

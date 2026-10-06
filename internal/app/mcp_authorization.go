@@ -5,12 +5,13 @@ import (
 	"strings"
 
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 )
 
 // Resource-to-project resolution used by the capability policy adapter. These
 // are data lookups only: every authorization decision goes through
 // internal/capability, so no second decision path can drift.
-func mcpResourceProjectID(db *database.DB, resourceType, resourceID string) (string, bool, error) {
+func mcpResourceProjectID(db *database.DB, c2store *store.C2, resourceType, resourceID string) (string, bool, error) {
 	webshells := database.NewWebshell(db)
 	switch resourceType {
 	case "webshell":
@@ -23,7 +24,7 @@ func mcpResourceProjectID(db *database.DB, resourceType, resourceID string) (str
 		}
 		return strings.TrimSpace(conn.ProjectID), true, nil
 	case "c2_listener":
-		listener, err := db.GetC2Listener(resourceID)
+		listener, err := c2store.GetC2Listener(resourceID)
 		if err != nil {
 			return "", true, err
 		}
@@ -32,37 +33,37 @@ func mcpResourceProjectID(db *database.DB, resourceType, resourceID string) (str
 		}
 		return strings.TrimSpace(listener.ProjectID), true, nil
 	case "c2_session":
-		session, err := db.GetC2Session(resourceID)
+		session, err := c2store.GetC2Session(resourceID)
 		if err != nil {
 			return "", true, err
 		}
 		if session == nil {
 			return "", true, fmt.Errorf("session not found")
 		}
-		return mcpResourceProjectID(db, "c2_listener", session.ListenerID)
+		return mcpResourceProjectID(db, c2store, "c2_listener", session.ListenerID)
 	case "c2_task":
-		task, err := db.GetC2Task(resourceID)
+		task, err := c2store.GetC2Task(resourceID)
 		if err != nil {
 			return "", true, err
 		}
 		if task == nil {
 			return "", true, fmt.Errorf("task not found")
 		}
-		return mcpResourceProjectIDFromC2Session(db, task.SessionID)
+		return mcpResourceProjectIDFromC2Session(db, c2store, task.SessionID)
 	default:
 		return "", false, nil
 	}
 }
 
-func mcpResourceProjectIDFromC2Session(db *database.DB, sessionID string) (string, bool, error) {
-	session, err := db.GetC2Session(sessionID)
+func mcpResourceProjectIDFromC2Session(db *database.DB, c2store *store.C2, sessionID string) (string, bool, error) {
+	session, err := c2store.GetC2Session(sessionID)
 	if err != nil {
 		return "", true, err
 	}
 	if session == nil {
 		return "", true, fmt.Errorf("session not found")
 	}
-	return mcpResourceProjectID(db, "c2_listener", session.ListenerID)
+	return mcpResourceProjectID(db, c2store, "c2_listener", session.ListenerID)
 }
 
 func mcpAuthorizationStrings(args map[string]interface{}, key string) []string {

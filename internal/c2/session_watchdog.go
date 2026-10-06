@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -66,7 +66,7 @@ func (w *SessionWatchdog) Stop() {
 func (w *SessionWatchdog) tick() {
 	now := time.Now()
 	for _, status := range []string{string(SessionActive), string(SessionSleeping)} {
-		sessions, err := w.manager.DB().ListC2Sessions(database.ListC2SessionsFilter{Status: status})
+		sessions, err := w.manager.C2().ListC2Sessions(store.ListC2SessionsFilter{Status: status})
 		if err != nil {
 			w.logger.Warn("watchdog 列表查询失败", zap.Error(err))
 			continue
@@ -82,7 +82,7 @@ func (w *SessionWatchdog) tick() {
 }
 
 // isStale 判断会话是否超时
-func (w *SessionWatchdog) isStale(s *database.C2Session, now time.Time) bool {
+func (w *SessionWatchdog) isStale(s *store.C2Session, now time.Time) bool {
 	// 无心跳记录：以 first_seen_at 兜底
 	last := s.LastCheckIn
 	if last.IsZero() {

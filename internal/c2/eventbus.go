@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Event 是 EventBus 内部传输的事件单元，是 database.C2Event 的"实时投影"。
+// Event 是 EventBus 内部传输的事件单元，是 store.C2Event 的"实时投影"。
 // 区别在于：
 //   - 数据库表保存全部历史，用于审计与列表分页；
 //   - EventBus 只缓存最近 N 条，用于 SSE/WS 实时推送给在线订阅者。

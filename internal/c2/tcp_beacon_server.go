@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -144,7 +144,7 @@ func (l *TCPReverseListener) handleTCPBeaconSession(conn net.Conn, br *bufio.Rea
 				l.logger.Warn("tcp beacon check_in", zap.Error(err))
 				return
 			}
-			queued, _ := l.manager.DB().ListC2Tasks(database.ListC2TasksFilter{
+			queued, _ := l.manager.C2().ListC2Tasks(store.ListC2TasksFilter{
 				SessionID: session.ID,
 				Status:    string(TaskQueued),
 				Limit:     1,
@@ -166,7 +166,7 @@ func (l *TCPReverseListener) handleTCPBeaconSession(conn net.Conn, br *bufio.Rea
 			if err := json.Unmarshal(rawSID, &sessionID); err != nil || sessionID == "" {
 				return
 			}
-			sess, err := l.manager.DB().GetC2Session(sessionID)
+			sess, err := l.manager.C2().GetC2Session(sessionID)
 			if err != nil || sess == nil || sess.ListenerID != l.rec.ID {
 				return
 			}

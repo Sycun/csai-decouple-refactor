@@ -4,7 +4,6 @@ import (
 	"errors"
 	"testing"
 
-	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/store"
 )
@@ -17,20 +16,6 @@ import (
 type stubExistence struct{ exists bool }
 
 func (s stubExistence) ConversationExists(string) (bool, error) { return s.exists, nil }
-
-// The four lookups below only have to exist for the interface to be satisfied; no case asks for
-// those resource types.
-func (s stubExistence) GetC2Listener(string) (*database.C2Listener, error) {
-	return nil, errors.New("not here")
-}
-
-func (s stubExistence) GetC2Session(string) (*database.C2Session, error) {
-	return nil, errors.New("not here")
-}
-
-func (s stubExistence) GetC2Task(string) (*database.C2Task, error) {
-	return nil, errors.New("not here")
-}
 
 func (s stubExistence) GetToolExecution(string) (*mcp.ToolExecution, error) {
 	return nil, errors.New("not here")
@@ -65,7 +50,7 @@ func TestBatchQueueAvailabilityTakesTheRightBranch(t *testing.T) {
 	}
 	for _, tc := range cases {
 		log := &store.AuditLog{Action: "batch_queue.create", ResourceType: "batch_queue", ResourceID: "q1"}
-		ApplyResourceAvailability(stubExistence{}, nil, nil, tc.queues, log)
+		ApplyResourceAvailability(stubExistence{}, nil, nil, nil, tc.queues, log)
 		if got := boolValue(log.ResourceAvailable); got != tc.want {
 			t.Fatalf("%s: ResourceAvailable=%v, want %v (%s)", tc.name, got, tc.want, tc.comment)
 		}
@@ -73,7 +58,7 @@ func TestBatchQueueAvailabilityTakesTheRightBranch(t *testing.T) {
 
 	// A lookup that fails for an unrelated reason (database down) must not be reported as "gone".
 	log := &store.AuditLog{Action: "batch_queue.update", ResourceType: "batch_queue", ResourceID: "q1"}
-	ApplyResourceAvailability(stubExistence{}, nil, nil, stubQueues{err: errors.New("connection busy")}, log)
+	ApplyResourceAvailability(stubExistence{}, nil, nil, nil, stubQueues{err: errors.New("connection busy")}, log)
 	if got := boolValue(log.ResourceAvailable); got != false {
 		t.Fatalf("an unrelated failure answered ResourceAvailable=%v; the current rule is that any error "+
 			"from the lookup reads as removed - pinned here so a change to that rule is a decision, not a drift", got)
@@ -81,8 +66,29 @@ func TestBatchQueueAvailabilityTakesTheRightBranch(t *testing.T) {
 
 	// No resource id at all: nothing to check, so the field stays unset for every resource type.
 	blank := &store.AuditLog{Action: "batch_queue.create", ResourceType: "batch_queue"}
-	ApplyResourceAvailability(stubExistence{}, nil, nil, stubQueues{row: &store.BatchTaskQueueRow{ID: "q1"}}, blank)
+	ApplyResourceAvailability(stubExistence{}, nil, nil, nil, stubQueues{row: &store.BatchTaskQueueRow{ID: "q1"}}, blank)
 	if blank.ResourceAvailable != nil {
 		t.Fatalf("a log without a resource id got an availability verdict: %v", *blank.ResourceAvailable)
+	}
+}
+
+// TestC2AvailabilityTakesTheRightBranch pins the same two answers for the C2 lookups, which left the
+// connection wrapper on 2026-10-07 and are answered by store.C2 now.
+func TestC2AvailabilityTakesTheRightBranch(t *testing.T) {
+	// A store that was never wired (no database) answers "unknown", not "gone": the operator keeps
+	// seeing the resource as unchecked.
+	log := &store.AuditLog{Action: "listener_update", ResourceType: "c2_listener", ResourceID: "l_1"}
+	ApplyResourceAvailability(stubExistence{}, nil, nil, nil, nil, log)
+	if log.ResourceAvailable != nil {
+		t.Fatalf("an unwired C2 lookup produced a verdict: %v", *log.ResourceAvailable)
+	}
+
+	// A store bound to no connection refuses the call with an error; any lookup error reads as
+	// "removed", the rule pinned in the batch-queue cases. What this checks is that the refusal is an
+	// error rather than a panic on a nil receiver.
+	log = &store.AuditLog{Action: "listener_update", ResourceType: "c2_listener", ResourceID: "l_1"}
+	ApplyResourceAvailability(stubExistence{}, store.NewC2(nil), nil, nil, nil, log)
+	if log.ResourceAvailable == nil || *log.ResourceAvailable {
+		t.Fatalf("a refusing C2 store answered ResourceAvailable=%v; want false", boolValue(log.ResourceAvailable))
 	}
 }

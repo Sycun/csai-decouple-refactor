@@ -28,7 +28,9 @@ var consumerSurfaceFiles = []string{
 // so an interface parser that silently finds nothing cannot report a clean bill of health.
 // 162 measured after the batch run ledger left: BatchTaskStore, its 22 members, went with the 22
 // delegations it described, so the surfaces are one domain smaller than they were.
-const consumerSurfaceMemberFloor = 162
+// 158 measured after the C2 domain left: ResourceExistence lost its three C2 lookups and
+// NotificationStore lost ListC2EventsForAccess (the handler holds store.C2 now).
+const consumerSurfaceMemberFloor = 158
 
 func TestConsumerSurfacesDeclareOnlyCalledMethods(t *testing.T) {
 	root := moduleRoot(t)

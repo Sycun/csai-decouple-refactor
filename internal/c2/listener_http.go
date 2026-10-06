@@ -26,7 +26,7 @@ import (
 	"sync"
 	"time"
 
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -39,12 +39,12 @@ import (
 //
 // 优势：所有任务异步、可批量、支持文件上传/截图/任意大 blob，是 C2 的"主战场"。
 type HTTPBeaconListener struct {
-	rec     *database.C2Listener
+	rec     *store.C2Listener
 	cfg     *ListenerConfig
 	manager *Manager
 	logger  *zap.Logger
 	useTLS  bool
-	profile *database.C2Profile
+	profile *store.C2Profile
 
 	srv     *http.Server
 	mu      sync.Mutex
@@ -219,7 +219,7 @@ func (l *HTTPBeaconListener) handleCheckIn(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "ingest failed", http.StatusInternalServerError)
 		return
 	}
-	queued, _ := l.manager.DB().ListC2Tasks(database.ListC2TasksFilter{
+	queued, _ := l.manager.C2().ListC2Tasks(store.ListC2TasksFilter{
 		SessionID: session.ID,
 		Status:    string(TaskQueued),
 		Limit:     1,
@@ -253,7 +253,7 @@ func (l *HTTPBeaconListener) handleTasks(w http.ResponseWriter, r *http.Request)
 		l.disguisedReject(w)
 		return
 	}
-	session, err := l.manager.DB().GetC2Session(sessionID)
+	session, err := l.manager.C2().GetC2Session(sessionID)
 	if err != nil || session == nil {
 		l.disguisedReject(w)
 		return

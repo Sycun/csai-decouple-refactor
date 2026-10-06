@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -41,7 +42,7 @@ func TestIngestCheckIn_PreservesOperatorSleepOnHeartbeat(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := db.SetC2SessionSleep(first.ID, 30, 20); err != nil {
+	if err := store.NewC2(db.DB).SetC2SessionSleep(first.ID, 30, 20); err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,7 +62,7 @@ func TestIngestCheckIn_PreservesOperatorSleepOnHeartbeat(t *testing.T) {
 		t.Fatalf("expected sleep=30 jitter=20, got sleep=%d jitter=%d", second.SleepSeconds, second.JitterPercent)
 	}
 
-	stored, err := db.GetC2Session(first.ID)
+	stored, err := store.NewC2(db.DB).GetC2Session(first.ID)
 	if err != nil || stored == nil {
 		t.Fatal(err)
 	}
@@ -108,7 +109,7 @@ func TestSetSessionSleep_UpdatesDBAndEnqueuesTask(t *testing.T) {
 		t.Fatalf("expected sleep task, got %#v", task)
 	}
 
-	stored, err := db.GetC2Session(sess.ID)
+	stored, err := store.NewC2(db.DB).GetC2Session(sess.ID)
 	if err != nil || stored == nil {
 		t.Fatal(err)
 	}

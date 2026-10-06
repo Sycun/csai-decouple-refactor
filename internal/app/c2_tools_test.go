@@ -56,7 +56,7 @@ func TestC2ListenerCreateInheritsConversationProject(t *testing.T) {
 		t.Fatalf("create listener result=%#v err=%v text=%q", result, err, toolResultText(result))
 	}
 
-	listeners, err := db.ListC2Listeners()
+	listeners, err := database.NewC2(db).ListC2Listeners()
 	if err != nil {
 		t.Fatal(err)
 	}

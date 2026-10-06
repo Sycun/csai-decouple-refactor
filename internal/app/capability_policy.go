@@ -33,7 +33,11 @@ func (a principalAdapter) ScopeFor(permission string) capability.Scope {
 }
 
 // depsAdapter is the only bridge between policy checks and the database.
-type depsAdapter struct{ db *database.DB }
+type depsAdapter struct {
+	db *database.DB
+	// c2 is the beacon ledger the resource-to-project lookup needs; the SQL lives in store.C2.
+	c2 *store.C2
+}
 
 func (d depsAdapter) CanAccessResource(userID string, scope capability.Scope, resourceType, id string) bool {
 	if d.db == nil {
@@ -62,7 +66,7 @@ func (d depsAdapter) ProjectFilter(ctx context.Context) string {
 }
 
 func (d depsAdapter) ResourceProjectID(resourceType, resourceID string) (string, bool, error) {
-	return mcpResourceProjectID(d.db, resourceType, resourceID)
+	return mcpResourceProjectID(d.db, d.c2, resourceType, resourceID)
 }
 
 func (d depsAdapter) ConversationProjectID(conversationID string) (string, error) {
@@ -251,7 +255,7 @@ func authorizeWithCapability(ctx context.Context, db *database.DB, toolName stri
 	if p, ok := authctx.PrincipalFromContext(ctx); ok {
 		ctx = capability.WithPrincipal(ctx, principalAdapter{p: p})
 	}
-	ctx = capability.WithRequestDeps(ctx, depsAdapter{db: db})
+	ctx = capability.WithRequestDeps(ctx, depsAdapter{db: db, c2: database.NewC2(db)})
 	decision := evaluatorFor().Decide(ctx, toolName, args)
 	switch decision.Outcome {
 	case capability.OutcomeAllow:
