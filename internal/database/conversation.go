@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -665,57 +664,23 @@ func (db *DB) DeleteConversation(id string) error {
 	if err != nil {
 		return fmt.Errorf("删除对话失败: %w", err)
 	}
-	db.removeConversationScopedDirs(id, projectID)
+	db.dirs.RemoveConversation(id, projectID)
 
 	db.logger.Info("对话已删除（漏洞记录已保留）", zap.String("conversationId", id))
 	return nil
 }
 
-func sanitizeConversationPathSegment(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "default"
-	}
-	s = strings.ReplaceAll(s, string(filepath.Separator), "-")
-	s = strings.ReplaceAll(s, "/", "-")
-	s = strings.ReplaceAll(s, "\\", "-")
-	s = strings.ReplaceAll(s, "..", "__")
-	if len(s) > 180 {
-		s = s[:180]
-	}
-	return s
-}
-
-func (db *DB) removeConversationScopedDir(base, conversationID, label string) {
-	base = strings.TrimSpace(base)
-	if base == "" {
-		return
-	}
-	dir := filepath.Join(base, sanitizeConversationPathSegment(conversationID))
-	if rmErr := os.RemoveAll(dir); rmErr != nil {
-		if db.logger != nil {
-			db.logger.Warn("删除会话目录失败",
-				zap.String("conversationId", conversationID),
-				zap.String("kind", label),
-				zap.String("dir", dir),
-				zap.Error(rmErr))
-		}
-	}
-}
-
-func (db *DB) einoReductionBaseDir() string {
+// EinoReductionBaseDir returns the configured reduction cache root, or the default the data layer
+// has always applied when nothing was configured. It stays a *DB method because the handler reads it
+// through its own store interface; the directories themselves belong to internal/storage.
+func (db *DB) EinoReductionBaseDir() string {
 	if db == nil {
 		return ""
 	}
-	if base := strings.TrimSpace(db.einoReductionRootDir); base != "" {
+	if base := strings.TrimSpace(db.dirs.Reduction); base != "" {
 		return base
 	}
 	return filepath.Join("tmp", "reduction")
-}
-
-// EinoReductionBaseDir returns the configured reduction cache root.
-func (db *DB) EinoReductionBaseDir() string {
-	return db.einoReductionBaseDir()
 }
 
 // ConversationArtifactsBaseDir returns the conversation-scoped artifacts root.
@@ -726,74 +691,15 @@ func (db *DB) ConversationArtifactsBaseDir() string {
 	return strings.TrimSpace(db.conversationArtifactsDir)
 }
 
-// EinoWorkspaceBaseDir returns the configured agent workspace root.
+// EinoWorkspaceBaseDir returns the configured agent workspace root, or its historical default.
 func (db *DB) EinoWorkspaceBaseDir() string {
-	return db.einoWorkspaceBaseDir()
-}
-
-func (db *DB) einoWorkspaceBaseDir() string {
 	if db == nil {
 		return ""
 	}
-	if base := strings.TrimSpace(db.einoWorkspaceRootDir); base != "" {
+	if base := strings.TrimSpace(db.dirs.Workspace); base != "" {
 		return base
 	}
 	return filepath.Join("tmp", "workspace")
-}
-
-func (db *DB) removeConversationScopedDirs(conversationID, projectID string) {
-	// summarization transcript, etc.
-	db.removeConversationScopedDir(db.conversationArtifactsDir, conversationID, "conversation_artifacts")
-	// Eino plantask JSON boards (skills_dir/.eino/plantask/<id>/).
-	db.removeConversationScopedDir(db.einoPlantaskBaseDir, conversationID, "plantask")
-	// Eino ADK runner checkpoints (checkpoint_dir/<id>/).
-	db.removeConversationScopedDir(db.einoCheckpointBaseDir, conversationID, "eino_checkpoint")
-	// 上传附件始终归属单个会话，项目绑定的会话也要删，故放在 projectID 判断之外。
-	db.removeChatUploadDirs(conversationID)
-	// Eino reduction persisted tool outputs (tmp/reduction/conversations/<id>/).
-	// Project-bound sessions share projects/<id>/ — skip on single conversation delete.
-	if strings.TrimSpace(projectID) == "" {
-		reductionBase := filepath.Join(db.einoReductionBaseDir(), "conversations")
-		db.removeConversationScopedDir(reductionBase, conversationID, "reduction")
-		workspaceBase := filepath.Join(db.einoWorkspaceBaseDir(), "conversations")
-		db.removeConversationScopedDir(workspaceBase, conversationID, "workspace")
-	}
-}
-
-// removeChatUploadDirs 删除 chat_uploads/<日期>/<会话ID>/ 下属于该会话的上传目录。
-// 该根目录比其他产物多一层日期目录，无法复用 removeConversationScopedDir。
-func (db *DB) removeChatUploadDirs(conversationID string) {
-	base := strings.TrimSpace(db.chatUploadsDir)
-	if base == "" || strings.TrimSpace(conversationID) == "" {
-		return
-	}
-	seg := sanitizeConversationPathSegment(conversationID)
-	dates, err := os.ReadDir(base)
-	if err != nil {
-		return
-	}
-	for _, dateDir := range dates {
-		if !dateDir.IsDir() {
-			continue
-		}
-		dir := filepath.Join(base, dateDir.Name(), seg)
-		if rmErr := os.RemoveAll(dir); rmErr != nil && db.logger != nil {
-			db.logger.Warn("删除会话上传目录失败",
-				zap.String("conversationId", conversationID),
-				zap.String("kind", "chat_uploads"),
-				zap.String("dir", dir),
-				zap.Error(rmErr))
-		}
-	}
-}
-
-func (db *DB) removeProjectScopedDirs(projectID string) {
-	// Eino reduction persisted tool outputs (tmp/reduction/projects/<id>/).
-	reductionBase := filepath.Join(db.einoReductionBaseDir(), "projects")
-	db.removeConversationScopedDir(reductionBase, projectID, "reduction")
-	// Agent download/analysis workspace (tmp/workspace/projects/<id>/).
-	workspaceBase := filepath.Join(db.einoWorkspaceBaseDir(), "projects")
-	db.removeConversationScopedDir(workspaceBase, projectID, "workspace")
 }
 
 // SaveAgentTrace 保存最后一轮代理消息轨迹与助手输出摘要。

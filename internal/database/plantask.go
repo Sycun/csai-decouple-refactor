@@ -21,11 +21,11 @@ func planTaskDir(db *DB, conversationID string) (string, bool) {
 	if id == "" {
 		return "", false
 	}
-	base := strings.TrimSpace(db.einoPlantaskBaseDir)
+	base := strings.TrimSpace(db.dirs.Plantask)
 	if base == "" {
 		return "", false
 	}
-	return filepath.Join(base, sanitizeConversationPathSegment(id)), true
+	return filepath.Join(base, storage.ConversationPathSegment(id)), true
 }
 
 // ListConversationPlanTasksSince limits the board to files written during the current agent run.

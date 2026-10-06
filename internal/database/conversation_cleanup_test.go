@@ -3,6 +3,8 @@ package database
 import (
 	"os"
 	"path/filepath"
+
+	"cyberstrike-ai/internal/storage"
 	"testing"
 
 	"go.uber.org/zap"
@@ -21,14 +23,14 @@ func TestDeleteConversationRemovesEinoScopedDirs(t *testing.T) {
 	checkpointBase := filepath.Join(tmp, "eino-checkpoints")
 	reductionBase := filepath.Join(tmp, "reduction")
 	workspaceBase := filepath.Join(tmp, "workspace")
-	db.SetEinoConversationDirs(plantaskBase, checkpointBase, reductionBase, workspaceBase)
+	db.SetConversationDirs(plantaskBase, checkpointBase, reductionBase, workspaceBase, "")
 
 	conv, err := db.CreateConversation("cleanup test", ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
 	convID := conv.ID
-	seg := sanitizeConversationPathSegment(convID)
+	seg := storage.ConversationPathSegment(convID)
 	for _, base := range []struct {
 		root string
 		file string
@@ -72,7 +74,7 @@ func TestDeleteConversationRemovesChatUploads(t *testing.T) {
 	defer db.Close()
 
 	uploads := filepath.Join(tmp, "chat_uploads")
-	db.SetChatUploadsDir(uploads)
+	db.SetConversationDirs("", "", "", "", uploads)
 
 	target, err := db.CreateConversation("uploads cleanup", ConversationCreateMeta{})
 	if err != nil {
@@ -82,8 +84,8 @@ func TestDeleteConversationRemovesChatUploads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
 	}
-	targetSeg := sanitizeConversationPathSegment(target.ID)
-	siblingSeg := sanitizeConversationPathSegment(sibling.ID)
+	targetSeg := storage.ConversationPathSegment(target.ID)
+	siblingSeg := storage.ConversationPathSegment(sibling.ID)
 
 	// 同一会话跨两个日期目录都有上传件，另一个会话的上传件必须保留。
 	for _, dir := range []string{
@@ -132,13 +134,13 @@ func TestDeleteProjectRemovesReductionDir(t *testing.T) {
 
 	reductionBase := filepath.Join(tmp, "reduction")
 	workspaceBase := filepath.Join(tmp, "workspace")
-	db.SetEinoConversationDirs("", "", reductionBase, workspaceBase)
+	db.SetConversationDirs("", "", reductionBase, workspaceBase, "")
 
 	project, err := db.CreateProject(&Project{Name: "cleanup test"})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
-	seg := sanitizeConversationPathSegment(project.ID)
+	seg := storage.ConversationPathSegment(project.ID)
 	reductionDir := filepath.Join(reductionBase, "projects", seg, "clear")
 	if err := os.MkdirAll(reductionDir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", reductionDir, err)

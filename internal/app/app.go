@@ -436,7 +436,6 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	checkpointBase := strings.TrimSpace(cfg.MultiAgent.EinoMiddleware.CheckpointDir)
 	reductionRoot := strings.TrimSpace(cfg.MultiAgent.EinoMiddleware.ReductionRootDir)
 	workspaceRoot := strings.TrimSpace(cfg.Agent.WorkspaceRootDir)
-	db.SetEinoConversationDirs(plantaskBase, checkpointBase, reductionRoot, workspaceRoot)
 
 	// 运行空间垃圾清理：根目录一律复用上面已解析好的同一批值，
 	// 避免在 storage 包内重新推导导致「清理的目录」与「实际写入的目录」不一致。
@@ -455,10 +454,10 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	// chat_uploads 与 tmp/c2 目前均为相对进程工作目录的固定路径
 	// （见 handler.chatUploadsRootDirName 与 app/c2_lifecycle.go 的 c2.NewManager）。
 	chatUploadsRoot := "chat_uploads"
-	c2Root := filepath.Join("tmp", "c2")
 	// 让 DeleteConversation 一并删除上传附件：其 chat_upload_artifacts 行已由
-	// ON DELETE CASCADE 清除，此前磁盘文件会永久残留。
-	db.SetChatUploadsDir(chatUploadsRoot)
+	// ON DELETE CASCADE 清除，此前磁盘文件会永久残留。目录根只有一个来源，就是下面这一行。
+	db.SetConversationDirs(plantaskBase, checkpointBase, reductionRoot, workspaceRoot, chatUploadsRoot)
+	c2Root := filepath.Join("tmp", "c2")
 	storageCleaner := storage.NewCleaner(storage.Options{
 		Config: cfg,
 		Paths: storage.Paths{

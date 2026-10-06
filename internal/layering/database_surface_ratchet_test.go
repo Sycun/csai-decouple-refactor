@@ -88,7 +88,11 @@ import (
 // position, still after conversations because of the foreign key onto it.
 // 188: the migration that backfilled messages.updated_at / reasoning_content left *DB too, so the
 // table's owner now runs its own schema, its indexes, its late columns and its start-up backfill.
-const dbMethodCeiling = 188
+// 181: the connection object stopped being the place that knows how an agent run's files are laid
+// out. Two setters became one, and the six directory helpers (the scoped remove, the uploads date
+// walk, the project-scoped remove, the two default-resolving roots) moved to internal/storage; the
+// two exported roots stay because the handler reads them through its own store interface.
+const dbMethodCeiling = 181
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

@@ -240,7 +240,7 @@ func (db *DB) DeleteProject(id string) error {
 	if err != nil {
 		return fmt.Errorf("删除项目失败: %w", err)
 	}
-	db.removeProjectScopedDirs(id)
+	db.dirs.RemoveProject(id)
 	return nil
 }
 

@@ -2996,6 +2996,49 @@ NewVulnerabilities owns`；② 把启动那行 `EnsureSchema()` 换成一句无�
 **下一件明确的事**：把会话目录清理也交给 `internal/storage`（它已经有 `Paths` 与 cleaner），
 届时 `*DB` 上这四个 dir 字段与两个 setter 一起消失——那才是这一层"只剩 SQL"的收口。
 
+### P6 第三十九刀 —— 会话目录清理离开连接对象：`*DB` 不再知道 plantask / checkpoint / reduction / workspace / chat_uploads 怎么摆
+
+第三十八刀按类扫到的那一族在这一刀收掉。`internal/database` 里原来有**五个目录字段**
+（`einoPlantaskBaseDir` / `einoCheckpointBaseDir` / `einoReductionRootDir` / `einoWorkspaceRootDir` /
+`chatUploadsDir`）、**两个 setter**（`SetEinoConversationDirs` / `SetChatUploadsDir`）和**六个纯文件系统方法**
+（`removeConversationScopedDir(s)`、`removeChatUploadDirs` 的日期层遍历、`removeProjectScopedDirs`、
+`einoReductionBaseDir` / `einoWorkspaceBaseDir` 的默认值推导）。这些和 SQL 没有一丝关系，
+而 `internal/storage` 早就按同一批配置值持有 `Paths` 并有 cleaner——它才是该知道目录形状的地方。
+
+**做的**：新 `internal/storage/conversation_dirs.go` =
+`ConversationPathSegment`（**唯一的目录名消毒函数**，从数据层整体搬来，读写与清理共用同一个函数：
+否则会出现"读得到但删不掉"的会话目录）+ `ConversationDirs`（五个根 + logger，
+`NewConversationDirs` 保留 `tmp/reduction` / `tmp/workspace` 的历史默认值）+
+`RemoveConversation(id, projectID)`（附件永远删；两个项目共享的 scratch 根只在**非项目会话**时删——
+与原判断逐字一致）+ `RemoveProject(id)`。数据层侧：`*DB` 换成一个 `dirs storage.ConversationDirs` 字段、
+两个 setter 合成一个 `SetConversationDirs(plantask, checkpoint, reduction, workspace, chatUploads)`，
+`conversation.go` 从 ~800 行降到     1611 行。**水位 188 → 181**（−7：两个 setter 合一个、六个方法搬走；
+`EinoReductionBaseDir` / `EinoWorkspaceBaseDir` 两条**留着**——handler 经自己的 store 接口读它们，
+现在是两个只剩默认值兜底的 getter）。
+`app.go` 里 `chat_uploads` 那**一个字面量的两份拷贝**也合成一份（原来 `SetChatUploadsDir(chatUploadsRoot)`
+与 storage.Paths 各写各的），注入点只剩一处。
+
+**行为由既有测试锁着，且探针证明它们真在验**：这一族本来就带三条真机形状的行为测试
+（`TestDeleteConversationRemovesEinoScopedDirs` / `...RemovesChatUploads` /
+`TestDeleteProjectRemovesReductionDir`：真的建目录、真删会话/项目、断言目录消失），
+搬完三条全绿；把 `storage.removeScoped` 改成空操作，前两条立刻红（`目录还在`）——
+**"清理确实被执行过"不是推测**。handler 侧 `conversation_plantask_test.go` / `rbac_boundary_test.go`
+的 3 个注入点跟着改名，没有放宽任何断言。
+
+**这一刀也留下一条反面教训（本轮第三次脚本自伤）**：把
+`db.SetEinoConversationDirs(a,b,c,d)` 批量改成五参数时，正则用了 `[^;]*`，它**跨过换行**把下一句
+`os.MkdirAll(dir, 0o755)` / `db.AssignResourceToUser(...)` 的参数也吞进去改了——
+两处测试文件出现"多一个参数"的怪形态。靠 `go vet` 逐条抓住（它确实报了
+`too many arguments in call to db.AssignResourceToUser`），**没有一个断言被放宽**。
+规矩：脚本改调用点必须**按行**或**按括号配平**取参数，不能按"到分号为止"。
+
+**账（实测）**：`*database.DB` **181**（`TestDatabaseSurfaceOnlyShrinks` 已收紧；
+导出方法反空跑地板 158 → **157**，因为这一刀净减一个导出 setter）；
+全仓测试函数 **1590**；`gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿。
+**剩下的同类项已清点**：`startPassiveCheckpointLoop` / `runPassiveCheckpoint`（checkpoint 循环与关闭，
+也在 `*DB` 上）与 `conversationArtifactsDir` 的**写入侧**（handler 上传附件的路径拼接）——
+前者是运行期调度、后者是产物读写，都还要从连接对象上搬走。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

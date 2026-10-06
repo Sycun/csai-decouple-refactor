@@ -9,8 +9,10 @@ import (
 	"sync"
 	"time"
 
+	"cyberstrike-ai/internal/storage"
 	"cyberstrike-ai/internal/store"
 	_ "github.com/mattn/go-sqlite3"
+
 	"go.uber.org/zap"
 )
 
@@ -50,16 +52,15 @@ type DB struct {
 	*sql.DB
 	logger                   *zap.Logger
 	conversationArtifactsDir string
-	einoPlantaskBaseDir      string // skills_dir + plantask_rel_dir (per-conversation subdirs)
-	einoCheckpointBaseDir    string // checkpoint_dir root (per-conversation subdirs)
-	einoReductionRootDir     string // reduction_root_dir or default tmp/reduction (conversations/<id> subdirs)
-	einoWorkspaceRootDir     string // workspace_root_dir or default tmp/workspace (projects|conversations/<id> subdirs)
-	chatUploadsDir           string // chat_uploads root (<date>/<conversationID> subdirs)
-	checkpointLoopName       string
-	checkpointStop           chan struct{}
-	checkpointDone           chan struct{}
-	closeOnce                sync.Once
-	closeErr                 error
+	// dirs is the set of per-conversation directories an ended run leaves on disk. The cleanup itself
+	// lives in internal/storage - this type only carries the roots, because the connection object has
+	// no business knowing how a plantask board or a reduction cache is laid out.
+	dirs               storage.ConversationDirs
+	checkpointLoopName string
+	checkpointStop     chan struct{}
+	checkpointDone     chan struct{}
+	closeOnce          sync.Once
+	closeErr           error
 }
 
 // startPassiveCheckpointLoop 启动后台 PASSIVE checkpoint 循环。
@@ -165,28 +166,21 @@ func NewDB(dbPath string, logger *zap.Logger) (*DB, error) {
 	return database, nil
 }
 
-// SetEinoConversationDirs configures best-effort filesystem cleanup on DeleteConversation.
-// plantaskBase is skills_root/plantask_rel (no conversation id); checkpointBase is checkpoint_dir root.
-// reductionRoot is reduction_root_dir from config; empty uses tmp/reduction (conversation-scoped subdirs only).
-// workspaceRoot is agent.workspace_root_dir from config; empty uses tmp/workspace.
-func (db *DB) SetEinoConversationDirs(plantaskBase, checkpointBase, reductionRoot, workspaceRoot string) {
+// SetConversationDirs configures the best-effort directory cleanup that DeleteConversation and
+// DeleteProject perform. It replaces the two setters this used to take (one for the four Eino roots,
+// one for the uploads root) with a single decision about where a conversation's files live.
+func (db *DB) SetConversationDirs(plantaskBase, checkpointBase, reductionRoot, workspaceRoot, chatUploadsRoot string) {
 	if db == nil {
 		return
 	}
-	db.einoPlantaskBaseDir = strings.TrimSpace(plantaskBase)
-	db.einoCheckpointBaseDir = strings.TrimSpace(checkpointBase)
-	db.einoReductionRootDir = strings.TrimSpace(reductionRoot)
-	db.einoWorkspaceRootDir = strings.TrimSpace(workspaceRoot)
-}
-
-// SetChatUploadsDir configures the chat_uploads root so DeleteConversation can remove
-// uploaded attachment files. Their chat_upload_artifacts rows already disappear via
-// ON DELETE CASCADE; without this the files themselves would linger forever.
-func (db *DB) SetChatUploadsDir(dir string) {
-	if db == nil {
-		return
-	}
-	db.chatUploadsDir = strings.TrimSpace(dir)
+	db.dirs = storage.NewConversationDirs(storage.ConversationDirs{
+		Artifacts:   db.conversationArtifactsDir,
+		Plantask:    strings.TrimSpace(plantaskBase),
+		Checkpoint:  strings.TrimSpace(checkpointBase),
+		Reduction:   strings.TrimSpace(reductionRoot),
+		Workspace:   strings.TrimSpace(workspaceRoot),
+		ChatUploads: strings.TrimSpace(chatUploadsRoot),
+	}, db.logger)
 }
 
 // initTables 初始化数据库表
