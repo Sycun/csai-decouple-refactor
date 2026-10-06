@@ -1218,6 +1218,15 @@ CSAI_WRITE_OPENAPI_GOLDEN=1 go test ./internal/handler -run TestOpenAPIOperation
 界面却显示「已启用」并把原因写成一次没发生过的启用失败——这是 MCP kind 早已做对、plugin kind 漏掉的
 另一半，只迁一半比不迁更有害。
 
+**下一刀的前置条件已量出来（2026-10-06）**：`audit_logs` 那 5 个方法之所以不能直接搬进 store，
+是因为它依赖的两个 SQLite 时间工具（`formatSQLiteUTC`、`sqliteEpochGE`）**住在 `internal/database`**，
+而 store 侧现在用**另一种写法**表达同一个谓词——实测 `CAST(strftime('%s', <列>) AS INTEGER) > ?`
+出现在 `store/hitl.go:440`、`store/execution.go:44,47`、`store/vulnerability.go:51,53`，
+而 `strftime('%s', <列>) > strftime('%s', ?)` 出现在 `database/sqltime.go:15-16`。
+**同一件事两个入口**，且参数编码不同（绑定整数秒 vs 绑定 UTC 字符串）。
+所以先做一次归口（唯一的比较表达式 + 唯一的参数编码，配真库对照测试与"别处不许再出现该表达式"的门禁），
+再谈 `audit_logs`；`AuditStore` 里混着的存在性查询也要先按表拆开。
+
 **仍然没有做的**：包内二进制的**制品签名链**（现在靠声明+双向核对+摘要撤销，没有 Ed25519 覆盖可执行文件）；
 netns/seccomp 级硬出网边界（插件仍走宿主侧 CONNECT 代理 + `StrictEgress`，这是代理白名单不是内核边界）；
 registry 服务端与气隙包导出。
