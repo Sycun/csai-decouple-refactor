@@ -2116,6 +2116,29 @@ store 没有 logger，为一条日志引入一条依赖不值，这句写在代�
 第二次是被 `make fmt-check`（硬零）当场抓住的——我当时只在改动的几个文件上单独跑过 `gofmt`。
 从现在起：任何行级脚本改写之后，`gofmt -l ./cmd ./internal` 立刻跑整树，不看局部。
 
+### P6 第二十三刀（附带）—— 验收前自查发现：三套生成物里有一份**已经过期**，而本地门禁看不见它
+
+按"CI 里 regenerate-and-diff"的口径在测试树跑了一遍 `make generate`，再拿 `scripts/testtree.sh verify`
+比回开发树，**两个文件不一致**：`docs/zh-CN/sse-event-catalog.md` 与
+`internal/sse/testdata/sse-kinds.golden.json`。差异只有行号——事件名一个不差，
+但目录里记录的发射点还停在旧版 `internal/handler/agent.go` 与 `web/static/js/monitor.js` 上
+（`agent.go:1444` vs `1443`、`monitor.js:2968` vs `2979`）。
+**也就是说：把这两份生成物提交进仓库的那次改动，源码后来又被改过、生成物没跟着重新生成。**
+`.github/workflows/ci.yml` 里那三步（能力清单 / Provider 清单 / SSE 目录）会因此在 main 上报红。
+
+这不是今晚哪一刀造成的（今晚没动过 SSE 与那两个文件），但它在今晚被发现，就得在今晚修掉：
+**在开发树里刷新这两份生成物并提交**（生成在测试树跑、结果拷回开发树，开发树仍不产生二进制）。
+刷新后 `make generate` 再跑一遍，两树逐字节一致。
+
+**同时补上本地缺的那道门禁**：`scripts/testtree.sh` 新增 `check_generated` 与 `generate-diff` 子命令，
+`gates` 里也接上——sync + verify 后在测试树跑 `make generate`，再把**CI 三条 diff 命令所覆盖路径的并集**
+逐条比回开发树，不一致就非零退出并打印前 20 行差异。
+**这条门禁自己也被探针验过两次，第一次是红的（对我有利）**：
+往 `docs/zh-CN/sse-event-catalog.md` 里塞一行过期内容，第一版**报了 ok**——
+因为我抄清单时漏了这个路径，**遍历域小于 CI 的传播域**。补进清单后重跑同一注入 →
+`生成物过期，CI 的 regenerate-and-diff 会红： docs/zh-CN/sse-event-catalog.md`（exit 1），
+恢复后 ok。这段教训和它的验收方式现在都写在该函数的注释里：**清单改动只能靠"注入过期生成物看它是否变红"来验收**。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

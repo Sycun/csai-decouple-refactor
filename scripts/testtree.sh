@@ -12,11 +12,15 @@
 # 用法（都在开发树里执行）：
 #   scripts/testtree.sh sync      # 把开发树的源码灌进测试树（删除测试树里多出来的源码文件）
 #   scripts/testtree.sh verify    # 两树是否同一份源码；不一致就非零退出并列出差异
-#   scripts/testtree.sh gates     # sync + verify，然后在测试树里跑全套门禁并 build
+#   scripts/testtree.sh gates     # sync + verify，然后在测试树里跑全套门禁、重新生成并比漂移、build
+#   scripts/testtree.sh generate-diff  # 只做"重新生成 + 与开发树逐字节比回来"，即 CI 里那三步的本地版
 #   scripts/testtree.sh run       # sync + verify，然后在测试树里 build 并起服务
 #
 # 测试树位置：$CSAI_TESTTREE，默认 $HOME/csai-测试版
 set -eu
+
+# 漂移比对用的临时文件（check_generated 用完即删）
+gen_diff=$(mktemp)
 
 DEV=$(git rev-parse --show-toplevel)
 TEST=${CSAI_TESTTREE:-$HOME/csai-测试版}
@@ -155,6 +159,39 @@ sync() {
 	echo "sync 完成：$(cd "$DEV" && git rev-parse --short HEAD) 的开发树源码已进 $TEST"
 }
 
+# 生成物漂移检查。三套生成物（能力清单、Provider 清单、SSE 事件目录，连同它们的 golden 与
+# web/static/js/generated）都由 make generate 从源码产出，CI 里各有一步 regenerate-and-diff。
+# 本地门禁原来不跑那一步，于是"源码改了、生成物没跟着重新提交"只有推到 CI 才暴露 -
+# 一次真实漏网：SSE 目录里记的行号还停在旧版 monitor.js 上，而两树源码本身是一致的。
+# 判据因此搬到本地：sync + verify 之后在测试树跑 generate，再把生成路径逐字节比回来。
+#
+# 下面这份清单必须与 .github/workflows/ci.yml 里三条 regenerate-and-diff 各自 diff 的路径**并集**
+# 一字不差。第一版漏了 docs/zh-CN/sse-event-catalog.md，探针往里塞一行过期内容，门禁照样报 ok -
+# 遍历域小于传播域的门禁，和红着的门禁是两种东西；清单改动只能靠"往里注入过期生成物、看它是否变红"
+# 来验收。
+check_generated() {
+	drift=""
+	for path in web/static/js/generated \
+		docs/zh-CN/capability-catalog.md \
+		docs/zh-CN/provider-catalog.md \
+		docs/zh-CN/sse-event-catalog.md \
+		internal/capability/testdata \
+		internal/provider/testdata \
+		internal/sse/testdata; do
+		[ -e "$TEST/$path" ] || continue
+		[ -e "$DEV/$path" ] || die "生成物 $path 在测试树里有、开发树里没有 - 它没被提交"
+		if ! diff -rq "$DEV/$path" "$TEST/$path" >"$gen_diff" 2>&1; then
+			drift="$drift $path"
+			head -20 "$gen_diff" >&2
+		fi
+	done
+	rm -f "$gen_diff"
+	if [ -n "$drift" ]; then
+		die "生成物过期，CI 的 regenerate-and-diff 会红：$drift。在开发树里从 $TEST 拷回这些路径并提交（开发树不编译）。"
+	fi
+	echo "generate-diff ok：三套生成物与源码一致"
+}
+
 case "${1:-verify}" in
 sync)
 	sync
@@ -167,8 +204,16 @@ gates)
 	sync
 	compare
 	(cd "$TEST" && make -f Makefile fmt-check vet layering-check wiring-check js-check test-race)
+	(cd "$TEST" && make -f Makefile generate)
+	check_generated
 	(cd "$TEST" && make -f Makefile build build-stdio)
 	echo "gates ok：门禁与构建都在测试树里跑完，开发树没有被编译产物碰过"
+	;;
+generate-diff)
+	sync
+	compare
+	(cd "$TEST" && make -f Makefile generate)
+	check_generated
 	;;
 run)
 	sync
@@ -178,6 +223,6 @@ run)
 	cd "$TEST" && exec ./cyberstrike-ai -config config.yaml
 	;;
 *)
-	die "未知子命令：$1（可用 sync | verify | gates | run）"
+	die "未知子命令：$1（可用 sync | verify | gates | generate-diff | run）"
 	;;
 esac
