@@ -309,44 +309,8 @@ func (db *DB) initTables() error {
 	// 这一段索引不再留在这里：全局建索引的那一步跑在所有补列之后，看起来更晚更安全，
 	// 但表的拥有者因此只剩半个，真实安装里有三条索引仍由连接包装创建。
 
-	// 创建批量任务队列表
-	createBatchTaskQueuesTable := `
-	CREATE TABLE IF NOT EXISTS batch_task_queues (
-		id TEXT PRIMARY KEY,
-		title TEXT,
-		role TEXT,
-		agent_mode TEXT NOT NULL DEFAULT 'eino_single',
-		hitl_policy TEXT NOT NULL DEFAULT '',
-		schedule_mode TEXT NOT NULL DEFAULT 'manual',
-		cron_expr TEXT,
-		next_run_at DATETIME,
-		schedule_enabled INTEGER NOT NULL DEFAULT 1,
-		last_schedule_trigger_at DATETIME,
-		last_schedule_error TEXT,
-		last_run_error TEXT,
-		project_id TEXT,
-		concurrency INTEGER NOT NULL DEFAULT 1,
-		status TEXT NOT NULL,
-		created_at DATETIME NOT NULL,
-		started_at DATETIME,
-		completed_at DATETIME,
-		current_index INTEGER NOT NULL DEFAULT 0
-	);`
-
-	// 创建批量任务表
-	createBatchTasksTable := `
-	CREATE TABLE IF NOT EXISTS batch_tasks (
-		id TEXT PRIMARY KEY,
-		queue_id TEXT NOT NULL,
-		message TEXT NOT NULL,
-		conversation_id TEXT,
-		status TEXT NOT NULL,
-		started_at DATETIME,
-		completed_at DATETIME,
-		error TEXT,
-		result TEXT,
-		FOREIGN KEY (queue_id) REFERENCES batch_task_queues(id) ON DELETE CASCADE
-	);`
+	// 批量任务两张表（队列 + 任务）的 DDL、十三个后补列与三条索引都在 store.BatchTasks 里，
+	// 由启动那三步按 建表 → 补列 → 建索引 的顺序跑。
 
 	// WebShell 两张表（连接配置与工作区状态）的 DDL 与三条索引在 store.Webshell 的 EnsureSchema 里。
 
@@ -481,9 +445,6 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at);
 	CREATE INDEX IF NOT EXISTS idx_conversations_project_id ON conversations(project_id);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_project_id ON vulnerabilities(project_id);
-	CREATE INDEX IF NOT EXISTS idx_batch_tasks_queue_id ON batch_tasks(queue_id);
-	CREATE INDEX IF NOT EXISTS idx_batch_task_queues_created_at ON batch_task_queues(created_at);
-	CREATE INDEX IF NOT EXISTS idx_batch_task_queues_title ON batch_task_queues(title);
 	CREATE INDEX IF NOT EXISTS idx_c2_listeners_created_at ON c2_listeners(created_at);
 	CREATE INDEX IF NOT EXISTS idx_c2_listeners_project_id ON c2_listeners(project_id);
 	CREATE INDEX IF NOT EXISTS idx_c2_listeners_status ON c2_listeners(status);
@@ -545,12 +506,9 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("初始化assets表失败: %w", err)
 	}
 
-	if _, err := db.Exec(createBatchTaskQueuesTable); err != nil {
-		return fmt.Errorf("创建batch_task_queues表失败: %w", err)
-	}
-
-	if _, err := db.Exec(createBatchTasksTable); err != nil {
-		return fmt.Errorf("创建batch_tasks表失败: %w", err)
+	// 两张表在这一个 EnsureSchema 里按外键顺序建（任务表外键指向队列表并级联删除）。
+	if err := store.NewBatchTasks(db.DB).EnsureSchema(); err != nil {
+		return fmt.Errorf("创建批量任务表失败: %w", err)
 	}
 
 	// 状态表对连接表有外键，两张表在这一个 EnsureSchema 里按顺序建。
@@ -597,10 +555,17 @@ func (db *DB) initTables() error {
 		// 不返回错误，允许继续运行
 	}
 
-	if err := db.migrateBatchTaskQueuesTable(); err != nil {
+	if err := store.NewBatchTasks(db.DB).MigrateQueueColumns(); err != nil {
 		db.logger.Warn("迁移batch_task_queues表失败", zap.Error(err))
 		// 不返回错误，允许继续运行
 	}
+
+	// 三条索引必须排在补列之后：idx_batch_task_queues_title 依赖的 title 只由那一步产生。
+	// 原顺序也是这样的——那三条在最后一批全局索引里，而全局索引跑在所有补列之后。
+	if err := store.NewBatchTasks(db.DB).EnsureIndexes(); err != nil {
+		return fmt.Errorf("创建批量任务索引失败: %w", err)
+	}
+
 	if err := db.migrateVulnerabilitiesTable(); err != nil {
 		db.logger.Warn("迁移vulnerabilities表失败", zap.Error(err))
 		// 不返回错误，允许继续运行
@@ -807,214 +772,6 @@ func (db *DB) migrateConversationsTable() error {
 	} else if count == 0 {
 		if _, err := db.Exec("ALTER TABLE conversations ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'eino_single'"); err != nil {
 			db.logger.Warn("添加agent_mode字段失败", zap.Error(err))
-		}
-	}
-
-	return nil
-}
-
-// migrateBatchTaskQueuesTable 迁移batch_task_queues表，补充新字段
-func (db *DB) migrateBatchTaskQueuesTable() error {
-	// 检查title字段是否存在
-	var count int
-	err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='title'").Scan(&count)
-	if err != nil {
-		// 如果查询失败，尝试添加字段
-		if _, addErr := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN title TEXT"); addErr != nil {
-			// 如果字段已存在，忽略错误
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				db.logger.Warn("添加title字段失败", zap.Error(addErr))
-			}
-		}
-	} else if count == 0 {
-		// 字段不存在，添加它
-		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN title TEXT"); err != nil {
-			db.logger.Warn("添加title字段失败", zap.Error(err))
-		}
-	}
-
-	// 检查role字段是否存在
-	var roleCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='role'").Scan(&roleCount)
-	if err != nil {
-		// 如果查询失败，尝试添加字段
-		if _, addErr := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN role TEXT"); addErr != nil {
-			// 如果字段已存在，忽略错误
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				db.logger.Warn("添加role字段失败", zap.Error(addErr))
-			}
-		}
-	} else if roleCount == 0 {
-		// 字段不存在，添加它
-		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN role TEXT"); err != nil {
-			db.logger.Warn("添加role字段失败", zap.Error(err))
-		}
-	}
-
-	// 检查agent_mode字段是否存在
-	var agentModeCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='agent_mode'").Scan(&agentModeCount)
-	if err != nil {
-		if _, addErr := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'eino_single'"); addErr != nil {
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				db.logger.Warn("添加agent_mode字段失败", zap.Error(addErr))
-			}
-		}
-	} else if agentModeCount == 0 {
-		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN agent_mode TEXT NOT NULL DEFAULT 'eino_single'"); err != nil {
-			db.logger.Warn("添加agent_mode字段失败", zap.Error(err))
-		}
-	}
-
-	// 检查schedule_mode字段是否存在
-	var scheduleModeCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='schedule_mode'").Scan(&scheduleModeCount)
-	if err != nil {
-		if _, addErr := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN schedule_mode TEXT NOT NULL DEFAULT 'manual'"); addErr != nil {
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				db.logger.Warn("添加schedule_mode字段失败", zap.Error(addErr))
-			}
-		}
-	} else if scheduleModeCount == 0 {
-		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN schedule_mode TEXT NOT NULL DEFAULT 'manual'"); err != nil {
-			db.logger.Warn("添加schedule_mode字段失败", zap.Error(err))
-		}
-	}
-
-	// 检查cron_expr字段是否存在
-	var cronExprCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='cron_expr'").Scan(&cronExprCount)
-	if err != nil {
-		if _, addErr := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN cron_expr TEXT"); addErr != nil {
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				db.logger.Warn("添加cron_expr字段失败", zap.Error(addErr))
-			}
-		}
-	} else if cronExprCount == 0 {
-		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN cron_expr TEXT"); err != nil {
-			db.logger.Warn("添加cron_expr字段失败", zap.Error(err))
-		}
-	}
-
-	// 检查next_run_at字段是否存在
-	var nextRunAtCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='next_run_at'").Scan(&nextRunAtCount)
-	if err != nil {
-		if _, addErr := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN next_run_at DATETIME"); addErr != nil {
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				db.logger.Warn("添加next_run_at字段失败", zap.Error(addErr))
-			}
-		}
-	} else if nextRunAtCount == 0 {
-		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN next_run_at DATETIME"); err != nil {
-			db.logger.Warn("添加next_run_at字段失败", zap.Error(err))
-		}
-	}
-
-	// schedule_enabled：0=暂停 Cron 自动调度，1=允许（手工执行不受影响）
-	var scheduleEnCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='schedule_enabled'").Scan(&scheduleEnCount)
-	if err != nil {
-		if _, addErr := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN schedule_enabled INTEGER NOT NULL DEFAULT 1"); addErr != nil {
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				db.logger.Warn("添加schedule_enabled字段失败", zap.Error(addErr))
-			}
-		}
-	} else if scheduleEnCount == 0 {
-		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN schedule_enabled INTEGER NOT NULL DEFAULT 1"); err != nil {
-			db.logger.Warn("添加schedule_enabled字段失败", zap.Error(err))
-		}
-	}
-
-	var lastTrigCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='last_schedule_trigger_at'").Scan(&lastTrigCount)
-	if err != nil {
-		if _, addErr := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN last_schedule_trigger_at DATETIME"); addErr != nil {
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				db.logger.Warn("添加last_schedule_trigger_at字段失败", zap.Error(addErr))
-			}
-		}
-	} else if lastTrigCount == 0 {
-		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN last_schedule_trigger_at DATETIME"); err != nil {
-			db.logger.Warn("添加last_schedule_trigger_at字段失败", zap.Error(err))
-		}
-	}
-
-	var lastSchedErrCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='last_schedule_error'").Scan(&lastSchedErrCount)
-	if err != nil {
-		if _, addErr := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN last_schedule_error TEXT"); addErr != nil {
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				db.logger.Warn("添加last_schedule_error字段失败", zap.Error(addErr))
-			}
-		}
-	} else if lastSchedErrCount == 0 {
-		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN last_schedule_error TEXT"); err != nil {
-			db.logger.Warn("添加last_schedule_error字段失败", zap.Error(err))
-		}
-	}
-
-	var lastRunErrCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='last_run_error'").Scan(&lastRunErrCount)
-	if err != nil {
-		if _, addErr := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN last_run_error TEXT"); addErr != nil {
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				db.logger.Warn("添加last_run_error字段失败", zap.Error(addErr))
-			}
-		}
-	} else if lastRunErrCount == 0 {
-		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN last_run_error TEXT"); err != nil {
-			db.logger.Warn("添加last_run_error字段失败", zap.Error(err))
-		}
-	}
-
-	var projectIDCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='project_id'").Scan(&projectIDCount)
-	if err != nil {
-		if _, addErr := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN project_id TEXT"); addErr != nil {
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				db.logger.Warn("添加batch_task_queues.project_id字段失败", zap.Error(addErr))
-			}
-		}
-	} else if projectIDCount == 0 {
-		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN project_id TEXT"); err != nil {
-			db.logger.Warn("添加batch_task_queues.project_id字段失败", zap.Error(err))
-		}
-	}
-
-	var hitlPolicyCount int
-	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='hitl_policy'").Scan(&hitlPolicyCount); err != nil {
-		return fmt.Errorf("检查队列审批字段失败: %w", err)
-	}
-	if hitlPolicyCount == 0 {
-		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN hitl_policy TEXT NOT NULL DEFAULT ''"); err != nil {
-			return fmt.Errorf("添加队列审批字段失败: %w", err)
-		}
-	}
-
-	var concurrencyCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('batch_task_queues') WHERE name='concurrency'").Scan(&concurrencyCount)
-	if err != nil {
-		if _, addErr := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN concurrency INTEGER NOT NULL DEFAULT 1"); addErr != nil {
-			errMsg := strings.ToLower(addErr.Error())
-			if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-				db.logger.Warn("添加batch_task_queues.concurrency字段失败", zap.Error(addErr))
-			}
-		}
-	} else if concurrencyCount == 0 {
-		if _, err := db.Exec("ALTER TABLE batch_task_queues ADD COLUMN concurrency INTEGER NOT NULL DEFAULT 1"); err != nil {
-			db.logger.Warn("添加batch_task_queues.concurrency字段失败", zap.Error(err))
 		}
 	}
 

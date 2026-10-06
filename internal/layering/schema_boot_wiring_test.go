@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -72,10 +73,17 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 			mustNotChangeSQL: "assets",
 		},
 		{
+			storeConstructor: "NewBatchTasks",
+			tablePrefix:      "batch_task",
+			anchorCall:       "createVulnerabilitiesTable",
+			anchorReason:     "the two tables are built where the two CREATE statements used to run, and batch_tasks cascades off batch_task_queues inside the same EnsureSchema",
+			mustNotChangeSQL: "batch_task",
+		},
+		{
 			storeConstructor: "NewWebshell",
 			tablePrefix:      "webshell_connection",
-			anchorCall:       "createBatchTasksTable",
-			anchorReason:     "the store creates both tables where the two CREATE statements used to run, and the state table cascades off the connection table inside the same schema string",
+			anchorCall:       "createVulnerabilitiesTable",
+			anchorReason:     "WebShell 的两张表原本排在这一批内联建表的最后；批量任务两张表现在也归自己的 store 建，所以锚点退到仍然内联建的那一张，钉住的还是同一个位置",
 			mustNotChangeSQL: "webshell_connection",
 		},
 		{
@@ -187,4 +195,99 @@ func anchorOffset(anchorCall string, execOffsets, fnCallOffsets map[string]int) 
 	}
 	offset, ok := fnCallOffsets[anchorCall]
 	return offset, ok
+}
+
+// TestMultiPhaseSchemaStepsRunInOrder pins the order of the phases a table's owner splits its DDL
+// into. idx_batch_task_queues_title sits on a column that only the column backfill creates, so
+// 建表 -> 补列 -> 建索引 is not a style preference: a fresh install passes either way, and only a
+// database written by the first release fails at start-up when someone reorders the three calls.
+//
+// That is the same defect the assets cut ran into, and it is caught here rather than by reading.
+func TestMultiPhaseSchemaStepsRunInOrder(t *testing.T) {
+	root := moduleRoot(t)
+	path := filepath.Join(root, "internal", "database", "database.go")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the boot file: %v", err)
+	}
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, src, 0)
+	if err != nil {
+		t.Fatalf("parse the boot file: %v", err)
+	}
+	offsets := map[string]int{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		outer, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		inner, ok := outer.X.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		ctor, ok := inner.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := ctor.X.(*ast.Ident); !ok || id.Name != "store" {
+			return true
+		}
+		key := ctor.Sel.Name + "." + outer.Sel.Name
+		offset := fset.Position(call.Pos()).Offset
+		if prev, seen := offsets[key]; !seen || offset < prev {
+			offsets[key] = offset
+		}
+		return true
+	})
+
+	cases := []struct {
+		constructor string
+		phases      []string
+		why         string
+	}{
+		{"NewBatchTasks", []string{"EnsureSchema", "MigrateQueueColumns", "EnsureIndexes"},
+			"the title index is on a column only the backfill creates"},
+		{"NewWebshell", []string{"EnsureSchema", "MigrateConnectionsTable"},
+			"the connection row reads columns the backfill adds"},
+		{"NewWorkflows", []string{"EnsureSchema", "MigrateRunsTable"},
+			"the run table reads columns the backfill adds"},
+	}
+	checked := 0
+	for _, tc := range cases {
+		var last int = -1
+		for _, phase := range tc.phases {
+			key := tc.constructor + "." + phase
+			offset, ok := offsets[key]
+			if !ok {
+				t.Errorf("%s never calls %s on the boot path: the phases of that table's schema are no longer all wired", tc.constructor, phase)
+				last = -1
+				break
+			}
+			if last >= 0 && offset <= last {
+				t.Errorf("%s calls %s out of order: %s must run first, because %s",
+					tc.constructor, phase, tc.phases[0], tc.why)
+			}
+			last = offset
+		}
+		checked++
+	}
+	if checked < 3 {
+		t.Fatalf("only %d multi-phase boot sequences inspected (want 3): the scan has gone blind", checked)
+	}
+	// A one-phase owner must not quietly grow a second sweep: assets builds table, columns and indexes
+	// inside its own EnsureSchema, so any extra phase call here is a split nobody asked for.
+	split := []string{}
+	for _, phase := range []string{"MigrateColumns", "EnsureIndexes", "MigrateTable"} {
+		if _, found := offsets["NewAssets."+phase]; found {
+			split = append(split, "NewAssets."+phase)
+		}
+	}
+	if len(split) > 0 {
+		sort.Strings(split)
+		t.Errorf("store.Assets grew a second boot phase (%v): its EnsureSchema is the one place that orders 建表 -> 补列 -> 建索引", split)
+	}
 }

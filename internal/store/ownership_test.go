@@ -208,6 +208,8 @@ var writeLedger = map[string][]string{
 	"webshell_connections":              {"webshell.go"},
 	"webshell_connection_states":        {"webshell.go"},
 	"assets":                            {"assets.go"},
+	"batch_task_queues":                 {"batch_task.go"},
+	"batch_tasks":                       {"batch_task.go"},
 	"robot_binding_codes":               {"robot_identity.go"},
 	"robot_user_bindings":               {"robot_identity.go"},
 	"robot_user_sessions":               {"robot_sessions.go"},
@@ -285,15 +287,15 @@ func TestStoreWritesOnlyTablesItOwns(t *testing.T) {
 	// The ledger size is exact while the scan's coverage is a floor: this package grows as domains are
 	// extracted, but every added table has to be an intentional edit with a file behind it. A floor on
 	// the ledger would let a failing offender be silenced by listing the table it names.
-	if len(writeLedger) != 32 {
-		t.Fatalf("the write ledger lists %d tables, want exactly 32 - measured 2026-10-06 when the blackboard "+
+	if len(writeLedger) != 34 {
+		t.Fatalf("the write ledger lists %d tables, want exactly 34 - measured 2026-10-06 when the blackboard "+
 			"arrived: %d statements over %d tables from %d files", len(writeLedger), statements, distinct, len(writes))
 	}
 	if len(writes) < 20 {
 		t.Fatalf("write ledger covers %d files, want at least 20 - the scan has gone blind", len(writes))
 	}
-	if distinct < 32 {
-		t.Fatalf("write ledger covers %d tables, want at least 32 - the scan has gone blind", distinct)
+	if distinct < 34 {
+		t.Fatalf("write ledger covers %d tables, want at least 34 - the scan has gone blind", distinct)
 	}
 }
 
@@ -440,11 +442,11 @@ func TestStoreCreatedTablesAlsoOwnTheirIndexes(t *testing.T) {
 	}
 	// Both floors are the measured state; without them an empty traversal would look like a pass.
 	t.Logf("this package creates %d tables and %d indexes on them", len(here), builtHere)
-	if len(here) < 29 {
-		t.Fatalf("only %d tables are created in internal/store, want at least 29 - the scan has gone blind", len(here))
+	if len(here) < 31 {
+		t.Fatalf("only %d tables are created in internal/store, want at least 31 - the scan has gone blind", len(here))
 	}
-	if builtHere < 55 {
-		t.Fatalf("only %d indexes on this package's tables are created here, want at least 55 - the scan has gone blind", builtHere)
+	if builtHere < 58 {
+		t.Fatalf("only %d indexes on this package's tables are created here, want at least 58 - the scan has gone blind", builtHere)
 	}
 
 	var strays []string

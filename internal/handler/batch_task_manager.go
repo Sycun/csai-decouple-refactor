@@ -14,6 +14,7 @@ import (
 
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -750,7 +751,7 @@ func (m *BatchTaskManager) UpdateQueueSchedule(queueID, scheduleMode, cronExpr s
 }
 
 // batchQueueConcurrencyFromRow 从数据库行读取并发数（缺省为 1）。
-func batchQueueConcurrencyFromRow(row *database.BatchTaskQueueRow) int {
+func batchQueueConcurrencyFromRow(row *store.BatchTaskQueueRow) int {
 	if row == nil || !row.Concurrency.Valid {
 		return DefaultBatchQueueConcurrency
 	}

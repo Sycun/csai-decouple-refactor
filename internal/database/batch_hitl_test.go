@@ -19,10 +19,12 @@ func TestBatchHITLLegacyMigration(t *testing.T) {
 	if _, err := db.Exec("ALTER TABLE batch_task_queues DROP COLUMN hitl_policy"); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.migrateBatchTaskQueuesTable(); err != nil {
+	// 补列归表的拥有者；这里连着跑两遍，验它仍然幂等。
+	batches := NewBatchTasks(db)
+	if err := batches.MigrateQueueColumns(); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.migrateBatchTaskQueuesTable(); err != nil {
+	if err := batches.MigrateQueueColumns(); err != nil {
 		t.Fatal(err)
 	}
 	row, err := db.GetBatchQueue("legacy")

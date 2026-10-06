@@ -2732,6 +2732,64 @@ C2 三张列表都认的哨兵，而 `assetWhere` 只是把它当成一个匹配
 所以"删转发不改变线格式"这一条是跑出来的，不是推断出来的。
 
 
+### P6 第三十三刀 —— 批量任务账本整片进 `store.BatchTasks`，并把「建表 → 补列 → 建索引」升级成一道门禁
+
+`internal/database/batch_task.go`（**623 行、22 个方法**）整片进 `internal/store/batch_task.go`：队列行与它
+的调度戳、任务行、重跑重置、单跑准备、可见性列表与计数，**连同两张表的 DDL、13 个后补列与 3 条索引**。
+`*DB` 侧留 **22 条一行转发**（消费面仍是 `database.BatchTaskStore`），`BatchTaskQueueRow` / `BatchTaskRow`
+两个行类型跟着搬到 store，`stores.go`、`handler/batch_task_manager.go`、`audit/resource_availability.go`
+的引用一起改限定名。水位 **214 → 213**（掉的是私有补列函数 `migrateBatchTaskQueuesTable`；导出方法数不变，
+`TestDatabaseSurfaceHasNoUnreachableMethods` 的 180 地板照旧命中）。
+
+**第三十一刀的教训这次提前用上了，而且果然又踩到同一处**：`idx_batch_task_queues_title` 依赖的 `title`
+**不在 CREATE TABLE 里**，只由后补列那一步产生。原启动顺序是「两张表 → 补列（记一条 warn 就继续）→
+最后那批全局索引」，所以搬的时候必须保持三段。第一版我把三条索引跟在建表放一起、把补列留在了后面，
+于是**老库（第一个版本写的库）启动会硬失败**，而全新库与全部测试都是绿的——和资产那一刀一模一样的形状。
+修法是把三段都交给表的主人（`EnsureSchema` / `MigrateQueueColumns` / `EnsureIndexes`），启动按这个顺序跑，
+然后**把这件事变成门禁而不只是注释**：
+
+- 新 `TestMultiPhaseSchemaStepsRunInOrder`（`internal/layering`）读启动文件、按 `store.New*(...).阶段()`
+  的偏移比序，钉住三条多段序列（BatchTasks 三段、Webshell 两段、Workflows 两段），并有「至少比过 3 条」
+  的反空跑下限；顺带钉住 `store.Assets` 不许悄悄长出第二段（它的三段在自己的 `EnsureSchema` 里排好）。
+  探针：把补列与建索引两步对调 →
+  `NewBatchTasks calls EnsureIndexes out of order: EnsureSchema must run first, because the title index is on a column only the backfill creates`，
+  撤回复绿。
+- 新存储层测试里带**真·老库正向对照**：用第一段发布版本的表形状（无 title/role/调度列）建库，
+  先 `EnsureIndexes` **必须**报 `title`，再补列、再建索引才成功——否则「顺序重要」这句话就没有证据。
+
+**新测试** `internal/store/batch_task_test.go` **6 个用例**（真库，DSN 带 `_foreign_keys=1` 与生产同语义）：
+三段建表 + 13 列 + 3 索引 + 二次幂等 + 上面的老库对照；22 个方法在无连接时逐条报同一条错误；
+队列/任务往返（标题、默认值、`hitl_policy` 取第一个、`created_at` 解析回退、状态与 result/error 落回）；
+取消只打 pending 尾巴、重跑把任务与队列头一起清干净、删队列把任务一起带走；
+列表与计数在同一条筛选下必须 agree、调度与两个错误戳能落能清、元信息整块替换；
+单跑准备的两条分支（`resetTask` 真/假）与**队列被置成 `paused`**；行形状的守卫（每个可空列必须是 `sql.Null*`，
+`BatchTaskRow` 字段数必须等于 `batch_tasks` 列数——一边单方面动就会红）。
+**按现状钉住、没改的三条既有软语义**：读不到队列答 `(nil, nil)` 不是 error；
+`UpdateBatchQueueCurrentIndex` / `UpdateBatchQueueStatus` 对不存在的队列是**静默空操作**
+（调用方靠这一点在队列已卸载后继续跑）；`AddBatchTask` 在外键打开时被拒。这三条都是**原行为**，
+搬运前后方法体逐字节等价（见下），所以钉现状不是钉我写的东西。
+
+**两处脚本自伤，都是同一个模式**：① 抽取脚本先做 `db.Exec( → s.db.Exec(`，再做通用 `db.Method( → s.Method(`，
+第二条**又匹配到第一条产物里的 `db.`**，产出 25 处 `s.s.Exec(`；`go build` 当场抓住。
+② 给方法插 `requireDB()` 守卫的脚本按「签名行末尾是 `{`」找函数体，
+`CreateBatchQueue`（参数竖排 11 行）与 5 个返回切片的**多行签名**没被认出来，**6 个方法一个守卫都没插**，
+`GetBatchQueue` 在 nil 接收器上直接段错误——是新写的拒绝用例抓出来的，不是编译器。
+规矩：**多行签名要用括号配平找 `{`，不能按行尾猜**；同一条替换链里后面的规则必须能排除前面规则的输出。
+
+**搬走时少掉日志的账（明码标价）**：3 条「解析 created_at 失败」的逐行 warn 没跟过来（回退成 `time.Now()`
+的行为**保留并被测试钉住**，store 没有 logger 是本仓库既定规矩）；
+13 列补写原本每列失败记一条 warn，现在合成一条、**错误文本里带列名**（`补列 batch_task_queues.title 失败: …`），
+启动那一步仍然只 warn 不拦。这是本刀唯一 operator-visible 的形状变化，不涉及任何响应或可达性。
+
+**门禁与账**：`writeLedger` **32 → 34 张表**（两张批量表都认领到 `batch_task.go`，探针方向已在今日早些时候
+对 `assets` 验过同一判据会红）；`TestStoreCreatedTablesAlsoOwnTheirIndexes` 现在扫到 **30 张表 / 58 条索引**
+（地板 29/55 照旧通过）；boot 清单加 `NewBatchTasks` 一条，`NewWebshell` 的锚点从已消失的
+`createBatchTaskQueuesTable` 改到仍在原位内联建的 `createVulnerabilitiesTable`；
+**SQL 逐字节等价证明**：`git show HEAD` 的原文件与 store 里的 22 个方法在只归一化「接收者、连接调用、
+作用域常量、新插的守卫、删掉的 3 条 warn」之后 **compared: 22, problems: 0**；
+`gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿；
+`internal/store` 生产文件 **27 → 28**、包内测试 **199 → 205**、全仓测试函数 **1568 → 1575**。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

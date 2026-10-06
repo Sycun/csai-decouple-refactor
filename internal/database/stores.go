@@ -91,7 +91,7 @@ var _ AttackChainStore = (*DB)(nil)
 // one thing. The findings lookup is absent for the same reason - it is store.Vulnerabilities.Get.
 type ResourceExistence interface {
 	ConversationExists(id string) (bool, error)
-	GetBatchQueue(queueID string) (*BatchTaskQueueRow, error)
+	GetBatchQueue(queueID string) (*store.BatchTaskQueueRow, error)
 	GetC2Listener(id string) (*C2Listener, error)
 	GetC2Session(id string) (*C2Session, error)
 	GetC2Task(id string) (*C2Task, error)
@@ -108,10 +108,10 @@ type BatchTaskStore interface {
 	CreateBatchQueue(queueID string, title string, role string, agentMode string, scheduleMode string, cronExpr string, nextRunAt *time.Time, projectID string, concurrency int, tasks []map[string]interface{}, hitlPolicies ...string) error
 	DeleteBatchQueue(queueID string) error
 	DeleteBatchTask(queueID, taskID string) error
-	GetAllBatchQueues() ([]*BatchTaskQueueRow, error)
-	GetBatchQueue(queueID string) (*BatchTaskQueueRow, error)
-	GetBatchTasks(queueID string) ([]*BatchTaskRow, error)
-	ListBatchQueuesForAccess(limit, offset int, status, keyword, userID, scope string) ([]*BatchTaskQueueRow, error)
+	GetAllBatchQueues() ([]*store.BatchTaskQueueRow, error)
+	GetBatchQueue(queueID string) (*store.BatchTaskQueueRow, error)
+	GetBatchTasks(queueID string) ([]*store.BatchTaskRow, error)
+	ListBatchQueuesForAccess(limit, offset int, status, keyword, userID, scope string) ([]*store.BatchTaskQueueRow, error)
 	PrepareBatchSingleTaskRun(queueID, taskID string, taskIndex int, resetTask, resumeQueue bool) error
 	RecordBatchQueueScheduledTriggerStart(queueID string, at time.Time) error
 	ResetBatchQueueForRerun(queueID string) error

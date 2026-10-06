@@ -74,7 +74,11 @@ import (
 // AssetStore shrank to the two members that belong to other domains (the project row and the RBAC
 // existence check) under the name AssetContextStore. Nothing on the connection wrapper touches
 // `assets` now, in either direction - the write ledger and the fresh-install check both confirm it.
-const dbMethodCeiling = 214
+// 214 -> 213: the batch run ledger moved whole - the queue row and its twelve late columns, the task
+// rows, the schedule stamps, the rerun reset and the single-task prepare - with both tables' DDL and
+// their three indexes. Twenty-two one-line delegations hold the manager and the handlers, so the drop
+// is migrateBatchTaskQueuesTable, the private backfill the table's owner now runs itself.
+const dbMethodCeiling = 213
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)
