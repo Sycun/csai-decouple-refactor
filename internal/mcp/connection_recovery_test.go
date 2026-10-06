@@ -57,10 +57,13 @@ func TestHandleConnectionDead_MarksLazyClientDisconnected(t *testing.T) {
 	m := NewExternalMCPManager(logger)
 
 	name := "dead-mcp"
+	// Declared disabled on purpose: handleConnectionDead schedules a reconnect, and that goroutine
+	// would race this assertion by writing its own failure into the same error field. What is pinned
+	// here is the marking and the recording, both synchronous; the scheduling has its own coverage.
 	cfg := config.ExternalMCPServerConfig{
 		Type:              "http",
 		URL:               "http://example.com/mcp",
-		ExternalMCPEnable: true,
+		ExternalMCPEnable: false,
 	}
 	m.mu.Lock()
 	m.configs[name] = cfg
