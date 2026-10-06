@@ -44,8 +44,10 @@ import (
 
 const (
 	agentHandlerMethodCeiling = 88
-	agentHandlerFileCeiling   = 21
-	setterCeiling             = 64
+	// 21 -> 20: re-measured while writing the delivery numbers. A ceiling only reports a drop in a
+	// log line, so the looser number had been carried since the fifth cut without anyone noticing.
+	agentHandlerFileCeiling = 20
+	setterCeiling           = 64
 )
 
 // receiverMethodCeilings pins every large handler type, so progress on one is not cancelled

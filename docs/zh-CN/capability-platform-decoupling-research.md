@@ -737,7 +737,13 @@ make fmt-check                            # gofmt：**硬零**（起点 29 → r
                                           # 因此 `make fmt` 现在随时可跑且不会带出无关改动
 go test -count=1 ./internal/app/ -run 'Shipped|Declared|Catalog|Capability|Recipe|Approval'
 go test -count=1 ./internal/handler/ -run 'I18n|Route|OpenAPI|Undocumented|TwoHandlers|HITLExemption'
-go test -count=1 ./internal/handler/ -run 'RawSQLRatchet|StorePackageHoldsNoHTTPConcerns'   # 裸 SQL 双接收者基线 0/0（起点 49/17）
+go test -count=1 ./internal/handler/ -run 'StorePackageHoldsNoHTTPConcerns'                       # store 包不掺 HTTP 关注点
+go test -count=1 -v -run TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt ./internal/layering/ 2>&1 | grep 'raw SQL outside'   # 分层裸 SQL **0 条 / 0 个文件**（起点 49），扫描覆盖 508 个生产文件；空清单由 8 条正向对照 + 遍历域下限自证
+go test -count=1 -v -run TestStoredInstantIsReadInOnePlace ./internal/layering/ 2>&1 | grep 'stored-instant'   # 「一个 DATETIME 列怎么读回时间」自有层外 **0 个文件**（起点 24 处读者），覆盖 552 个生产文件
+go test -count=1 -v -run 'TestDatabaseSurface' ./internal/layering/ 2>&1 | grep -E 'database surface|dropped'  # *DB 方法 **316 上限 / 277 个导出面**，5 个不可达者逐条列名
+go test -count=1 ./internal/store/ -run 'TestModelTokenUsage|TestRobotSessions|TestKnowledgeItems|TestOwnedTables'   # 第十一~十四片新增：真库 + 差分 + 归属
+go test -count=1 ./internal/handler/ -run 'TestUsageStats|TestConversationTokenUsage'   # 用量两端点的 HTTP 契约：键集合逐字钉住 + 四种可达性
+go test -count=1 ./internal/app/ -run TestAssemblyInstalls   # 装配接线：每个 store 的建表/回填/声明在启动里被调，且顺序对
 go test -count=1 ./internal/handler/ -run 'TestNotificationProducers|TestNotificationTypes|TestDigest'   # 通知契约：可达性 + 两侧名字集
 go test -count=1 ./internal/handler/ -run 'TestPersistedDetailTier|TestGoldenRecords'                     # 持久化 tier：8 vs 35，双向 ratchet 1/1
 go test -count=1 ./internal/provider/ -run 'TestPublished|TestResolve|TestAnthropic'                       # 方言目录产物逐字节一致
@@ -764,7 +770,15 @@ grep -l '^capability:' tools/*.yaml | wc -l                        # 90
 grep -rn go:embed --include='*.go' . | grep -v _test | wc -l       # 3（原 0）
 ```
 
-当前基线：`make fmt-check` **硬零（gofmt: clean）**、`go build ./...` 干净、`go vet ./...` 干净、`go test -race -count=1 ./...` **43 个含测试包全绿 / 0 竞争**（报告基线为 32 包）；测试函数 **1205** 个，重构前（HEAD）为 989 个，即 **+216**。`AgentHandler` 水位 **112 方法 / 21 文件**（起点 130 / 23）。
+当前基线（2026-10-06 第十四片后复测，全部为当场命令输出）：`make fmt-check` **硬零（gofmt: clean）**、
+`go build ./...` 干净、`go vet ./...` 干净、`make test-gates`（= 同步测试树 + verify + gofmt + vet +
+`go test -race -count=1 ./...` + js 检查 + layering + wiring + build）**exit 0，69 个 ok 行、
+其中含测试的包 47 个、0 竞争**；测试函数 **1463** 个（重构前 HEAD 为 989，**+474**），
+`internal/store` 生产文件 **16 个**、包内测试 **118** 条。
+`AgentHandler` 水位 **88 方法 / 20 文件**（起点 130 / 23；由 `TestHandlerSizesOnlyShrink` 钉住）。
+写这段数字时按 `grep -rlE '^func \([a-z] \*AgentHandler\)'` 当场复测出 **20** 个文件，而门禁上限还写着
+**21**——那是第五刀之后一次下降只进了 log、上限没人跟。已收紧为 20 并在常量旁写下原因；
+**同类漂移至今撞到两次**（`dbMethodCeiling` 328/327 与这里 21/20），所以本节的每个数字都只写当场命令的输出。
 
 ### §6 社区知识库高危面 —— 完成代码层控制（非 prompt 层）
 
