@@ -44,7 +44,7 @@ func TestListProjectFacts_updatedAtJSON(t *testing.T) {
 	}
 	pid := projects[0].ID
 
-	list, err := db.ListProjectFacts(pid, store.ProjectFactListFilter{}, 5, 0)
+	list, err := NewFacts(db).ListProjectFacts(pid, store.ProjectFactListFilter{}, 5, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -135,35 +135,35 @@ func TestBuildProjectFactGraphPreservesStoredEdgeDirection(t *testing.T) {
 		{"finding/mysql_public", "finding"},
 		{"exploit/mysql_creds_extract", "exploit"},
 	} {
-		if _, err := db.UpsertProjectFact(&store.ProjectFact{
+		if _, err := database.NewFacts(db).UpsertProjectFact(&store.ProjectFact{
 			ProjectID: p.ID, FactKey: spec.key, Category: spec.cat, Summary: spec.key, Confidence: "confirmed",
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := db.ReplaceIncomingProjectFactEdges(p.ID, "finding/mysql_public", []store.ProjectFactEdgeFromInput{
+	if err := database.NewFacts(db).ReplaceIncomingProjectFactEdges(p.ID, "finding/mysql_public", []store.ProjectFactEdgeFromInput{
 		{From: "target/primary_domain", Type: "discovered_on"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.ReplaceIncomingProjectFactEdges(p.ID, "finding/mysql_public", []store.ProjectFactEdgeFromInput{
+	if err := database.NewFacts(db).ReplaceIncomingProjectFactEdges(p.ID, "finding/mysql_public", []store.ProjectFactEdgeFromInput{
 		{From: "target/primary_domain", Type: "discovered_on"},
 		{From: "exploit/mysql_creds_extract", Type: "exploits"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.ReplaceIncomingProjectFactEdges(p.ID, "chain/full_attack_path", []store.ProjectFactEdgeFromInput{
+	if err := database.NewFacts(db).ReplaceIncomingProjectFactEdges(p.ID, "chain/full_attack_path", []store.ProjectFactEdgeFromInput{
 		{From: "target/primary_domain", Type: "discovered_on"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.ReplaceIncomingProjectFactEdges(p.ID, "exploit/mysql_creds_extract", []store.ProjectFactEdgeFromInput{
+	if err := database.NewFacts(db).ReplaceIncomingProjectFactEdges(p.ID, "exploit/mysql_creds_extract", []store.ProjectFactEdgeFromInput{
 		{From: "chain/full_attack_path", Type: "leads_to"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
-	graph, err := BuildProjectFactGraph(NewStore(db, db), p.ID, "path", true)
+	graph, err := BuildProjectFactGraph(NewStore(db, database.NewFacts(db)), p.ID, "path", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +215,7 @@ func TestPersistFactLinksFromUsesFromAsIncoming(t *testing.T) {
 		{"target/primary_domain", "target"},
 		{"finding/sqli", "finding"},
 	} {
-		if _, err := db.UpsertProjectFact(&store.ProjectFact{
+		if _, err := database.NewFacts(db).UpsertProjectFact(&store.ProjectFact{
 			ProjectID: p.ID, FactKey: spec.key, Category: spec.cat, Summary: spec.key, Confidence: "confirmed",
 		}); err != nil {
 			t.Fatal(err)
@@ -226,10 +226,10 @@ func TestPersistFactLinksFromUsesFromAsIncoming(t *testing.T) {
 			{From: "target/primary_domain", Type: "discovered_on"},
 		},
 	}
-	if err := PersistFactLinksFromParsed(NewStore(db, db), p.ID, "finding/sqli", "", parsed, false); err != nil {
+	if err := PersistFactLinksFromParsed(NewStore(db, database.NewFacts(db)), p.ID, "finding/sqli", "", parsed, false); err != nil {
 		t.Fatal(err)
 	}
-	graph, err := BuildProjectFactGraph(NewStore(db, db), p.ID, "path", true)
+	graph, err := BuildProjectFactGraph(NewStore(db, database.NewFacts(db)), p.ID, "path", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,22 +265,22 @@ func TestReplaceIncomingAllowsNotYetCreatedSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.UpsertProjectFact(&store.ProjectFact{
+	if _, err := database.NewFacts(db).UpsertProjectFact(&store.ProjectFact{
 		ProjectID: p.ID, FactKey: "exploit/sqli", Category: "exploit", Summary: "exploit", Confidence: "confirmed",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.ReplaceIncomingProjectFactEdges(p.ID, "exploit/sqli", []store.ProjectFactEdgeFromInput{
+	if err := database.NewFacts(db).ReplaceIncomingProjectFactEdges(p.ID, "exploit/sqli", []store.ProjectFactEdgeFromInput{
 		{From: "finding/sqli_endpoint", Type: "exploits"},
 	}); err != nil {
 		t.Fatalf("incoming edge should not require source fact to exist yet: %v", err)
 	}
-	if _, err := db.UpsertProjectFact(&store.ProjectFact{
+	if _, err := database.NewFacts(db).UpsertProjectFact(&store.ProjectFact{
 		ProjectID: p.ID, FactKey: "finding/sqli_endpoint", Category: "finding", Summary: "finding", Confidence: "confirmed",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	in, err := db.ListIncomingProjectFactEdges(p.ID, "exploit/sqli")
+	in, err := database.NewFacts(db).ListIncomingProjectFactEdges(p.ID, "exploit/sqli")
 	if err != nil || len(in) != 1 || in[0].SourceFactKey != "finding/sqli_endpoint" {
 		t.Fatalf("expected persisted edge from finding, got %+v err=%v", in, err)
 	}

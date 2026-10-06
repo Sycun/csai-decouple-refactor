@@ -118,7 +118,7 @@ func TestBuildFactIndexBlock_withLinksAndPathOverview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.UpsertProjectFact(&store.ProjectFact{
+	_, err = database.NewFacts(db).UpsertProjectFact(&store.ProjectFact{
 		ProjectID:  proj.ID,
 		FactKey:    "target/dev",
 		Category:   "target",
@@ -128,7 +128,7 @@ func TestBuildFactIndexBlock_withLinksAndPathOverview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.UpsertProjectFact(&store.ProjectFact{
+	_, err = database.NewFacts(db).UpsertProjectFact(&store.ProjectFact{
 		ProjectID:  proj.ID,
 		FactKey:    "finding/sqli",
 		Category:   "finding",
@@ -138,7 +138,7 @@ func TestBuildFactIndexBlock_withLinksAndPathOverview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = db.AddProjectFactEdge(proj.ID, store.ProjectFactEdgeInput{
+	_, err = database.NewFacts(db).AddProjectFactEdge(proj.ID, store.ProjectFactEdgeInput{
 		To:   "finding/sqli",
 		Type: "discovered_on",
 	}, "target/dev", "")
@@ -146,7 +146,7 @@ func TestBuildFactIndexBlock_withLinksAndPathOverview(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	block, err := BuildFactIndexBlock(NewStore(db, db), proj.ID, config.ProjectConfig{Enabled: true, FactIndexMaxRunes: 6500, FactIndexPathMaxRunes: 1000})
+	block, err := BuildFactIndexBlock(NewStore(db, database.NewFacts(db)), proj.ID, config.ProjectConfig{Enabled: true, FactIndexMaxRunes: 6500, FactIndexPathMaxRunes: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}

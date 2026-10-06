@@ -47,19 +47,19 @@ func TestFactGraphIntegration(t *testing.T) {
 		{"target/root", "target", "root"},
 		{"finding/x", "finding", "finding x"},
 	} {
-		_, err := db.UpsertProjectFact(&store.ProjectFact{
+		_, err := database.NewFacts(db).UpsertProjectFact(&store.ProjectFact{
 			ProjectID: p.ID, FactKey: spec.key, Category: spec.cat, Summary: spec.summary, Confidence: "confirmed",
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := db.ReplaceIncomingProjectFactEdges(p.ID, "finding/x", []store.ProjectFactEdgeFromInput{
+	if err := database.NewFacts(db).ReplaceIncomingProjectFactEdges(p.ID, "finding/x", []store.ProjectFactEdgeFromInput{
 		{From: "target/root", Type: "discovered_on"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	graph, err := BuildProjectFactGraph(NewStore(db, db), p.ID, "path", true)
+	graph, err := BuildProjectFactGraph(NewStore(db, database.NewFacts(db)), p.ID, "path", true)
 	if err != nil {
 		t.Fatal(err)
 	}

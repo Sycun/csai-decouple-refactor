@@ -10,16 +10,7 @@ import (
 // type alias pointing back (project.Store, agentfinalizer.Store), so there is still exactly one
 // list of methods to edit, and *DB's compliance is checked at compile time right here.
 
-// ProjectFactStore is what the project blackboard, stats and fact-graph builders need: the project
-// row plus the fact and fact-edge ledger.
-//
-// Deliberately absent: Close. A consumer of the shared handle must not be able to shut it down.
-type ProjectFactStore interface {
-	ProjectRowStore
-	BlackboardLedger
-}
-
-// ProjectRowStore is the half of the old surface that is about the project itself: creating it,
+// ProjectRowStore is the half of the split surface that is about the project itself: creating it,
 // reading it, and the counters the project page shows. *DB answers it - the rows are its own.
 type ProjectRowStore interface {
 	CreateProject(p *Project) (*Project, error)
@@ -43,8 +34,9 @@ type BlackboardLedger interface {
 	AddProjectFactEdge(projectID string, in store.ProjectFactEdgeInput, sourceFactKey, sourceConversationID string) (*store.ProjectFactEdge, error)
 }
 
+// Deliberately absent from both: Close. A consumer of the shared handle must not be able to shut it
+// down.
 var (
-	_ ProjectFactStore = (*DB)(nil)
 	_ ProjectRowStore  = (*DB)(nil)
 	_ BlackboardLedger = (*store.Facts)(nil)
 )
@@ -63,17 +55,16 @@ var _ ToolExecutionLedger = (*DB)(nil)
 // surface at all, and internal/workflow no longer imports this package.
 
 // AttackChainLedger is what the attack-chain builder and the "promote to project" path need: the
-// chain's node/edge rows, the conversation evidence they are reconstructed from, and - because
-// promoting writes facts and edges into the project - the whole project fact surface as well.
+// conversation evidence the chain is reconstructed from and the project rows it writes into.
+// The facts and edges promoting writes belong to store.Facts and arrive as their own argument.
 type AttackChainLedger interface {
-	ProjectFactStore
+	ProjectRowStore
 	ConversationHasToolProcessDetails(conversationID string) (bool, error)
 	GetAgentTrace(conversationID string) (traceInputJSON, assistantOutput string, err error)
 	GetConversation(id string) (*Conversation, error)
 	GetMessages(conversationID string) ([]Message, error)
 	GetProcessDetailsByConversation(conversationID string) (map[string][]ProcessDetail, error)
 	GetProject(id string) (*Project, error)
-	GetProjectFactByKey(projectID, factKey string) (*store.ProjectFact, error)
 }
 
 var _ AttackChainLedger = (*DB)(nil)

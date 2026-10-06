@@ -236,7 +236,7 @@ func TestExecuteEinoGraph_linearStartOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	state := newWorkflowLocalState(map[string]interface{}{"message": "ping"}, "run-linear")
-	args := RunArgs{DB: Store{Store: project.NewStore(db, db), Ledger: runs}}
+	args := RunArgs{DB: Store{Store: project.NewStore(db, database.NewFacts(db)), Ledger: runs}}
 	if err := executeEinoGraph(ctx, args, "run-linear", "test-wf", 1, g, state); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -344,7 +344,7 @@ func TestExecuteEinoGraph_conditionBranch(t *testing.T) {
 	}
 
 	stateYes := newWorkflowLocalState(map[string]interface{}{"message": "yes"}, "run-yes")
-	if err := executeEinoGraph(ctx, RunArgs{DB: Store{Store: project.NewStore(db, db), Ledger: runs}}, "run-yes", "test-wf-branch", 1, g, stateYes); err != nil {
+	if err := executeEinoGraph(ctx, RunArgs{DB: Store{Store: project.NewStore(db, database.NewFacts(db)), Ledger: runs}}, "run-yes", "test-wf-branch", 1, g, stateYes); err != nil {
 		t.Fatalf("execute yes: %v", err)
 	}
 	if got := stateYes.Outputs["branch"]; got != "yes" {
@@ -352,7 +352,7 @@ func TestExecuteEinoGraph_conditionBranch(t *testing.T) {
 	}
 
 	stateNo := newWorkflowLocalState(map[string]interface{}{"message": "no"}, "run-no")
-	if err := executeEinoGraph(ctx, RunArgs{DB: Store{Store: project.NewStore(db, db), Ledger: runs}}, "run-no", "test-wf-branch", 1, g, stateNo); err != nil {
+	if err := executeEinoGraph(ctx, RunArgs{DB: Store{Store: project.NewStore(db, database.NewFacts(db)), Ledger: runs}}, "run-no", "test-wf-branch", 1, g, stateNo); err != nil {
 		t.Fatalf("execute no: %v", err)
 	}
 	if got := stateNo.Outputs["branch"]; got != "no" {
@@ -382,7 +382,7 @@ func TestRunRoleBoundWorkflow_integration(t *testing.T) {
 		WorkflowPolicy: "auto",
 	}
 	result, err := RunRoleBoundWorkflow(ctx, RunArgs{
-		DB:          Store{Store: project.NewStore(db, db), Ledger: runs},
+		DB:          Store{Store: project.NewStore(db, database.NewFacts(db)), Ledger: runs},
 		Logger:      zap.NewNop(),
 		Role:        role,
 		UserMessage: "from-role",

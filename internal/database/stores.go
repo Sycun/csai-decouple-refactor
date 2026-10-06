@@ -22,7 +22,7 @@ import (
 
 // AgentStore is the persistence surface required by AgentHandler.
 type AgentStore interface {
-	ProjectFactStore
+	ProjectRowStore
 	ToolExecutionLedger
 	AddMessage(conversationID, role, content string, mcpExecutionIDs []string) (*Message, error)
 	AddProcessDetail(messageID, conversationID, eventType, message string, data interface{}) error
@@ -234,33 +234,19 @@ var _ OpenAPIStore = (*DB)(nil)
 
 // ProjectStore is the persistence surface required by ProjectHandler.
 type ProjectStore interface {
-	ProjectFactStore
+	ProjectRowStore
 	AttackChainLedger
-	AddProjectFactEdge(projectID string, in store.ProjectFactEdgeInput, sourceFactKey, sourceConversationID string) (*store.ProjectFactEdge, error)
 	AssignResourceToUser(userID, resourceType, resourceID string) error
 	CountConversationsByProjectID(projectID string) (int, error)
 	CountProjectsForAccess(status, search, userID, scope string) (int, error)
 	CreateProject(p *Project) (*Project, error)
 	DeleteProject(id string) error
-	DeleteProjectFact(id string) error
-	DeleteProjectFactEdge(edgeID string) error
-	DeprecateProjectFact(projectID, factKey string) error
 	GetProject(id string) (*Project, error)
 	GetProjectDashboardSummaryForAccess(factLimit int, userID, scope string) (*ProjectDashboardSummary, error)
-	GetProjectFact(id string) (*store.ProjectFact, error)
-	GetProjectFactByKey(projectID, factKey string) (*store.ProjectFact, error)
-	GetProjectFactEdge(edgeID string) (*store.ProjectFactEdge, error)
 	ListConversationsByProjectID(projectID string, limit, offset int) ([]*Conversation, error)
-	ListIncomingProjectFactEdges(projectID, targetFactKey string) ([]*store.ProjectFactEdge, error)
-	ListOutgoingProjectFactEdges(projectID, sourceFactKey string) ([]*store.ProjectFactEdge, error)
-	ListProjectFactEdgesByProject(projectID string) ([]*store.ProjectFactEdge, error)
-	ListProjectFacts(projectID string, filter store.ProjectFactListFilter, limit, offset int) ([]*store.ProjectFact, error)
 	ListProjectsForAccess(status, search string, limit, offset int, userID, scope string) ([]*Project, error)
-	RenameProjectFactKeyEdges(projectID, oldKey, newKey string) error
-	RestoreProjectFact(projectID, factKey, confidence string) error
 	SetResourceOwner(resourceType, resourceID, userID string) error
 	UpdateProject(p *Project) error
-	UpsertProjectFact(f *store.ProjectFact) (*store.ProjectFact, error)
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 
@@ -347,7 +333,7 @@ var _ WebShellStore = (*DB)(nil)
 // detail a run appends, and the one RBAC question the page asks. The workflow rows themselves are not
 // here - h.runs answers those.
 type WorkflowStore interface {
-	ProjectFactStore
+	ProjectRowStore
 	AddProcessDetail(conversationID, messageID, id, eventType string, data interface{}) error
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }

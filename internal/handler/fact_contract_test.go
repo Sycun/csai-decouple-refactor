@@ -54,7 +54,7 @@ func newFactContractRouter(h *ProjectHandler, session *security.Session) *gin.En
 
 func seedFact(t *testing.T, db *database.DB, projectID, key, category, summary, body, confidence string, pinned bool) *store.ProjectFact {
 	t.Helper()
-	fact, err := db.UpsertProjectFact(&store.ProjectFact{
+	fact, err := database.NewFacts(db).UpsertProjectFact(&store.ProjectFact{
 		ProjectID: projectID, FactKey: key, Category: category, Summary: summary, Body: body,
 		Confidence: confidence, Pinned: pinned,
 	})
@@ -186,7 +186,7 @@ func TestFactContractDetailByFactKeyAndLinkViews(t *testing.T) {
 
 	seedFact(t, db, project.ID, "note.source", "note", "source", "", "confirmed", false)
 	target := seedFact(t, db, project.ID, "note.target", "note", "target", "", "confirmed", false)
-	if _, err := db.AddProjectFactEdge(project.ID, store.ProjectFactEdgeInput{To: "note.target", Type: "leads_to", Confidence: "confirmed"}, "note.source", ""); err != nil {
+	if _, err := database.NewFacts(db).AddProjectFactEdge(project.ID, store.ProjectFactEdgeInput{To: "note.target", Type: "leads_to", Confidence: "confirmed"}, "note.source", ""); err != nil {
 		t.Fatalf("add edge: %v", err)
 	}
 
@@ -310,7 +310,7 @@ func TestFactContractCreateUpdateAndRenameAnswers(t *testing.T) {
 	if !strings.Contains(renamedErr, "UNIQUE constraint failed: project_facts.id") {
 		t.Fatalf("rename error = %q, want the primary-key collision the current code produces", renamedErr)
 	}
-	if still, err := db.GetProjectFactByKey(project.ID, "note.a"); err != nil || still == nil {
+	if still, err := database.NewFacts(db).GetProjectFactByKey(project.ID, "note.a"); err != nil || still == nil {
 		t.Fatalf("fact after the refused rename: %v (%v), want the original key untouched", still, err)
 	}
 
@@ -333,7 +333,7 @@ func TestFactContractCreateUpdateAndRenameAnswers(t *testing.T) {
 	if w := doContract(t, router, http.MethodPut, path+"/"+factID, []byte(`{"clear_body":true}`)); w.Code != http.StatusOK {
 		t.Fatalf("clear body = %d: %s", w.Code, w.Body.String())
 	}
-	stored, err := db.GetProjectFact(factID)
+	stored, err := database.NewFacts(db).GetProjectFact(factID)
 	if err != nil {
 		t.Fatalf("read back: %v", err)
 	}
@@ -346,7 +346,7 @@ func TestFactContractCreateUpdateAndRenameAnswers(t *testing.T) {
 	if w := doContract(t, router, http.MethodPut, path+"/"+plain.ID, []byte(`{"clear_body":true}`)); w.Code != http.StatusOK {
 		t.Fatalf("clear plain body = %d: %s", w.Code, w.Body.String())
 	}
-	storedPlain, err := db.GetProjectFact(plain.ID)
+	storedPlain, err := database.NewFacts(db).GetProjectFact(plain.ID)
 	if err != nil {
 		t.Fatalf("read plain back: %v", err)
 	}
@@ -368,7 +368,7 @@ func TestFactContractDeleteDeprecateRestoreAnswers(t *testing.T) {
 
 	live := seedFact(t, db, project.ID, "note.live", "note", "live", "", "confirmed", false)
 	seedFact(t, db, project.ID, "note.linked", "note", "linked", "", "tentative", false)
-	if _, err := db.AddProjectFactEdge(project.ID, store.ProjectFactEdgeInput{To: "note.linked", Type: "depends_on"}, "note.live", ""); err != nil {
+	if _, err := database.NewFacts(db).AddProjectFactEdge(project.ID, store.ProjectFactEdgeInput{To: "note.linked", Type: "depends_on"}, "note.live", ""); err != nil {
 		t.Fatalf("add edge: %v", err)
 	}
 
@@ -394,7 +394,7 @@ func TestFactContractDeleteDeprecateRestoreAnswers(t *testing.T) {
 		t.Fatalf("deprecated rows = %v, want only note.live", got)
 	}
 	// Deprecating a fact marks its edges deprecated too - the graph view filters on that.
-	edges, err := db.ListProjectFactEdgesByProject(project.ID)
+	edges, err := database.NewFacts(db).ListProjectFactEdgesByProject(project.ID)
 	if err != nil {
 		t.Fatalf("list edges: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestFactContractDeleteDeprecateRestoreAnswers(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("restore = %d: %s", w.Code, w.Body.String())
 	}
-	restored, err := db.GetProjectFactByKey(project.ID, "note.live")
+	restored, err := database.NewFacts(db).GetProjectFactByKey(project.ID, "note.live")
 	if err != nil {
 		t.Fatalf("read restored: %v", err)
 	}
@@ -434,14 +434,14 @@ func TestFactContractDeleteDeprecateRestoreAnswers(t *testing.T) {
 		t.Fatalf("delete = %d %s, want 200 success", w.Code, w.Body.String())
 	}
 	// Deleting the fact removes its edges as well; nothing is left pointing at the dead key.
-	edges, err = db.ListProjectFactEdgesByProject(project.ID)
+	edges, err = database.NewFacts(db).ListProjectFactEdgesByProject(project.ID)
 	if err != nil {
 		t.Fatalf("list edges after delete: %v", err)
 	}
 	if len(edges) != 0 {
 		t.Fatalf("edges after delete = %+v, want none", edges)
 	}
-	if _, err := db.GetProjectFact(live.ID); err == nil {
+	if _, err := database.NewFacts(db).GetProjectFact(live.ID); err == nil {
 		t.Fatal("fact still readable after delete")
 	}
 	// The other project's fact id is a 404, and so is an unknown id.

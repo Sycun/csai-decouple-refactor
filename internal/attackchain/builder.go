@@ -44,6 +44,7 @@ type ChainStore interface {
 type Builder struct {
 	db           Store
 	chain        ChainStore
+	facts        database.BlackboardLedger
 	logger       *zap.Logger
 	openAIClient *openai.Client
 	openAIConfig *config.OpenAIConfig
@@ -65,7 +66,7 @@ type Chain struct {
 }
 
 // NewBuilder 创建新的攻击链构建器
-func NewBuilder(db Store, chain ChainStore, openAIConfig *config.OpenAIConfig, logger *zap.Logger) *Builder {
+func NewBuilder(db Store, chain ChainStore, facts database.BlackboardLedger, openAIConfig *config.OpenAIConfig, logger *zap.Logger) *Builder {
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 10,
@@ -97,6 +98,7 @@ func NewBuilder(db Store, chain ChainStore, openAIConfig *config.OpenAIConfig, l
 	return &Builder{
 		db:           db,
 		chain:        chain,
+		facts:        facts,
 		logger:       logger,
 		openAIClient: openai.NewClient(openAIConfig, httpClient, logger),
 		openAIConfig: openAIConfig,

@@ -61,11 +61,11 @@ import (
 // 282 -> 262: the workflow domain moved whole - definitions, runs, node runs and the
 // two package-exchange tables, twenty methods including the private scanners, the hash helpers and the
 // runs-table column backfill. The engine no longer reaches them through a data-layer interface.
-// 262 -> 259: the blackboard's SQL and both tables' schema moved to store.Facts. Three of its methods
-// went away rather than delegating, because their only caller had already moved into the store -
-// leaving them would have been unreachable surface, which another test in this package reports.
-// The other nineteen are one-line delegations and are the next slice's deletion list.
-const dbMethodCeiling = 259
+// 262 -> 259: the blackboard's SQL and both tables' schema moved to store.Facts, leaving one-line
+// delegations behind. 259 -> 241: those delegations are gone too - the ledger half of the old
+// ProjectFactStore became its own interface, answered by *store.Facts, and every consumer that needed
+// it now holds that store as a field. Nothing on the connection wrapper can change these tables.
+const dbMethodCeiling = 241
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

@@ -20,6 +20,7 @@ import (
 type WorkflowHandler struct {
 	db     database.WorkflowStore
 	runs   *store.Workflows // 五张 workflow 表：定义、运行、节点运行、包检查与包导入
+	facts  *store.Facts     // 黑板两张表的账本：工作流节点写项目事实与边时走它
 	logger *zap.Logger
 	audit  *audit.Service
 	agent  *agent.Agent
@@ -27,7 +28,7 @@ type WorkflowHandler struct {
 }
 
 func NewWorkflowHandler(db *database.DB, logger *zap.Logger) *WorkflowHandler {
-	return &WorkflowHandler{db: database.Narrow[database.WorkflowStore](db), runs: newWorkflowStore(db), logger: logger}
+	return &WorkflowHandler{db: database.Narrow[database.WorkflowStore](db), runs: newWorkflowStore(db), facts: database.NewFacts(db), logger: logger}
 }
 
 func (h *WorkflowHandler) SetAudit(s *audit.Service) {

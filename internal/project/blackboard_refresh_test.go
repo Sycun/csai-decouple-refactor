@@ -141,7 +141,7 @@ func TestBuildFactIndexBlock_includesHTMLMarkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	block, err := BuildFactIndexBlock(NewStore(db, db), proj.ID, config.ProjectConfig{Enabled: true})
+	block, err := BuildFactIndexBlock(NewStore(db, database.NewFacts(db)), proj.ID, config.ProjectConfig{Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

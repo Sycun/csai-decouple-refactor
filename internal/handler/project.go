@@ -29,13 +29,14 @@ func clampProjectDescription(s string) string {
 // ProjectHandler 项目管理处理器。
 type ProjectHandler struct {
 	db     database.ProjectStore
+	facts  *store.Facts       // 黑板两张表的账本：事实与边都从它读写，不再经过连接包装
 	chain  *store.AttackChain // 把对话攻击链沉淀成项目事实时，节点与边从这张表读
 	logger *zap.Logger
 }
 
 // NewProjectHandler 创建项目管理处理器。
 func NewProjectHandler(db *database.DB, logger *zap.Logger) *ProjectHandler {
-	return &ProjectHandler{db: database.Narrow[database.ProjectStore](db), chain: newAttackChainStore(db), logger: logger}
+	return &ProjectHandler{db: database.Narrow[database.ProjectStore](db), facts: database.NewFacts(db), chain: newAttackChainStore(db), logger: logger}
 }
 
 type createProjectRequest struct {
@@ -138,7 +139,7 @@ func (h *ProjectHandler) ListProjects(c *gin.Context) {
 
 // GetProjectStats GET /api/projects/:id/stats
 func (h *ProjectHandler) GetProjectStats(c *gin.Context) {
-	stats, err := project.GetProjectStats(projectStore(h.db), c.Param("id"))
+	stats, err := project.GetProjectStats(projectStore(h.db, h.facts), c.Param("id"))
 	if err != nil {
 		if strings.Contains(err.Error(), "不存在") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
@@ -307,14 +308,14 @@ func (h *ProjectHandler) applyFactLinksAfterUpsert(projectID string, fact *store
 		if err != nil {
 			return err
 		}
-		return project.PersistFactLinksFromParsed(projectStore(h.db), projectID, fact.FactKey, fact.SourceConversationID, parsed, true)
+		return project.PersistFactLinksFromParsed(projectStore(h.db, h.facts), projectID, fact.FactKey, fact.SourceConversationID, parsed, true)
 	}
 	if parseBody {
 		inputs := project.ParseLinksFromBody(fact.Body)
 		if inputs == nil {
 			return nil
 		}
-		return project.PersistFactIncomingLinks(projectStore(h.db), projectID, fact.FactKey, inputs, true)
+		return project.PersistFactIncomingLinks(projectStore(h.db, h.facts), projectID, fact.FactKey, inputs, true)
 	}
 	return nil
 }
@@ -323,8 +324,8 @@ func (h *ProjectHandler) factResponseWithLinks(projectID string, f *store.Projec
 	if !includeLinks || f == nil {
 		return f
 	}
-	out, _ := h.db.ListOutgoingProjectFactEdges(projectID, f.FactKey)
-	in, _ := h.db.ListIncomingProjectFactEdges(projectID, f.FactKey)
+	out, _ := h.facts.ListOutgoingProjectFactEdges(projectID, f.FactKey)
+	in, _ := h.facts.ListIncomingProjectFactEdges(projectID, f.FactKey)
 	return &factWithLinksResponse{
 		ProjectFact:   f,
 		OutgoingLinks: out,
@@ -336,7 +337,7 @@ func (h *ProjectHandler) factResponseWithLinks(projectID string, f *store.Projec
 func (h *ProjectHandler) ListFacts(c *gin.Context) {
 	projectID := c.Param("id")
 	if key := strings.TrimSpace(c.Query("fact_key")); key != "" {
-		f, err := h.db.GetProjectFactByKey(projectID, key)
+		f, err := h.facts.GetProjectFactByKey(projectID, key)
 		if err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 			return
@@ -356,7 +357,7 @@ func (h *ProjectHandler) ListFacts(c *gin.Context) {
 	if c.Query("exclude_deprecated") == "1" || c.Query("exclude_deprecated") == "true" {
 		filter.ExcludeDeprecated = true
 	}
-	list, err := h.db.ListProjectFacts(projectID, filter, limit, offset)
+	list, err := h.facts.ListProjectFacts(projectID, filter, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -378,7 +379,7 @@ func (h *ProjectHandler) ListFacts(c *gin.Context) {
 		c.JSON(http.StatusOK, list)
 		return
 	}
-	counts, err := project.LoadProjectFactLinkCounts(projectStore(h.db), projectID)
+	counts, err := project.LoadProjectFactLinkCounts(projectStore(h.db, h.facts), projectID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -407,7 +408,7 @@ func (h *ProjectHandler) GetFactGraph(c *gin.Context) {
 	if v := c.Query("exclude_deprecated"); v == "0" || v == "false" {
 		excludeDeprecated = false
 	}
-	graph, err := project.BuildProjectFactGraph(projectStore(h.db), projectID, view, excludeDeprecated)
+	graph, err := project.BuildProjectFactGraph(projectStore(h.db, h.facts), projectID, view, excludeDeprecated)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -439,7 +440,7 @@ func (h *ProjectHandler) CreateFact(c *gin.Context) {
 		Pinned:                 req.Pinned,
 		RelatedVulnerabilityID: req.RelatedVulnerabilityID,
 	}
-	created, err := h.db.UpsertProjectFact(f)
+	created, err := h.facts.UpsertProjectFact(f)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -449,14 +450,14 @@ func (h *ProjectHandler) CreateFact(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	created, _ = h.db.GetProjectFactByKey(projectID, created.FactKey)
+	created, _ = h.facts.GetProjectFactByKey(projectID, created.FactKey)
 	c.JSON(http.StatusOK, h.factResponseWithLinks(projectID, created, true))
 }
 
 // UpdateFact PUT /api/projects/:id/facts/:factId
 func (h *ProjectHandler) UpdateFact(c *gin.Context) {
 	projectID := c.Param("id")
-	existing, err := h.db.GetProjectFact(c.Param("factId"))
+	existing, err := h.facts.GetProjectFact(c.Param("factId"))
 	if err != nil || existing.ProjectID != projectID {
 		c.JSON(http.StatusNotFound, gin.H{"error": "事实不存在"})
 		return
@@ -492,13 +493,13 @@ func (h *ProjectHandler) UpdateFact(c *gin.Context) {
 	if req.RelatedVulnerabilityID != nil {
 		existing.RelatedVulnerabilityID = *req.RelatedVulnerabilityID
 	}
-	updated, err := h.db.UpsertProjectFact(existing)
+	updated, err := h.facts.UpsertProjectFact(existing)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	if oldFactKey != updated.FactKey {
-		if err := h.db.RenameProjectFactKeyEdges(projectID, oldFactKey, updated.FactKey); err != nil {
+		if err := h.facts.RenameProjectFactKeyEdges(projectID, oldFactKey, updated.FactKey); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -518,18 +519,18 @@ func (h *ProjectHandler) UpdateFact(c *gin.Context) {
 			return
 		}
 	}
-	updated, _ = h.db.GetProjectFactByKey(projectID, updated.FactKey)
+	updated, _ = h.facts.GetProjectFactByKey(projectID, updated.FactKey)
 	c.JSON(http.StatusOK, h.factResponseWithLinks(projectID, updated, true))
 }
 
 // DeleteFact DELETE /api/projects/:id/facts/:factId
 func (h *ProjectHandler) DeleteFact(c *gin.Context) {
-	existing, err := h.db.GetProjectFact(c.Param("factId"))
+	existing, err := h.facts.GetProjectFact(c.Param("factId"))
 	if err != nil || existing.ProjectID != c.Param("id") {
 		c.JSON(http.StatusNotFound, gin.H{"error": "事实不存在"})
 		return
 	}
-	if err := h.db.DeleteProjectFact(existing.ID); err != nil {
+	if err := h.facts.DeleteProjectFact(existing.ID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -547,7 +548,7 @@ func (h *ProjectHandler) DeprecateFact(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.db.DeprecateProjectFact(c.Param("id"), req.FactKey); err != nil {
+	if err := h.facts.DeprecateProjectFact(c.Param("id"), req.FactKey); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
 	}
@@ -566,7 +567,7 @@ func (h *ProjectHandler) RestoreFact(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.db.RestoreProjectFact(c.Param("id"), req.FactKey, req.Confidence); err != nil {
+	if err := h.facts.RestoreProjectFact(c.Param("id"), req.FactKey, req.Confidence); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -583,7 +584,7 @@ type createFactEdgeRequest struct {
 // ListFactEdges GET /api/projects/:id/fact-edges
 func (h *ProjectHandler) ListFactEdges(c *gin.Context) {
 	projectID := c.Param("id")
-	edges, err := h.db.ListProjectFactEdgesByProject(projectID)
+	edges, err := h.facts.ListProjectFactEdgesByProject(projectID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -602,7 +603,7 @@ func (h *ProjectHandler) CreateFactEdge(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	edge, err := h.db.AddProjectFactEdge(projectID, store.ProjectFactEdgeInput{
+	edge, err := h.facts.AddProjectFactEdge(projectID, store.ProjectFactEdgeInput{
 		To:         req.TargetFactKey,
 		Type:       req.EdgeType,
 		Confidence: req.Confidence,
@@ -611,10 +612,10 @@ func (h *ProjectHandler) CreateFactEdge(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if f, err := h.db.GetProjectFactByKey(projectID, req.TargetFactKey); err == nil {
-		in, _ := h.db.ListIncomingProjectFactEdges(projectID, req.TargetFactKey)
+	if f, err := h.facts.GetProjectFactByKey(projectID, req.TargetFactKey); err == nil {
+		in, _ := h.facts.ListIncomingProjectFactEdges(projectID, req.TargetFactKey)
 		f.Body = project.SyncBodyLinksSection(f.Body, in)
-		_, _ = h.db.UpsertProjectFact(f)
+		_, _ = h.facts.UpsertProjectFact(f)
 	}
 	c.JSON(http.StatusOK, edge)
 }
@@ -623,19 +624,19 @@ func (h *ProjectHandler) CreateFactEdge(c *gin.Context) {
 func (h *ProjectHandler) DeleteFactEdge(c *gin.Context) {
 	projectID := c.Param("id")
 	edgeID := c.Param("edgeId")
-	edge, err := h.db.GetProjectFactEdge(edgeID)
+	edge, err := h.facts.GetProjectFactEdge(edgeID)
 	if err != nil || edge.ProjectID != projectID {
 		c.JSON(http.StatusNotFound, gin.H{"error": "边不存在"})
 		return
 	}
-	if err := h.db.DeleteProjectFactEdge(edgeID); err != nil {
+	if err := h.facts.DeleteProjectFactEdge(edgeID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if f, err := h.db.GetProjectFactByKey(projectID, edge.TargetFactKey); err == nil {
-		in, _ := h.db.ListIncomingProjectFactEdges(projectID, edge.TargetFactKey)
+	if f, err := h.facts.GetProjectFactByKey(projectID, edge.TargetFactKey); err == nil {
+		in, _ := h.facts.ListIncomingProjectFactEdges(projectID, edge.TargetFactKey)
 		f.Body = project.SyncBodyLinksSection(f.Body, in)
-		_, _ = h.db.UpsertProjectFact(f)
+		_, _ = h.facts.UpsertProjectFact(f)
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
@@ -650,7 +651,7 @@ func (h *ProjectHandler) PromoteAttackChain(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问目标项目或来源对话"})
 		return
 	}
-	result, err := attackchain.PromoteToProject(h.db, h.chain, projectID, conversationID)
+	result, err := attackchain.PromoteToProject(h.db, h.chain, h.facts, projectID, conversationID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

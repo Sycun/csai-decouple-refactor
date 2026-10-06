@@ -40,6 +40,9 @@ func textResult(msg string, isErr bool) *mcp.ToolResult {
 
 // registerProjectFactTools 注册项目黑板 MCP 工具。
 func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *config.Config, logger *zap.Logger) {
+	// facts 是黑板两张表的账本。这些工具以前把 *database.DB 当"什么都能查"的句柄用；
+	// 现在连接包装自己不再持有这些语句，工具直接找表的主人。
+	facts := database.NewFacts(db)
 	if db == nil || cfg == nil || !cfg.Project.Enabled {
 		if logger != nil {
 			logger.Info("项目黑板工具未注册（未启用）")
@@ -143,7 +146,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 		if convID := agent.ConversationIDFromContext(ctx); convID != "" {
 			f.SourceConversationID = convID
 		}
-		created, err := db.UpsertProjectFact(f)
+		created, err := facts.UpsertProjectFact(f)
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
@@ -153,18 +156,18 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 				return textResult("错误: "+err.Error(), true), nil
 			}
 			convID := agent.ConversationIDFromContext(ctx)
-			if err := project.PersistFactLinksFromParsed(project.NewStore(db, db), projectID, created.FactKey, convID, linkInputs, true); err != nil {
+			if err := project.PersistFactLinksFromParsed(project.NewStore(db, facts), projectID, created.FactKey, convID, linkInputs, true); err != nil {
 				return textResult("错误: 保存关系边失败: "+err.Error(), true), nil
 			}
-			created, _ = db.GetProjectFactByKey(projectID, created.FactKey)
+			created, _ = facts.GetProjectFactByKey(projectID, created.FactKey)
 		} else if parsed := project.ParseLinksFromBody(created.Body); len(parsed) > 0 {
-			if err := project.PersistFactIncomingLinks(project.NewStore(db, db), projectID, created.FactKey, parsed, true); err != nil {
+			if err := project.PersistFactIncomingLinks(project.NewStore(db, facts), projectID, created.FactKey, parsed, true); err != nil {
 				return textResult("错误: 从 body 解析边失败: "+err.Error(), true), nil
 			}
-			created, _ = db.GetProjectFactByKey(projectID, created.FactKey)
+			created, _ = facts.GetProjectFactByKey(projectID, created.FactKey)
 		}
 		msg := fmt.Sprintf("事实已保存。\nfact_key: %s\nid: %s\nconfidence: %s", created.FactKey, created.ID, created.Confidence)
-		if in, _ := db.ListIncomingProjectFactEdges(projectID, created.FactKey); len(in) > 0 {
+		if in, _ := facts.ListIncomingProjectFactEdges(projectID, created.FactKey); len(in) > 0 {
 			msg += "\n关系边: " + project.FormatFactLinksText(in)
 		}
 		if warn := project.SparseBodyWarningIfNeeded(f.Category, f.FactKey, f.Body); warn != "" {
@@ -194,7 +197,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 		if key == "" {
 			return textResult("错误: fact_key 必填", true), nil
 		}
-		f, err := db.GetProjectFactByKey(projectID, key)
+		f, err := facts.GetProjectFactByKey(projectID, key)
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
@@ -206,13 +209,13 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 		if f.SourceConversationID != "" {
 			msg += fmt.Sprintf("\nsource_conversation_id: %s", f.SourceConversationID)
 		}
-		if in, _ := db.ListIncomingProjectFactEdges(projectID, f.FactKey); len(in) > 0 {
+		if in, _ := facts.ListIncomingProjectFactEdges(projectID, f.FactKey); len(in) > 0 {
 			msg += "\n关系边（from → 本 fact）:\n"
 			for _, e := range in {
 				msg += fmt.Sprintf("- %s ← %s (%s)\n", e.EdgeType, e.SourceFactKey, e.Confidence)
 			}
 		}
-		if out, _ := db.ListOutgoingProjectFactEdges(projectID, f.FactKey); len(out) > 0 {
+		if out, _ := facts.ListOutgoingProjectFactEdges(projectID, f.FactKey); len(out) > 0 {
 			msg += "指向其他事实:\n"
 			for _, e := range out {
 				msg += fmt.Sprintf("- %s → %s (%s)\n", e.EdgeType, e.TargetFactKey, e.Confidence)
@@ -250,7 +253,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			Category:   strArg(args, "category"),
 			Confidence: strArg(args, "confidence"),
 		}
-		list, err := db.ListProjectFacts(projectID, filter, limit, offset)
+		list, err := facts.ListProjectFacts(projectID, filter, limit, offset)
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
@@ -285,7 +288,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 		if q == "" {
 			return textResult("错误: query 必填", true), nil
 		}
-		list, err := db.ListProjectFacts(projectID, store.ProjectFactListFilter{Search: q}, intArg(args, "limit", 30), intArg(args, "offset", 0))
+		list, err := facts.ListProjectFacts(projectID, store.ProjectFactListFilter{Search: q}, intArg(args, "limit", 30), intArg(args, "offset", 0))
 		if err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
@@ -315,7 +318,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			return textResult("错误: "+err.Error(), true), nil
 		}
 		key := strings.TrimSpace(strArg(args, "fact_key"))
-		if err := db.DeprecateProjectFact(projectID, key); err != nil {
+		if err := facts.DeprecateProjectFact(projectID, key); err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
 		return textResult("事实已标记为 deprecated: "+key, false), nil
@@ -348,7 +351,7 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 			return textResult("错误: fact_key 必填", true), nil
 		}
 		conf := strArg(args, "confidence")
-		if err := db.RestoreProjectFact(projectID, key, conf); err != nil {
+		if err := facts.RestoreProjectFact(projectID, key, conf); err != nil {
 			return textResult("错误: "+err.Error(), true), nil
 		}
 		if conf == "" {

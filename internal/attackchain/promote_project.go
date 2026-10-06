@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 
+	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/project"
 	"cyberstrike-ai/internal/store"
 
@@ -23,7 +24,7 @@ type PromoteToProjectResult struct {
 }
 
 // PromoteToProject 将对话攻击链沉淀为项目事实与边。
-func PromoteToProject(db Store, chain ChainStore, projectID, conversationID string) (*PromoteToProjectResult, error) {
+func PromoteToProject(db Store, chain ChainStore, facts database.BlackboardLedger, projectID, conversationID string) (*PromoteToProjectResult, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database 未初始化")
 	}
@@ -63,7 +64,7 @@ func PromoteToProject(db Store, chain ChainStore, projectID, conversationID stri
 		key := allocatePromoteFactKey(node, usedKeys)
 		nodeToKey[node.ID] = key
 		category := mapPromoteNodeCategory(node.Type)
-		existing, getErr := db.GetProjectFactByKey(projectID, key)
+		existing, getErr := facts.GetProjectFactByKey(projectID, key)
 		f := &store.ProjectFact{
 			ProjectID:            projectID,
 			FactKey:              key,
@@ -79,12 +80,12 @@ func PromoteToProject(db Store, chain ChainStore, projectID, conversationID stri
 			if strings.TrimSpace(f.Summary) == "" {
 				f.Summary = existing.Summary
 			}
-			if _, err := db.UpsertProjectFact(f); err != nil {
+			if _, err := facts.UpsertProjectFact(f); err != nil {
 				return nil, err
 			}
 			res.FactsUpdated++
 		} else {
-			if _, err := db.UpsertProjectFact(f); err != nil {
+			if _, err := facts.UpsertProjectFact(f); err != nil {
 				return nil, err
 			}
 			res.FactsCreated++
@@ -99,20 +100,20 @@ func PromoteToProject(db Store, chain ChainStore, projectID, conversationID stri
 			continue
 		}
 		edgeType := mapPromoteEdgeType(edge.Type)
-		incoming, _ := db.ListIncomingProjectFactEdges(projectID, tgtKey)
+		incoming, _ := facts.ListIncomingProjectFactEdges(projectID, tgtKey)
 		merged := project.MergeLinkFromInputsUnique(promoteFromEdgeInputsFromDB(incoming), []store.ProjectFactEdgeFromInput{{From: srcKey, Type: edgeType}})
-		if err := db.ReplaceIncomingProjectFactEdges(projectID, tgtKey, merged); err != nil {
+		if err := facts.ReplaceIncomingProjectFactEdges(projectID, tgtKey, merged); err != nil {
 			return nil, err
 		}
 		res.EdgesCreated++
-		if fact, err := db.GetProjectFactByKey(projectID, tgtKey); err == nil {
-			in, _ := db.ListIncomingProjectFactEdges(projectID, tgtKey)
+		if fact, err := facts.GetProjectFactByKey(projectID, tgtKey); err == nil {
+			in, _ := facts.ListIncomingProjectFactEdges(projectID, tgtKey)
 			fact.Body = project.SyncBodyLinksSection(fact.Body, in)
-			_, _ = db.UpsertProjectFact(fact)
+			_, _ = facts.UpsertProjectFact(fact)
 		}
 	}
 
-	graph, _ := project.BuildProjectFactGraph(project.NewStore(db, db), projectID, "full", true)
+	graph, _ := project.BuildProjectFactGraph(project.NewStore(db, facts), projectID, "full", true)
 	res.Graph = graph
 	return res, nil
 }

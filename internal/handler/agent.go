@@ -187,6 +187,8 @@ type AgentHandler struct {
 	db    database.AgentStore
 	// runs 是 workflow 五张表的主人：绑角色的工作流从这里落运行与节点状态
 	runs *store.Workflows
+	// facts 是黑板两张表的账本：会话里生成的项目事实与边从这里读写，不再经过连接包装。
+	facts *store.Facts
 	// skillStats is the skill_stats table, reached through its store rather than the connection wrapper.
 	stats *store.SkillStats
 	// hitlStore 是 hitl_interrupts 的域存储：HTTP 层不再在这个表上裸写 SQL。
@@ -339,6 +341,7 @@ func NewAgentHandler(agent *agent.Agent, db *database.DB, cfg *config.Config, lo
 		stats:            newSkillStatsStore(db),
 		hitlStore:        newHITLStore(db),
 		runs:             newWorkflowStore(db),
+		facts:            database.NewFacts(db),
 		hitlQueue:        newHITLQueue(database.Narrow[database.AgentStore](db), newHITLStore(db), cfg, hitlManager),
 		sessions:         newSessionStore(db),
 		logger:           logger,
@@ -778,7 +781,7 @@ func (h *AgentHandler) runRobotEinoSingleWithRetry(
 ) (string, string, error) {
 	runCfg := currentConfig(h.config)
 	resultMA, errMA := multiagent.RunEinoSingleChatModelAgent(
-		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.db), h.logger,
+		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.db, h.facts), h.logger,
 		conversationID, h.conversationProjectID(conversationID), finalMessage, history, roleTools, progressCallback, nil, h.agentSessionContextBlock(conversationID),
 	)
 	if errMA != nil {
@@ -799,7 +802,7 @@ func (h *AgentHandler) runRobotMultiAgentWithRetry(
 ) (string, string, error) {
 	runCfg := currentConfig(h.config)
 	resultMA, errMA := multiagent.RunDeepAgent(
-		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.db), h.logger,
+		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.db, h.facts), h.logger,
 		conversationID, h.conversationProjectID(conversationID), finalMessage, history, roleTools, progressCallback,
 		h.agentsMarkdownDir, orchestration, nil, h.agentSessionContextBlock(conversationID),
 	)
