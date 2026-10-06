@@ -310,3 +310,13 @@ func ensureSkillStatsSchema(db *database.DB) error {
 	}
 	return store.NewSkillStats(db.DB).EnsureSchema()
 }
+
+// ensureChatUploadArtifactSchema creates chat_upload_artifacts through its own store. It runs after
+// the data layer has opened every base table, because the artifact rows carry a foreign key onto
+// conversations.
+func ensureChatUploadArtifactSchema(db *database.DB) error {
+	if db == nil {
+		return nil
+	}
+	return store.NewChatUploads(db.DB).EnsureSchema()
+}

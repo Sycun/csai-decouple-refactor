@@ -36,6 +36,7 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	mcpProvisioned := 0
 	pluginUnitsDeclared := 0
 	skillStatsSchema := 0
+	chatUploadSchema := 0
 	pluginCalls := 0
 	pluginWithoutToolLayer := 0
 	pluginWithoutMCPProvisioner := 0
@@ -76,6 +77,8 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 						// builds from config.yaml. Without this call the server is in the table and
 						// in the console after a restart while nothing connects to it.
 						mcpProvisioned++
+					case "ensureChatUploadArtifactSchema":
+						chatUploadSchema++
 					case "ensureSkillStatsSchema":
 						// The store owns its schema: without this call the table nobody creates
 						// would only appear on installations that predate the cut.
@@ -173,6 +176,10 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	if mcpProvisioned < 1 {
 		t.Fatalf("provisionDeclaredServers is never called at boot: a pack's MCP server would be in " +
 			"the table and in the console but absent from the live manager until the pack is reinstalled")
+	}
+	if chatUploadSchema < 1 {
+		t.Fatalf("ensureChatUploadArtifactSchema is never called at boot: the table used to be created by " +
+			"the RBAC initialisation, so nothing else would make it once the store owned it")
 	}
 	if skillStatsSchema < 1 {
 		t.Fatalf("ensureSkillStatsSchema is never called at boot: skill_stats moved out of the data " +

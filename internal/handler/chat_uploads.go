@@ -19,6 +19,7 @@ import (
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -41,9 +42,10 @@ const (
 
 // ChatUploadsHandler 对话中上传附件（chat_uploads 目录）的管理 API
 type ChatUploadsHandler struct {
-	logger *zap.Logger
-	audit  *audit.Service
-	db     database.ChatUploadsStore
+	logger  *zap.Logger
+	audit   *audit.Service
+	db      database.ChatUploadsStore
+	uploads *store.ChatUploads // chat_upload_artifacts: one row per uploaded path
 }
 
 // SetAudit wires platform audit logging.
@@ -56,6 +58,11 @@ func NewChatUploadsHandler(logger *zap.Logger, databases ...*database.DB) *ChatU
 	h := &ChatUploadsHandler{logger: logger}
 	if len(databases) > 0 {
 		h.db = database.Narrow[database.ChatUploadsStore](databases[0])
+		// A nil *database.DB stays a nil store: OwnerOf then answers "not an artifact" rather than
+		// panicking, which is what the path-authorization helper below assumes.
+		if databases[0] != nil {
+			h.uploads = store.NewChatUploads(databases[0].DB)
+		}
 	}
 	return h
 }
@@ -70,7 +77,7 @@ func (h *ChatUploadsHandler) pathAllowed(c *gin.Context, relativePath string) bo
 	}
 	rel := filepath.ToSlash(filepath.Clean(filepath.FromSlash(strings.TrimSpace(relativePath))))
 	rel = strings.Trim(rel, "/")
-	if conversationID, ownerUserID, found := h.db.GetChatUploadArtifact(rel); found {
+	if conversationID, ownerUserID, found := h.uploads.OwnerOf(rel); found {
 		return strings.TrimSpace(ownerUserID) == session.UserID || h.db.UserCanAccessResource(session.UserID, session.Scope, "conversation", conversationID)
 	}
 	parts := strings.Split(strings.Trim(rel, "/"), "/")
@@ -1189,7 +1196,7 @@ func (h *ChatUploadsHandler) Delete(c *gin.Context) {
 			return
 		}
 	}
-	_ = h.db.DeleteChatUploadArtifactPath(filepath.ToSlash(filepath.Clean(filepath.FromSlash(body.Path))))
+	_ = h.uploads.Forget(filepath.ToSlash(filepath.Clean(filepath.FromSlash(body.Path))))
 	if h.audit != nil {
 		h.audit.RecordOK(c, "file", "delete", "删除对话附件", "chat_upload", body.Path, nil)
 	}
@@ -1315,7 +1322,7 @@ func (h *ChatUploadsHandler) Rename(c *gin.Context) {
 	}
 	newRel, _ := filepath.Rel(root, newAbs)
 	oldRel := filepath.ToSlash(filepath.Clean(filepath.FromSlash(body.Path)))
-	_ = h.db.RenameChatUploadArtifactPath(oldRel, filepath.ToSlash(newRel))
+	_ = h.uploads.Rename(oldRel, filepath.ToSlash(newRel))
 	c.JSON(http.StatusOK, gin.H{"ok": true, "relativePath": filepath.ToSlash(newRel)})
 }
 
@@ -1500,7 +1507,7 @@ func (h *ChatUploadsHandler) Upload(c *gin.Context) {
 				conversationID = parts[1]
 			}
 		}
-		_ = h.db.UpsertChatUploadArtifact(filepath.ToSlash(rel), conversationID, session.UserID)
+		_ = h.uploads.Record(filepath.ToSlash(rel), conversationID, session.UserID)
 	}
 	if h.audit != nil {
 		h.audit.RecordOK(c, "file", "upload", "上传对话附件", "chat_upload", filepath.ToSlash(rel), map[string]interface{}{

@@ -1269,6 +1269,25 @@ registry 服务端与气隙包导出。
   我在测试树用 `git checkout --` 恢复探针文件，测试树的 HEAD 落后于开发树未提交的改动，
   于是恢复成了"旧版本"，`scripts/testtree.sh verify` 立刻抓到 `plantask.go` 两树不一致。
 
+### P6 数据层第七片 —— `chat_upload_artifacts`（连它的建表语句一起从 RBAC 里搬出来）
+
+上传附件的授权表有四条 SQL 挂在 `*DB` 上，被一个 handler 用；而**它的 `CREATE TABLE` 与两条索引写在
+`initRBACTables` 里**——也就是说"访问控制初始化"决定了上传附件这张表存不存在。这一片把 SQL 与 DDL
+一起搬进 `internal/store/chat_upload.go`（`Record/OwnerOf/Forget/Rename` + `EnsureSchema`，
+外键指向 conversations，所以建表必须在基础表之后），`ChatUploadsStore` 随之少掉那四个成员
+（其余成员是会话标题/项目名/基础目录/可见性谓词，属于别的表，留在窄接口里按表归属继续切）。
+方法数 **337 → 333**；归属门禁加 `chat_upload_artifacts`；启动调用进 AST 门禁；
+store 侧 6 条真库用例（前缀级联删除、子树改名带同一套 `LIKE` 转义、身份不全不写行、无连接被拒、
+建表幂等）。原来测这四条 SQL 的 `TestRBACUploadOwnership` 搬进 store 测试，RBAC 那个文件里删掉——
+**不是把断言删了**，前缀级联与子树改名这两条规则在新地方各有一条用例盯着。
+
+**顺手抓到一个自己工具链上的真缺陷**（值得单独记）：`scripts/testtree.sh` 的清单来自
+`git ls-files`，于是**"工作区已删但尚未 stage"的文件仍然在清单里**——sync 照旧打印"sync 完成"，
+而那份过期副本一直留在测试树里（这次是 `internal/database/chat_upload.go`），
+`verify` 只在比内容时才报不一致。修法是清单里再要求路径**存在或本身是符号链接**，
+删除项才进入删除列表；修完 sync 立刻把那个副本删掉并复验一致。
+教训：**门禁的"来源"也必须被验**——`ls-files` 说的是索引里有什么，不是工作区里有什么。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

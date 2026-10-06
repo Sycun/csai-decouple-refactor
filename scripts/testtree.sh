@@ -50,7 +50,14 @@ manifest() {
 			# the gates count. Raw names make the manifest what it claims to be.
 			git -c core.quotePath=false ls-files
 			git -c core.quotePath=false ls-files --others --exclude-standard
-		} | sort -u
+		} | sort -u | while IFS= read -r entry; do
+			# A file deleted in the working tree but not staged is still in `ls-files`, and keeping it
+			# in the manifest made sync *print* "sync 完成" while the stale copy stayed in the test
+			# tree - the delete list never saw it go away. Existence (or being a symlink) decides.
+			if [ -e "$entry" ] || [ -L "$entry" ]; then
+				printf '%s\n' "$entry"
+			fi
+		done
 	)
 }
 

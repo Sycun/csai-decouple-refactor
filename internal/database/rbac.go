@@ -157,13 +157,6 @@ func (db *DB) initRBACTables() error {
 			created_at DATETIME NOT NULL,
 			FOREIGN KEY (rbac_user_id) REFERENCES rbac_users(id) ON DELETE CASCADE
 		);`,
-		`CREATE TABLE IF NOT EXISTS chat_upload_artifacts (
-			relative_path TEXT PRIMARY KEY,
-			conversation_id TEXT NOT NULL,
-			owner_user_id TEXT NOT NULL,
-			created_at DATETIME NOT NULL,
-			FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-		);`,
 		`CREATE TABLE IF NOT EXISTS c2_payload_artifacts (
 			filename TEXT PRIMARY KEY,
 			payload_id TEXT NOT NULL,
@@ -177,8 +170,6 @@ func (db *DB) initRBACTables() error {
 		`CREATE INDEX IF NOT EXISTS idx_rbac_assignments_resource ON rbac_resource_assignments(resource_type, resource_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_robot_user_bindings_user ON robot_user_bindings(rbac_user_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_robot_binding_codes_expiry ON robot_binding_codes(expires_at);`,
-		`CREATE INDEX IF NOT EXISTS idx_chat_upload_artifacts_conversation ON chat_upload_artifacts(conversation_id);`,
-		`CREATE INDEX IF NOT EXISTS idx_chat_upload_artifacts_owner ON chat_upload_artifacts(owner_user_id);`,
 		`CREATE INDEX IF NOT EXISTS idx_c2_payload_artifacts_listener ON c2_payload_artifacts(listener_id);`,
 	}
 	for _, stmt := range stmts {

@@ -151,15 +151,11 @@ var _ BatchTaskStore = (*DB)(nil)
 // ChatUploadsStore is the persistence surface required by ChatUploadsHandler.
 type ChatUploadsStore interface {
 	ConversationArtifactsBaseDir() string
-	DeleteChatUploadArtifactPath(relativePath string) error
 	EinoReductionBaseDir() string
 	EinoWorkspaceBaseDir() string
-	GetChatUploadArtifact(relativePath string) (conversationID, ownerUserID string, ok bool)
 	GetConversationProjectID(conversationID string) (string, error)
 	GetConversationTitle(id string) (string, error)
 	GetProjectName(id string) (string, error)
-	RenameChatUploadArtifactPath(oldPath, newPath string) error
-	UpsertChatUploadArtifact(relativePath, conversationID, ownerUserID string) error
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 

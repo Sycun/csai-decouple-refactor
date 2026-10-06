@@ -58,26 +58,6 @@ func TestRBACToolExecutionOwnershipAccess(t *testing.T) {
 	}
 }
 
-func TestRBACUploadOwnership(t *testing.T) {
-	db := newRBACTestDB(t)
-	conversation, err := db.CreateConversation("upload", ConversationCreateMeta{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.UpsertChatUploadArtifact("2026-07-10/"+conversation.ID+"/a.txt", conversation.ID, "u1"); err != nil {
-		t.Fatal(err)
-	}
-	if conv, owner, ok := db.GetChatUploadArtifact("2026-07-10/" + conversation.ID + "/a.txt"); !ok || conv != conversation.ID || owner != "u1" {
-		t.Fatalf("artifact = conv=%q owner=%q ok=%v", conv, owner, ok)
-	}
-	if err := db.RenameChatUploadArtifactPath("2026-07-10/"+conversation.ID+"/a.txt", "2026-07-10/"+conversation.ID+"/b.txt"); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, ok := db.GetChatUploadArtifact("2026-07-10/" + conversation.ID + "/b.txt"); !ok {
-		t.Fatal("renamed artifact metadata missing")
-	}
-}
-
 func TestSystemRoleBootstrapDoesNotLeakManagementReadPermissions(t *testing.T) {
 	db := newRBACTestDB(t)
 	catalog := map[string]string{

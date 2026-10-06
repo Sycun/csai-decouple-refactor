@@ -26,7 +26,8 @@ import (
 //
 // 13 of those identities were then deleted outright: they had no caller anywhere in production
 // (TestDatabaseSurfaceHasNoUnreachableMethods keeps that from happening again).
-const dbMethodCeiling = 337
+// 337 -> 333: chat_upload_artifacts moved to its own store.
+const dbMethodCeiling = 333
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)
