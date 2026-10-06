@@ -711,12 +711,6 @@ func (db *DB) AssignResourceToUser(userID, resourceType, resourceID string) erro
 	return err
 }
 
-// ListAssignableRBACResources returns real resources for the admin assignment
-// picker without exposing full records or secret-bearing fields.
-func (db *DB) ListAssignableRBACResources(resourceType, search string, limit int) ([]RBACResourceOption, error) {
-	return db.ListAssignableRBACResourcesPage(resourceType, search, limit, 0)
-}
-
 // ListAssignableRBACResourcesPage returns one stable page for the assignment
 // picker. Callers can request limit+1 rows to determine whether another page
 // exists without running a separate COUNT query.
@@ -1403,11 +1397,6 @@ func (db *DB) ListRBACResourceAssignments(userID string) ([]RBACResourceAssignme
 	return out, rows.Err()
 }
 
-func (db *DB) DeleteRBACResourceAssignment(id string) error {
-	_, err := db.DeleteRBACResourceAssignmentWithDetails(id)
-	return err
-}
-
 // DeleteRBACResourceAssignmentWithDetails atomically removes an assignment and
 // returns the deleted row so callers can write a complete, attributable audit
 // event without racing a separate lookup against another delete.
@@ -1450,4 +1439,10 @@ func (db *DB) DeleteRBACResourceAssignmentWithDetails(id string) (*RBACResourceA
 		return nil, err
 	}
 	return &row, nil
+}
+
+// ListAssignableRBACResources returns real resources for the admin assignment
+// picker without exposing full records or secret-bearing fields.
+func (db *DB) ListAssignableRBACResources(resourceType, search string, limit int) ([]RBACResourceOption, error) {
+	return db.ListAssignableRBACResourcesPage(resourceType, search, limit, 0)
 }

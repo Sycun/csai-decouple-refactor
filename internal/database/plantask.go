@@ -27,13 +27,6 @@ type ConversationPlanTask struct {
 	Owner       string   `json:"owner,omitempty"`
 }
 
-// ListConversationPlanTasks returns the live Eino task board for one
-// conversation. A missing task directory is the normal state for short or
-// legacy conversations and therefore returns an empty list.
-func (db *DB) ListConversationPlanTasks(conversationID string) ([]ConversationPlanTask, error) {
-	return db.ListConversationPlanTasksSince(conversationID, time.Time{})
-}
-
 // ListConversationPlanTasksSince limits the board to files written during the
 // current agent run. The Eino backend intentionally keeps older task files for
 // model continuity, but the conversation UI must not surface those files before
@@ -122,4 +115,11 @@ func (db *DB) ListConversationPlanTasksSince(conversationID string, since time.T
 		tasks = append(tasks, item.task)
 	}
 	return tasks, nil
+}
+
+// ListConversationPlanTasks returns the live Eino task board for one
+// conversation. A missing task directory is the normal state for short or
+// legacy conversations and therefore returns an empty list.
+func (db *DB) ListConversationPlanTasks(conversationID string) ([]ConversationPlanTask, error) {
+	return db.ListConversationPlanTasksSince(conversationID, time.Time{})
 }

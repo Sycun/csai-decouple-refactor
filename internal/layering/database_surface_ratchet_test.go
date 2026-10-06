@@ -23,7 +23,10 @@ import (
 //
 // The traversal domain is every non-test file in internal/database - the same claim as "one writer
 // per table" needs a count that cannot be satisfied by reading one file.
-const dbMethodCeiling = 353
+//
+// 13 of those identities were then deleted outright: they had no caller anywhere in production
+// (TestDatabaseSurfaceHasNoUnreachableMethods keeps that from happening again).
+const dbMethodCeiling = 337
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

@@ -700,24 +700,6 @@ func (db *DB) RefreshAssetRiskCache(assetID string) error {
 	return nil
 }
 
-func (db *DB) RefreshAllAssetRiskCache() error {
-	rows, err := db.Query(`SELECT id FROM assets`)
-	if err != nil {
-		return fmt.Errorf("查询资产列表失败: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return err
-		}
-		if err := db.RefreshAssetRiskCache(id); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
 func (db *DB) AssetIDsForVulnerabilityConversations(conversationIDs []string) ([]string, error) {
 	seen := map[string]struct{}{}
 	cleaned := make([]string, 0, len(conversationIDs))

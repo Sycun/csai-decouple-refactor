@@ -28,7 +28,6 @@ type MonitorStorage interface {
 	UpdateToolExecutionResult(id string, result *ToolResult) error
 	LoadToolExecutions() ([]*ToolExecution, error)
 	GetToolExecution(id string) (*ToolExecution, error)
-	SaveToolStats(toolName string, stats *ToolStats) error
 	LoadToolStats() (map[string]*ToolStats, error)
 	UpdateToolStats(toolName string, totalCalls, successCalls, failedCalls int, lastCallTime *time.Time) error
 }

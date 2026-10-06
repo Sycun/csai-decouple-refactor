@@ -172,11 +172,6 @@ func (db *DB) GetAllBatchQueues() ([]*BatchTaskQueueRow, error) {
 	return queues, nil
 }
 
-// ListBatchQueues 列出批量任务队列（支持筛选和分页）
-func (db *DB) ListBatchQueues(limit, offset int, status, keyword string) ([]*BatchTaskQueueRow, error) {
-	return db.ListBatchQueuesForAccess(limit, offset, status, keyword, "", "")
-}
-
 func (db *DB) ListBatchQueuesForAccess(limit, offset int, status, keyword, userID, scope string) ([]*BatchTaskQueueRow, error) {
 	query := "SELECT " + batchQueueSelectColumns + " FROM batch_task_queues WHERE 1=1"
 	args := []interface{}{}
@@ -242,11 +237,6 @@ func (db *DB) ListBatchQueuesForAccess(limit, offset int, status, keyword, userI
 	}
 
 	return queues, nil
-}
-
-// CountBatchQueues 统计批量任务队列总数（支持筛选条件）
-func (db *DB) CountBatchQueues(status, keyword string) (int, error) {
-	return db.CountBatchQueuesForAccess(status, keyword, "", "")
 }
 
 func (db *DB) CountBatchQueuesForAccess(status, keyword, userID, scope string) (int, error) {

@@ -435,11 +435,6 @@ func (db *DB) LoadToolStatsSummaryForAccess(topN int, access RBACListAccess) (*T
 	return result, rows.Err()
 }
 
-// LoadToolExecutionListPage 分页加载执行记录列表（不含 arguments/result，供监控列表使用）
-func (db *DB) LoadToolExecutionListPage(offset, limit int, status, toolName string) ([]*mcp.ToolExecution, error) {
-	return db.LoadToolExecutionListPageForAccess(offset, limit, status, toolName, RBACListAccess{Scope: RBACScopeAll})
-}
-
 func (db *DB) LoadToolExecutionListPageForAccess(offset, limit int, status, toolName string, access RBACListAccess) ([]*mcp.ToolExecution, error) {
 	if limit <= 0 {
 		limit = 20
@@ -899,36 +894,6 @@ func (db *DB) PurgeToolExecutionsBefore(cutoff time.Time) (int64, error) {
 	return deleted, nil
 }
 
-// SaveToolStats 保存工具统计信息
-func (db *DB) SaveToolStats(toolName string, stats *mcp.ToolStats) error {
-	var lastCallTime sql.NullTime
-	if stats.LastCallTime != nil {
-		lastCallTime = sql.NullTime{Time: *stats.LastCallTime, Valid: true}
-	}
-
-	query := `
-		INSERT OR REPLACE INTO tool_stats 
-		(tool_name, total_calls, success_calls, failed_calls, last_call_time, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`
-
-	_, err := db.Exec(query,
-		toolName,
-		stats.TotalCalls,
-		stats.SuccessCalls,
-		stats.FailedCalls,
-		lastCallTime,
-		time.Now(),
-	)
-
-	if err != nil {
-		db.logger.Error("保存工具统计信息失败", zap.Error(err), zap.String("toolName", toolName))
-		return err
-	}
-
-	return nil
-}
-
 // LoadToolStats 加载所有工具统计信息
 func (db *DB) LoadToolStats() (map[string]*mcp.ToolStats, error) {
 	query := `
@@ -1126,4 +1091,9 @@ func (db *DB) DecreaseToolStats(toolName string, totalCalls, successCalls, faile
 	}
 
 	return nil
+}
+
+// LoadToolExecutionListPage 分页加载执行记录列表（不含 arguments/result，供监控列表使用）
+func (db *DB) LoadToolExecutionListPage(offset, limit int, status, toolName string) ([]*mcp.ToolExecution, error) {
+	return db.LoadToolExecutionListPageForAccess(offset, limit, status, toolName, RBACListAccess{Scope: RBACScopeAll})
 }

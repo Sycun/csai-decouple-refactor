@@ -31,11 +31,6 @@ type ProjectDashboardSummary struct {
 	Totals      ProjectDashboardTotals `json:"totals"`
 }
 
-// GetProjectDashboardSummary 聚合跨项目近期事实（仅活跃项目、排除 deprecated）。
-func (db *DB) GetProjectDashboardSummary(factLimit int) (*ProjectDashboardSummary, error) {
-	return db.GetProjectDashboardSummaryForAccess(factLimit, "", "")
-}
-
 func (db *DB) GetProjectDashboardSummaryForAccess(factLimit int, userID, scope string) (*ProjectDashboardSummary, error) {
 	if factLimit <= 0 {
 		factLimit = 5

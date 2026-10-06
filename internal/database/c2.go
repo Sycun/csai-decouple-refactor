@@ -1056,15 +1056,6 @@ func buildC2TasksWhereForAccess(filter ListC2TasksFilter, access RBACListAccess)
 	return strings.Join(conditions, " AND "), args
 }
 
-// CountC2Tasks 与 ListC2Tasks 相同过滤条件下的记录总数
-func (db *DB) CountC2Tasks(filter ListC2TasksFilter) (int64, error) {
-	where, args := buildC2TasksWhere(filter)
-	query := `SELECT COUNT(*) FROM c2_tasks WHERE ` + where
-	var n int64
-	err := db.QueryRow(query, args...).Scan(&n)
-	return n, err
-}
-
 func (db *DB) CountC2TasksForAccess(filter ListC2TasksFilter, access RBACListAccess) (int64, error) {
 	where, args := buildC2TasksWhereForAccess(filter, access)
 	query := `SELECT COUNT(*) FROM c2_tasks WHERE ` + where
@@ -1108,20 +1099,6 @@ func (db *DB) CountC2TasksByStatusForAccess(filter ListC2TasksFilter, access RBA
 	}
 	counts["pending"] = counts["queued"] + counts["sent"] + counts["running"] + legacyPending
 	return counts, rows.Err()
-}
-
-// CountC2TasksQueuedOrPending 统计 queued/pending 状态任务数（仪表盘「待审任务」）
-func (db *DB) CountC2TasksQueuedOrPending(sessionID string) (int64, error) {
-	conditions := []string{"status IN ('queued', 'pending')"}
-	args := []interface{}{}
-	if sessionID != "" {
-		conditions = append(conditions, "session_id = ?")
-		args = append(args, sessionID)
-	}
-	query := `SELECT COUNT(*) FROM c2_tasks WHERE ` + strings.Join(conditions, " AND ")
-	var n int64
-	err := db.QueryRow(query, args...).Scan(&n)
-	return n, err
 }
 
 func (db *DB) CountC2TasksQueuedOrPendingForAccess(sessionID, projectID string, access RBACListAccess) (int64, error) {
@@ -1325,19 +1302,6 @@ func (db *DB) PopQueuedC2Tasks(sessionID string, limit int) ([]*C2Task, error) {
 	}
 	committed = true
 	return list, nil
-}
-
-// DeleteC2Task 删除任务（一般用于 cancel queued）
-func (db *DB) DeleteC2Task(id string) error {
-	res, err := db.Exec(`DELETE FROM c2_tasks WHERE id = ?`, id)
-	if err != nil {
-		return err
-	}
-	affected, _ := res.RowsAffected()
-	if affected == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
 }
 
 // DeleteC2TasksByIDs 按主键批量删除任务
@@ -1633,15 +1597,6 @@ func buildC2EventsWhereForAccess(filter ListC2EventsFilter, access RBACListAcces
 	return strings.Join(conditions, " AND "), args
 }
 
-// CountC2Events 与 ListC2Events 相同过滤条件下的记录总数
-func (db *DB) CountC2Events(filter ListC2EventsFilter) (int64, error) {
-	where, args := buildC2EventsWhere(filter)
-	query := `SELECT COUNT(*) FROM c2_events WHERE ` + where
-	var n int64
-	err := db.QueryRow(query, args...).Scan(&n)
-	return n, err
-}
-
 func (db *DB) CountC2EventsForAccess(filter ListC2EventsFilter, access RBACListAccess) (int64, error) {
 	where, args := buildC2EventsWhereForAccess(filter, access)
 	query := `SELECT COUNT(*) FROM c2_events WHERE ` + where
@@ -1675,47 +1630,6 @@ func (db *DB) CountC2EventsByLevelForAccess(filter ListC2EventsFilter, access RB
 		}
 	}
 	return counts, rows.Err()
-}
-
-// ListC2Events 事件查询，按创建时间倒序
-func (db *DB) ListC2Events(filter ListC2EventsFilter) ([]*C2Event, error) {
-	where, args := buildC2EventsWhere(filter)
-	limit := filter.Limit
-	if limit <= 0 || limit > 1000 {
-		limit = 200
-	}
-	offset := filter.Offset
-	if offset < 0 {
-		offset = 0
-	}
-	query := `
-		SELECT id, level, category, COALESCE(session_id, ''), COALESCE(task_id, ''),
-			message, COALESCE(data_json, ''), created_at
-		FROM c2_events
-		WHERE ` + where + `
-		ORDER BY created_at DESC
-		LIMIT ? OFFSET ?
-	`
-	args = append(args, limit, offset)
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var list []*C2Event
-	for rows.Next() {
-		var e C2Event
-		var dataJSON string
-		if err := rows.Scan(&e.ID, &e.Level, &e.Category, &e.SessionID, &e.TaskID,
-			&e.Message, &dataJSON, &e.CreatedAt); err != nil {
-			continue
-		}
-		if dataJSON != "" {
-			_ = json.Unmarshal([]byte(dataJSON), &e.Data)
-		}
-		list = append(list, &e)
-	}
-	return list, rows.Err()
 }
 
 func (db *DB) ListC2EventsForAccess(filter ListC2EventsFilter, access RBACListAccess) ([]*C2Event, error) {
@@ -1945,4 +1859,45 @@ func (db *DB) DeleteC2Profile(id string) error {
 		return sql.ErrNoRows
 	}
 	return nil
+}
+
+// ListC2Events 事件查询，按创建时间倒序
+func (db *DB) ListC2Events(filter ListC2EventsFilter) ([]*C2Event, error) {
+	where, args := buildC2EventsWhere(filter)
+	limit := filter.Limit
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	query := `
+		SELECT id, level, category, COALESCE(session_id, ''), COALESCE(task_id, ''),
+			message, COALESCE(data_json, ''), created_at
+		FROM c2_events
+		WHERE ` + where + `
+		ORDER BY created_at DESC
+		LIMIT ? OFFSET ?
+	`
+	args = append(args, limit, offset)
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []*C2Event
+	for rows.Next() {
+		var e C2Event
+		var dataJSON string
+		if err := rows.Scan(&e.ID, &e.Level, &e.Category, &e.SessionID, &e.TaskID,
+			&e.Message, &dataJSON, &e.CreatedAt); err != nil {
+			continue
+		}
+		if dataJSON != "" {
+			_ = json.Unmarshal([]byte(dataJSON), &e.Data)
+		}
+		list = append(list, &e)
+	}
+	return list, rows.Err()
 }

@@ -169,18 +169,6 @@ func appendProjectAccessFilter(query string, args []interface{}, userID, scope s
 	return query, args
 }
 
-// CountProjects 统计项目数量。
-func (db *DB) CountProjects(status, search string) (int, error) {
-	query := `SELECT COUNT(*) FROM projects WHERE 1=1`
-	args := []interface{}{}
-	query, args = appendProjectListFilters(query, args, status, search)
-	var count int
-	if err := db.QueryRow(query, args...).Scan(&count); err != nil {
-		return 0, fmt.Errorf("统计项目失败: %w", err)
-	}
-	return count, nil
-}
-
 func (db *DB) CountProjectsForAccess(status, search, userID, scope string) (int, error) {
 	query := `SELECT COUNT(*) FROM projects WHERE 1=1`
 	args := []interface{}{}

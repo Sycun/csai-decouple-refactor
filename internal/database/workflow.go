@@ -400,10 +400,6 @@ func (db *DB) RecordWorkflowRunHITLDecision(runID string, approved bool, comment
 	return nil
 }
 
-func (db *DB) ListWorkflowRunsAwaitingHITL(limit int) ([]*WorkflowRun, error) {
-	return db.ListWorkflowRunsAwaitingHITLFiltered("", limit)
-}
-
 // ListWorkflowRunsAwaitingHITLFiltered returns awaiting_hitl runs, optionally scoped to a conversation.
 func (db *DB) ListWorkflowRunsAwaitingHITLFiltered(conversationID string, limit int) ([]*WorkflowRun, error) {
 	if limit <= 0 {

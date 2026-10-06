@@ -474,32 +474,6 @@ func appendConversationAccessFilter(where string, args []interface{}, userID, sc
 	return where, args
 }
 
-// CountConversations 统计对话数量。
-func (db *DB) CountConversations(search, projectID string) (int, error) {
-	var count int
-	var err error
-	if search != "" {
-		searchPattern := "%" + search + "%"
-		where := ` WHERE (c.title LIKE ?
-			    OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content LIKE ?))`
-		args := []interface{}{searchPattern, searchPattern}
-		where, args = appendConversationProjectFilter(where, args, projectID, "c")
-		err = db.QueryRow(`SELECT COUNT(*) FROM conversations c`+where, args...).Scan(&count)
-	} else {
-		where := ""
-		args := []interface{}{}
-		where, args = appendConversationProjectFilter(where, args, projectID, "")
-		if where != "" {
-			where = " WHERE" + strings.TrimPrefix(where, " AND")
-		}
-		err = db.QueryRow(`SELECT COUNT(*) FROM conversations`+where, args...).Scan(&count)
-	}
-	if err != nil {
-		return 0, fmt.Errorf("统计对话失败: %w", err)
-	}
-	return count, nil
-}
-
 func (db *DB) CountConversationsForAccess(search, projectID, userID, scope string) (int, error) {
 	var count int
 	var err error
@@ -1854,4 +1828,30 @@ func (db *DB) GetProcessDetailsByConversation(conversationID string) (map[string
 	}
 
 	return detailsMap, nil
+}
+
+// CountConversations 统计对话数量。
+func (db *DB) CountConversations(search, projectID string) (int, error) {
+	var count int
+	var err error
+	if search != "" {
+		searchPattern := "%" + search + "%"
+		where := ` WHERE (c.title LIKE ?
+			    OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.content LIKE ?))`
+		args := []interface{}{searchPattern, searchPattern}
+		where, args = appendConversationProjectFilter(where, args, projectID, "c")
+		err = db.QueryRow(`SELECT COUNT(*) FROM conversations c`+where, args...).Scan(&count)
+	} else {
+		where := ""
+		args := []interface{}{}
+		where, args = appendConversationProjectFilter(where, args, projectID, "")
+		if where != "" {
+			where = " WHERE" + strings.TrimPrefix(where, " AND")
+		}
+		err = db.QueryRow(`SELECT COUNT(*) FROM conversations`+where, args...).Scan(&count)
+	}
+	if err != nil {
+		return 0, fmt.Errorf("统计对话失败: %w", err)
+	}
+	return count, nil
 }

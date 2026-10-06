@@ -59,11 +59,6 @@ func (db *DB) UpsertWebshellConnectionState(connectionID, stateJSON string) erro
 	return nil
 }
 
-// ListWebshellConnections 列出所有 WebShell 连接，按创建时间倒序
-func (db *DB) ListWebshellConnections() ([]WebShellConnection, error) {
-	return db.ListWebshellConnectionsForAccess("", "", "")
-}
-
 func (db *DB) ListWebshellConnectionsForAccess(userID, scope, projectID string) ([]WebShellConnection, error) {
 	query := `
 		SELECT id, COALESCE(project_id, '') AS project_id, url, password, type, method, cmd_param, remark,
