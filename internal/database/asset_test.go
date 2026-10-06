@@ -158,7 +158,7 @@ func TestAssetAccessFiltersOwners(t *testing.T) {
 	if err != nil || len(options) != 1 {
 		t.Fatalf("asset resource picker: options=%#v err=%v", options, err)
 	}
-	project, err := db.CreateProject(&Project{Name: "Alpha", Status: "active"})
+	project, err := NewProjects(db).CreateProject(&Project{Name: "Alpha", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestUpdateAssetsProjectIsAtomicAndScoped(t *testing.T) {
 	}
 	defer db.Close()
 
-	project, err := db.CreateProject(&Project{Name: "Batch Project", Status: "active"})
+	project, err := NewProjects(db).CreateProject(&Project{Name: "Batch Project", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestAssetAdvancedFiltersAndBulkMetadata(t *testing.T) {
 	}
 	defer db.Close()
 
-	project, err := db.CreateProject(&Project{Name: "Production", Status: "active"})
+	project, err := NewProjects(db).CreateProject(&Project{Name: "Production", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,11 +459,11 @@ func TestDeleteProjectKeepsAssetsAndClearsTheirProject(t *testing.T) {
 	}
 	defer db.Close()
 
-	doomed, err := db.CreateProject(&Project{Name: "Doomed", Status: "active"})
+	doomed, err := NewProjects(db).CreateProject(&Project{Name: "Doomed", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	survivor, err := db.CreateProject(&Project{Name: "Survivor", Status: "active"})
+	survivor, err := NewProjects(db).CreateProject(&Project{Name: "Survivor", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,7 +489,7 @@ func TestDeleteProjectKeepsAssetsAndClearsTheirProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := db.DeleteProject(doomed.ID); err != nil {
+	if err := NewProjects(db).DeleteProject(doomed.ID); err != nil {
 		t.Fatal(err)
 	}
 

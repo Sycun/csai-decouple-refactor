@@ -188,6 +188,7 @@ type AgentHandler struct {
 
 	conversations *store.Conversations
 	rbac          *store.RBAC
+	projects      *store.Projects
 	// runs 是 workflow 五张表的主人：绑角色的工作流从这里落运行与节点状态
 	runs *store.Workflows
 	// facts 是黑板两张表的账本：会话里生成的项目事实与边从这里读写，不再经过连接包装。
@@ -789,7 +790,7 @@ func (h *AgentHandler) runRobotEinoSingleWithRetry(
 ) (string, string, error) {
 	runCfg := currentConfig(h.config)
 	resultMA, errMA := multiagent.RunEinoSingleChatModelAgent(
-		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.db, h.facts), h.logger,
+		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.projects, h.facts), h.logger,
 		conversationID, h.conversationProjectID(conversationID), finalMessage, history, roleTools, progressCallback, nil, h.agentSessionContextBlock(conversationID),
 	)
 	if errMA != nil {
@@ -810,7 +811,7 @@ func (h *AgentHandler) runRobotMultiAgentWithRetry(
 ) (string, string, error) {
 	runCfg := currentConfig(h.config)
 	resultMA, errMA := multiagent.RunDeepAgent(
-		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.db, h.facts), h.logger,
+		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.projects, h.facts), h.logger,
 		conversationID, h.conversationProjectID(conversationID), finalMessage, history, roleTools, progressCallback,
 		h.agentsMarkdownDir, orchestration, nil, h.agentSessionContextBlock(conversationID),
 	)

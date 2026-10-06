@@ -24,8 +24,8 @@ type PromoteToProjectResult struct {
 }
 
 // PromoteToProject 将对话攻击链沉淀为项目事实与边。
-func PromoteToProject(db Store, conversations *store.Conversations, chain ChainStore, facts database.BlackboardLedger, projectID, conversationID string) (*PromoteToProjectResult, error) {
-	if db == nil {
+func PromoteToProject(projects *store.Projects, conversations *store.Conversations, chain ChainStore, facts database.BlackboardLedger, projectID, conversationID string) (*PromoteToProjectResult, error) {
+	if projects == nil || conversations == nil {
 		return nil, fmt.Errorf("database 未初始化")
 	}
 	projectID = strings.TrimSpace(projectID)
@@ -33,7 +33,7 @@ func PromoteToProject(db Store, conversations *store.Conversations, chain ChainS
 	if projectID == "" || conversationID == "" {
 		return nil, fmt.Errorf("project_id 与 conversation_id 必填")
 	}
-	if _, err := db.GetProject(projectID); err != nil {
+	if _, err := projects.GetProject(projectID); err != nil {
 		return nil, fmt.Errorf("项目不存在")
 	}
 	conv, err := conversations.GetConversation(conversationID)
@@ -113,7 +113,7 @@ func PromoteToProject(db Store, conversations *store.Conversations, chain ChainS
 		}
 	}
 
-	graph, _ := project.BuildProjectFactGraph(project.NewStore(db, facts), projectID, "full", true)
+	graph, _ := project.BuildProjectFactGraph(project.NewStore(projects, facts), projectID, "full", true)
 	res.Graph = graph
 	return res, nil
 }

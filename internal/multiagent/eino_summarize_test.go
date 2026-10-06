@@ -594,13 +594,13 @@ func TestRefreshFactIndexInMessages(t *testing.T) {
 	}
 	defer db.Close()
 
-	proj, err := db.CreateProject(&database.Project{Name: "summarize-proj"})
+	proj, err := database.NewProjects(db).CreateProject(&database.Project{Name: "summarize-proj"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	cfg := config.ProjectConfig{Enabled: true}
-	oldIndex, err := project.BuildFactIndexBlock(project.NewStore(db, database.NewFacts(db)), proj.ID, cfg)
+	oldIndex, err := project.BuildFactIndexBlock(project.NewStore(database.NewProjects(db), database.NewFacts(db)), proj.ID, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +620,7 @@ func TestRefreshFactIndexInMessages(t *testing.T) {
 		schema.UserMessage("hi"),
 	}
 
-	out := refreshFactIndexInMessages(msgs, project.NewStore(db, database.NewFacts(db)), proj.ID, cfg, nil)
+	out := refreshFactIndexInMessages(msgs, project.NewStore(database.NewProjects(db), database.NewFacts(db)), proj.ID, cfg, nil)
 	sys := out[0].Content
 	if strings.Contains(sys, "（暂无事实）") {
 		t.Fatalf("expected refreshed index, got: %q", sys)

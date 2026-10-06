@@ -1,6 +1,7 @@
 package database
 
 import (
+	"cyberstrike-ai/internal/sqltime"
 	"cyberstrike-ai/internal/store"
 	"encoding/json"
 	"os"
@@ -18,9 +19,9 @@ func TestParseDBTime_projectFactFormats(t *testing.T) {
 		"2026-05-26T11:13:07.442143+08:00",
 	}
 	for _, s := range cases {
-		got := parseDBTime(s)
+		got := sqltime.Parse(s)
 		if got.IsZero() {
-			t.Fatalf("parseDBTime(%q) returned zero", s)
+			t.Fatalf("sqltime.Parse(%q) returned zero", s)
 		}
 	}
 }
@@ -38,7 +39,7 @@ func TestListProjectFacts_updatedAtJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projects, err := db.ListProjects("", "", 1, 0)
+	projects, err := NewProjects(db).ListProjects("", "", 1, 0)
 	if err != nil || len(projects) == 0 {
 		t.Skip("no projects")
 	}
@@ -71,7 +72,7 @@ func TestListProjectFacts_updatedAtJSON(t *testing.T) {
 }
 
 func TestParseDBTime_zeroOnGarbage(t *testing.T) {
-	if !parseDBTime("").IsZero() {
+	if !sqltime.Parse("").IsZero() {
 		t.Fatal("expected zero for empty")
 	}
 }
@@ -79,7 +80,7 @@ func TestParseDBTime_zeroOnGarbage(t *testing.T) {
 // Ensure RFC3339 round-trip used by API is after year 2000.
 func TestParseDBTime_marshalRoundTrip(t *testing.T) {
 	s := "2026-05-26 11:13:07.442143+08:00"
-	tm := parseDBTime(s)
+	tm := sqltime.Parse(s)
 	b, err := json.Marshal(tm)
 	if err != nil {
 		t.Fatal(err)

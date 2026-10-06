@@ -18,7 +18,7 @@ import (
 func TestCreateConversationRequiresProjectAccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, user := setupConversationRBACTest(t)
-	project, err := db.CreateProject(&database.Project{Name: "hidden"})
+	project, err := database.NewProjects(db).CreateProject(&database.Project{Name: "hidden"})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestCreateConversationRequiresProjectAccess(t *testing.T) {
 func TestSetConversationProjectRequiresProjectAccess(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, user := setupConversationRBACTest(t)
-	project, err := db.CreateProject(&database.Project{Name: "hidden"})
+	project, err := database.NewProjects(db).CreateProject(&database.Project{Name: "hidden"})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}

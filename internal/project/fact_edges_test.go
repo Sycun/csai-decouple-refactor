@@ -125,7 +125,7 @@ func TestBuildProjectFactGraphPreservesStoredEdgeDirection(t *testing.T) {
 	}
 	defer db.Close()
 
-	p, err := db.CreateProject(&database.Project{Name: "path-edges"})
+	p, err := database.NewProjects(db).CreateProject(&database.Project{Name: "path-edges"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestBuildProjectFactGraphPreservesStoredEdgeDirection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	graph, err := BuildProjectFactGraph(NewStore(db, database.NewFacts(db)), p.ID, "path", true)
+	graph, err := BuildProjectFactGraph(NewStore(database.NewProjects(db), database.NewFacts(db)), p.ID, "path", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestPersistFactLinksFromUsesFromAsIncoming(t *testing.T) {
 	}
 	defer db.Close()
 
-	p, err := db.CreateProject(&database.Project{Name: "from-links"})
+	p, err := database.NewProjects(db).CreateProject(&database.Project{Name: "from-links"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,10 +226,10 @@ func TestPersistFactLinksFromUsesFromAsIncoming(t *testing.T) {
 			{From: "target/primary_domain", Type: "discovered_on"},
 		},
 	}
-	if err := PersistFactLinksFromParsed(NewStore(db, database.NewFacts(db)), p.ID, "finding/sqli", "", parsed, false); err != nil {
+	if err := PersistFactLinksFromParsed(NewStore(database.NewProjects(db), database.NewFacts(db)), p.ID, "finding/sqli", "", parsed, false); err != nil {
 		t.Fatal(err)
 	}
-	graph, err := BuildProjectFactGraph(NewStore(db, database.NewFacts(db)), p.ID, "path", true)
+	graph, err := BuildProjectFactGraph(NewStore(database.NewProjects(db), database.NewFacts(db)), p.ID, "path", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestReplaceIncomingAllowsNotYetCreatedSource(t *testing.T) {
 	}
 	defer db.Close()
 
-	p, err := db.CreateProject(&database.Project{Name: "parallel-links"})
+	p, err := database.NewProjects(db).CreateProject(&database.Project{Name: "parallel-links"})
 	if err != nil {
 		t.Fatal(err)
 	}

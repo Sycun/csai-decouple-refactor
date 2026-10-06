@@ -17,7 +17,7 @@ func TestConversationProjectFilter(t *testing.T) {
 	}
 	defer db.Close()
 
-	p, err := db.CreateProject(&Project{Name: "target-a", Status: "active"})
+	p, err := NewProjects(db).CreateProject(&Project{Name: "target-a", Status: "active"})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}

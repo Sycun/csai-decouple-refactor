@@ -79,6 +79,7 @@ type RobotHandler struct {
 	db                   database.RobotStore
 	conversations        *store.Conversations
 	rbac                 *store.RBAC
+	projects             *store.Projects
 	alerts               *store.VulnerabilityAlerts // 提醒订阅与待投递队列都在这张表的主人手里
 	agentHandler         *AgentHandler
 	logger               *zap.Logger
@@ -103,6 +104,7 @@ func NewRobotHandler(cfg *config.Config, db *database.DB, agentHandler *AgentHan
 		config:               cfg,
 		db:                   database.Narrow[database.RobotStore](db),
 		conversations:        database.NewConversations(db),
+		projects:             database.NewProjects(db),
 		rbac:                 database.NewRBAC(db),
 		alerts:               newVulnerabilityAlerts(db),
 		threadBindings:       newRobotSessionsStore(db),
@@ -551,13 +553,13 @@ func (h *RobotHandler) resolveProjectByIDOrName(access *database.RBACAccess, idO
 	}
 	ownerID := access.User.ID
 	scope := robotPrincipal(access).ScopeFor("project:read")
-	if p, err := h.db.GetProject(idOrName); err == nil {
+	if p, err := h.projects.GetProject(idOrName); err == nil {
 		if h.rbac.UserCanAccessResource(ownerID, scope, "project", p.ID) {
 			return p, ""
 		}
 		return nil, "项目不存在或无权访问。"
 	}
-	list, err := h.db.ListProjectsForAccess("", "", 200, 0, ownerID, scope)
+	list, err := h.projects.ListProjectsForAccess("", "", 200, 0, ownerID, scope)
 	if err != nil {
 		return nil, "查询项目失败: " + err.Error()
 	}
@@ -586,7 +588,7 @@ func (h *RobotHandler) formatProjectLabel(projectID string) string {
 	if strings.TrimSpace(projectID) == "" {
 		return "未绑定"
 	}
-	if p, err := h.db.GetProject(projectID); err == nil {
+	if p, err := h.projects.GetProject(projectID); err == nil {
 		return fmt.Sprintf("「%s」 (%s)", p.Name, p.ID)
 	}
 	return projectID
@@ -600,7 +602,7 @@ func (h *RobotHandler) cmdProjects(platform, userID string) string {
 	if err != nil {
 		return "当前平台账号尚未绑定。"
 	}
-	list, err := h.db.ListProjectsForAccess("", "", 50, 0, access.User.ID, robotPrincipal(access).ScopeFor("project:read"))
+	list, err := h.projects.ListProjectsForAccess("", "", 50, 0, access.User.ID, robotPrincipal(access).ScopeFor("project:read"))
 	if err != nil {
 		return "获取项目列表失败: " + err.Error()
 	}
@@ -658,7 +660,7 @@ func (h *RobotHandler) cmdNewProject(platform, userID, name string) string {
 		return "当前平台账号尚未绑定。"
 	}
 	p := &database.Project{Name: name, Status: "active"}
-	created, err := h.db.CreateProject(p)
+	created, err := h.projects.CreateProject(p)
 	if err != nil {
 		return "创建项目失败: " + err.Error()
 	}

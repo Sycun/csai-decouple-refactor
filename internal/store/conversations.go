@@ -1762,3 +1762,51 @@ func (c *Conversations) GetProcessDetailsByConversation(conversationID string) (
 
 	return detailsMap, nil
 }
+
+// ConversationLastActivity 返回会话最近活动时间；ok=false 表示会话已不存在。
+// 供存储清理判断目录是否为孤儿、以及会话是否仍在活跃使用。
+func (c *Conversations) ConversationLastActivity(id string) (time.Time, bool, error) {
+	if c == nil || c.db == nil {
+		return time.Time{}, false, errors.New("store: conversations requires a database")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return time.Time{}, false, nil
+	}
+	var createdAt, updatedAt string
+	err := c.db.QueryRow(
+		"SELECT created_at, updated_at FROM conversations WHERE id = ? LIMIT 1", id,
+	).Scan(&createdAt, &updatedAt)
+	if err == sql.ErrNoRows {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	created, updated := sqltime.Parse(createdAt), sqltime.Parse(updatedAt)
+	if created.After(updated) {
+		return created, true, nil
+	}
+	return updated, true, nil
+}
+
+// ConversationPlanTask is the transport model for the agent's task board; the reading of those
+// files lives in internal/storage, which is where conversation directories are a first-class thing.
+type ConversationPlanTask = storage.PlanTask
+
+// ListConversationPlanTasksSince limits the board to files written during the current agent run.
+// The Eino backend intentionally keeps older task files for model continuity, but the conversation UI
+// must not surface those files before the new run has called TaskCreate.
+func (c *Conversations) ListConversationPlanTasksSince(conversationID string, since time.Time) ([]ConversationPlanTask, error) {
+	if c == nil || c.db == nil {
+		return []ConversationPlanTask{}, errors.New("store: conversations requires a database")
+	}
+	if strings.TrimSpace(conversationID) == "" {
+		return nil, fmt.Errorf("conversation id is required")
+	}
+	base := strings.TrimSpace(c.dirs.Plantask)
+	if base == "" {
+		return []ConversationPlanTask{}, nil
+	}
+	return storage.ReadPlanTasks(filepath.Join(base, storage.ConversationPathSegment(conversationID)), since, nil)
+}

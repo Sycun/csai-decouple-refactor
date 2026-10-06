@@ -100,7 +100,7 @@ func factListKeys(t *testing.T, w *httptest.ResponseRecorder) []string {
 // the pinned-first ordering and every filter the query string can set.
 func TestFactContractListKeysOrderAndFilters(t *testing.T) {
 	db := openFactContractDB(t)
-	project, err := db.CreateProject(&database.Project{Name: "board", Status: "active"})
+	project, err := database.NewProjects(db).CreateProject(&database.Project{Name: "board", Status: "active"})
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestFactContractListKeysOrderAndFilters(t *testing.T) {
 // object (not an array), and the link views change its shape.
 func TestFactContractDetailByFactKeyAndLinkViews(t *testing.T) {
 	db := openFactContractDB(t)
-	project, err := db.CreateProject(&database.Project{Name: "board", Status: "active"})
+	project, err := database.NewProjects(db).CreateProject(&database.Project{Name: "board", Status: "active"})
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestFactContractDetailByFactKeyAndLinkViews(t *testing.T) {
 // cascade and the two shapes of a rejected body.
 func TestFactContractCreateUpdateAndRenameAnswers(t *testing.T) {
 	db := openFactContractDB(t)
-	project, err := db.CreateProject(&database.Project{Name: "board", Status: "active"})
+	project, err := database.NewProjects(db).CreateProject(&database.Project{Name: "board", Status: "active"})
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestFactContractCreateUpdateAndRenameAnswers(t *testing.T) {
 	}
 
 	// Updating a fact of another project is a 404 (the handler compares ProjectID itself).
-	other, _ := db.CreateProject(&database.Project{Name: "other", Status: "active"})
+	other, _ := database.NewProjects(db).CreateProject(&database.Project{Name: "other", Status: "active"})
 	if w := doContract(t, router, http.MethodPut, "/api/projects/"+other.ID+"/facts/"+factID, []byte(`{"summary":"x"}`)); w.Code != http.StatusNotFound {
 		t.Fatalf("cross-project update = %d, want 404", w.Code)
 	}
@@ -359,7 +359,7 @@ func TestFactContractCreateUpdateAndRenameAnswers(t *testing.T) {
 // console buttons depend on: success carries {"success":true} and nothing else.
 func TestFactContractDeleteDeprecateRestoreAnswers(t *testing.T) {
 	db := openFactContractDB(t)
-	project, err := db.CreateProject(&database.Project{Name: "board", Status: "active"})
+	project, err := database.NewProjects(db).CreateProject(&database.Project{Name: "board", Status: "active"})
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}

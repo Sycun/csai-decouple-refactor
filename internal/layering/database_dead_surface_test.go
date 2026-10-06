@@ -18,9 +18,7 @@ import (
 // means moving that test onto the live sibling first. The list is one-directional - a name added here
 // is a new unreachable method accepted as normal, and a name whose method got deleted or started
 // being called stays here failing, so the list cannot quietly fossilise.
-var dbSurfaceDeadAllowList = map[string]string{
-	"ListConversationPlanTasks": "superseded by ListConversationPlanTasksSince",
-}
+var dbSurfaceDeadAllowList = map[string]string{}
 
 // deadDBSurface reports exported *DB methods with no production call site and no consumer-interface
 // member line anywhere in the tree.
@@ -67,12 +65,14 @@ func deadDBSurface(t *testing.T, root string) (dead []string, scanned int) {
 	// store.Facts, 180 after the seventeen assets delegations went with them, 158 after the twenty-two batch delegations, 157 after the two directory setters this cut replaced with one, 113 after the
 	// C2 domain's forty-three exported methods (forty-four minus the dead ListC2Events, which was
 	// deleted) left for store.C2, 91 after the monitor domain's twenty-two exported methods left
-	// for store.Monitor (twenty-three minus the dead LoadToolExecutionListPage). The floor keeps a wide gap
-	// on purpose: it catches a scan that stopped reading the directory, and it has tripped six times
+	// for store.Monitor (twenty-three minus the dead LoadToolExecutionListPage), and 2 after the
+	// project domain's exported reads left for store.Projects and store.Conversations - what is
+	// left is the boot skeleton (SetConversationDirs, Close). The floor keeps a wide gap
+	// on purpose: it catches a scan that stopped reading the directory, and it has tripped seven times
 	// now for the right reason - a domain cut landing - which is the reminder to re-measure rather than
 	// to widen it.
-	if len(names) < 18 {
-		t.Fatalf("only %d exported *DB methods parsed (floor 157): the scan is not reading the package", len(names))
+	if len(names) < 2 {
+		t.Fatalf("only %d exported *DB methods parsed (floor 2): the scan is not reading the package", len(names))
 	}
 
 	var production []string

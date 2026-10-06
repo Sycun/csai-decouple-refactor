@@ -262,12 +262,12 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	runCfg := currentConfig(h.config)
 	switch {
 	case useBatchMulti:
-		resultMA, runErr = multiagent.RunDeepAgent(taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.db, h.facts), h.logger, conversationID, h.conversationProjectID(conversationID), finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, h.agentsMarkdownDir, batchOrch, nil, h.agentSessionContextBlock(conversationID))
+		resultMA, runErr = multiagent.RunDeepAgent(taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.projects, h.facts), h.logger, conversationID, h.conversationProjectID(conversationID), finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, h.agentsMarkdownDir, batchOrch, nil, h.agentSessionContextBlock(conversationID))
 	default:
 		if runCfg == nil {
 			runErr = fmt.Errorf("服务器配置未加载")
 		} else {
-			resultMA, runErr = multiagent.RunEinoSingleChatModelAgent(taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.db, h.facts), h.logger, conversationID, h.conversationProjectID(conversationID), finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, nil, h.agentSessionContextBlock(conversationID))
+			resultMA, runErr = multiagent.RunEinoSingleChatModelAgent(taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.projects, h.facts), h.logger, conversationID, h.conversationProjectID(conversationID), finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, nil, h.agentSessionContextBlock(conversationID))
 		}
 	}
 

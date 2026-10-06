@@ -101,13 +101,13 @@ const narrowedStoreFloor = 19
 // owned store needs no Narrow rule, because the typed-nil leak this gate hunts is specific to
 // interfaces: `var s *store.SkillStats = nil` is nil, and no assignment can make it a non-nil value
 // holding nil. So the floor tracks the interface count (18) rather than pretending to be immutable.
-const narrowedAssignmentFloor = 12
+const narrowedAssignmentFloor = 7
 
 // narrowedInterfaceFloor keeps a broken interface scan from turning the floors above into a green
 // no-op: internal/database declares 17 interfaces across stores.go and surfaces.go today
 // (ToolExecutionLedger left with the monitor domain, RBACStore / VulnerabilityStore / ConfigStore
 // / MonitorContextStore with the RBAC one).
-const narrowedInterfaceFloor = 14
+const narrowedInterfaceFloor = 7
 
 // scannedFieldFloor keeps a broken scan from producing a green zero: the handler package declares
 // ~990 struct fields, so a walk that sees a tenth of that is not reporting the truth.

@@ -136,7 +136,7 @@ func TestDeleteProjectRemovesReductionDir(t *testing.T) {
 	workspaceBase := filepath.Join(tmp, "workspace")
 	db.SetConversationDirs("", "", reductionBase, workspaceBase, "")
 
-	project, err := db.CreateProject(&Project{Name: "cleanup test"})
+	project, err := NewProjects(db).CreateProject(&Project{Name: "cleanup test"})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestDeleteProjectRemovesReductionDir(t *testing.T) {
 		t.Fatalf("write workspace: %v", err)
 	}
 
-	if err := db.DeleteProject(project.ID); err != nil {
+	if err := NewProjects(db).DeleteProject(project.ID); err != nil {
 		t.Fatalf("DeleteProject: %v", err)
 	}
 

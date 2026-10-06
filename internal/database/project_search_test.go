@@ -15,15 +15,15 @@ func TestListProjectsSearchCaseInsensitive(t *testing.T) {
 	}
 	defer db.Close()
 
-	p1, err := db.CreateProject(&Project{Name: "Alpha Security Review", Status: "active"})
+	p1, err := NewProjects(db).CreateProject(&Project{Name: "Alpha Security Review", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2, err := db.CreateProject(&Project{Name: "beta-scan", Status: "active"})
+	p2, err := NewProjects(db).CreateProject(&Project{Name: "beta-scan", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.CreateProject(&Project{Name: "Other", Status: "archived"}); err != nil {
+	if _, err := NewProjects(db).CreateProject(&Project{Name: "Other", Status: "archived"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -40,7 +40,7 @@ func TestListProjectsSearchCaseInsensitive(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			list, err := db.ListProjects(tc.status, tc.search, 50, 0)
+			list, err := NewProjects(db).ListProjects(tc.status, tc.search, 50, 0)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -68,11 +68,11 @@ func TestProjectListSearchPatternEscapesWildcards(t *testing.T) {
 	}
 	defer db.Close()
 
-	p, err := db.CreateProject(&Project{Name: "100% coverage", Status: "active"})
+	p, err := NewProjects(db).CreateProject(&Project{Name: "100% coverage", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	list, err := db.ListProjects("active", "100%", 50, 0)
+	list, err := NewProjects(db).ListProjects("active", "100%", 50, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

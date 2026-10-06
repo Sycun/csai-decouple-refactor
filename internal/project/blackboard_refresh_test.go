@@ -137,11 +137,11 @@ func TestBuildFactIndexBlock_includesHTMLMarkers(t *testing.T) {
 	}
 	defer db.Close()
 
-	proj, err := db.CreateProject(&database.Project{Name: "marker-proj"})
+	proj, err := database.NewProjects(db).CreateProject(&database.Project{Name: "marker-proj"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	block, err := BuildFactIndexBlock(NewStore(db, database.NewFacts(db)), proj.ID, config.ProjectConfig{Enabled: true})
+	block, err := BuildFactIndexBlock(NewStore(database.NewProjects(db), database.NewFacts(db)), proj.ID, config.ProjectConfig{Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

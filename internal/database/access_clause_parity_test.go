@@ -66,14 +66,14 @@ func newFindingParityBase(t *testing.T) (*database.DB, map[string]string) {
 		users[name] = u.ID
 	}
 
-	projectOwned, err := db.CreateProject(&database.Project{Name: "owned project"})
+	projectOwned, err := database.NewProjects(db).CreateProject(&database.Project{Name: "owned project"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := database.NewRBAC(db).SetResourceOwner("project", projectOwned.ID, users["project-owner"]); err != nil {
 		t.Fatal(err)
 	}
-	projectAssigned, err := db.CreateProject(&database.Project{Name: "assigned project"})
+	projectAssigned, err := database.NewProjects(db).CreateProject(&database.Project{Name: "assigned project"})
 	if err != nil {
 		t.Fatal(err)
 	}

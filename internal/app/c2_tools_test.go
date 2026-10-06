@@ -25,7 +25,7 @@ func TestC2ListenerCreateInheritsConversationProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := db.CreateProject(&database.Project{Name: "engagement"})
+	project, err := database.NewProjects(db).CreateProject(&database.Project{Name: "engagement"})
 	if err != nil {
 		t.Fatal(err)
 	}

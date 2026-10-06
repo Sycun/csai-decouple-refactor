@@ -28,9 +28,9 @@ func clampProjectDescription(s string) string {
 
 // ProjectHandler 项目管理处理器。
 type ProjectHandler struct {
-	db            database.ProjectStore
 	conversations *store.Conversations
 	rbac          *store.RBAC
+	projects      *store.Projects
 	facts         *store.Facts       // 黑板两张表的账本：事实与边都从它读写，不再经过连接包装
 	chain         *store.AttackChain // 把对话攻击链沉淀成项目事实时，节点与边从这张表读
 	logger        *zap.Logger
@@ -38,7 +38,7 @@ type ProjectHandler struct {
 
 // NewProjectHandler 创建项目管理处理器。
 func NewProjectHandler(db *database.DB, logger *zap.Logger) *ProjectHandler {
-	return &ProjectHandler{db: database.Narrow[database.ProjectStore](db), rbac: database.NewRBAC(db), conversations: database.NewConversations(db), facts: database.NewFacts(db), chain: newAttackChainStore(db), logger: logger}
+	return &ProjectHandler{projects: database.NewProjects(db), rbac: database.NewRBAC(db), conversations: database.NewConversations(db), facts: database.NewFacts(db), chain: newAttackChainStore(db), logger: logger}
 }
 
 type createProjectRequest struct {
@@ -70,7 +70,7 @@ func (h *ProjectHandler) CreateProject(c *gin.Context) {
 		ScopeJSON:   req.ScopeJSON,
 		Status:      strings.TrimSpace(req.Status),
 	}
-	created, err := h.db.CreateProject(p)
+	created, err := h.projects.CreateProject(p)
 	if err != nil {
 		h.logger.Error("创建项目失败", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -93,7 +93,7 @@ func (h *ProjectHandler) GetDashboardSummary(c *gin.Context) {
 		limit = 50
 	}
 	session, _ := security.CurrentSession(c)
-	summary, err := h.db.GetProjectDashboardSummaryForAccess(limit, session.UserID, session.Scope)
+	summary, err := h.projects.GetProjectDashboardSummaryForAccess(limit, session.UserID, session.Scope)
 	if err != nil {
 		h.logger.Error("获取项目仪表盘摘要失败", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -118,7 +118,7 @@ func (h *ProjectHandler) ListProjects(c *gin.Context) {
 		limit = 500
 	}
 	session, _ := security.CurrentSession(c)
-	list, err := h.db.ListProjectsForAccess(status, search, limit, offset, session.UserID, session.Scope)
+	list, err := h.projects.ListProjectsForAccess(status, search, limit, offset, session.UserID, session.Scope)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -126,7 +126,7 @@ func (h *ProjectHandler) ListProjects(c *gin.Context) {
 	if list == nil {
 		list = []*database.Project{}
 	}
-	total, err := h.db.CountProjectsForAccess(status, search, session.UserID, session.Scope)
+	total, err := h.projects.CountProjectsForAccess(status, search, session.UserID, session.Scope)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -141,7 +141,7 @@ func (h *ProjectHandler) ListProjects(c *gin.Context) {
 
 // GetProjectStats GET /api/projects/:id/stats
 func (h *ProjectHandler) GetProjectStats(c *gin.Context) {
-	stats, err := project.GetProjectStats(projectStore(h.db, h.facts), c.Param("id"))
+	stats, err := project.GetProjectStats(projectStore(h.projects, h.facts), c.Param("id"))
 	if err != nil {
 		if strings.Contains(err.Error(), "不存在") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
@@ -156,13 +156,13 @@ func (h *ProjectHandler) GetProjectStats(c *gin.Context) {
 // ListProjectConversations GET /api/projects/:id/conversations
 func (h *ProjectHandler) ListProjectConversations(c *gin.Context) {
 	projectID := c.Param("id")
-	if _, err := h.db.GetProject(projectID); err != nil {
+	if _, err := h.projects.GetProject(projectID); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
 	}
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "100"))
 	offset, _ := strconv.Atoi(c.Query("offset"))
-	list, err := h.db.ListConversationsByProjectID(projectID, limit, offset)
+	list, err := h.conversations.ListConversationsByProjectID(projectID, limit, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -170,7 +170,7 @@ func (h *ProjectHandler) ListProjectConversations(c *gin.Context) {
 	if list == nil {
 		list = []*database.Conversation{}
 	}
-	total, _ := h.db.CountConversationsByProjectID(projectID)
+	total, _ := h.conversations.CountConversationsByProjectID(projectID)
 	c.JSON(http.StatusOK, gin.H{
 		"conversations": list,
 		"total":         total,
@@ -181,7 +181,7 @@ func (h *ProjectHandler) ListProjectConversations(c *gin.Context) {
 
 // GetProject GET /api/projects/:id
 func (h *ProjectHandler) GetProject(c *gin.Context) {
-	p, err := h.db.GetProject(c.Param("id"))
+	p, err := h.projects.GetProject(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
@@ -192,7 +192,7 @@ func (h *ProjectHandler) GetProject(c *gin.Context) {
 // UpdateProject PUT /api/projects/:id
 func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 	id := c.Param("id")
-	p, err := h.db.GetProject(id)
+	p, err := h.projects.GetProject(id)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
@@ -221,7 +221,7 @@ func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 	if req.Pinned != nil {
 		p.Pinned = *req.Pinned
 	}
-	if err := h.db.UpdateProject(p); err != nil {
+	if err := h.projects.UpdateProject(p); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -230,7 +230,7 @@ func (h *ProjectHandler) UpdateProject(c *gin.Context) {
 
 // DeleteProject DELETE /api/projects/:id
 func (h *ProjectHandler) DeleteProject(c *gin.Context) {
-	if err := h.db.DeleteProject(c.Param("id")); err != nil {
+	if err := h.projects.DeleteProject(c.Param("id")); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -310,14 +310,14 @@ func (h *ProjectHandler) applyFactLinksAfterUpsert(projectID string, fact *store
 		if err != nil {
 			return err
 		}
-		return project.PersistFactLinksFromParsed(projectStore(h.db, h.facts), projectID, fact.FactKey, fact.SourceConversationID, parsed, true)
+		return project.PersistFactLinksFromParsed(projectStore(h.projects, h.facts), projectID, fact.FactKey, fact.SourceConversationID, parsed, true)
 	}
 	if parseBody {
 		inputs := project.ParseLinksFromBody(fact.Body)
 		if inputs == nil {
 			return nil
 		}
-		return project.PersistFactIncomingLinks(projectStore(h.db, h.facts), projectID, fact.FactKey, inputs, true)
+		return project.PersistFactIncomingLinks(projectStore(h.projects, h.facts), projectID, fact.FactKey, inputs, true)
 	}
 	return nil
 }
@@ -381,7 +381,7 @@ func (h *ProjectHandler) ListFacts(c *gin.Context) {
 		c.JSON(http.StatusOK, list)
 		return
 	}
-	counts, err := project.LoadProjectFactLinkCounts(projectStore(h.db, h.facts), projectID)
+	counts, err := project.LoadProjectFactLinkCounts(projectStore(h.projects, h.facts), projectID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -401,7 +401,7 @@ func (h *ProjectHandler) ListFacts(c *gin.Context) {
 // GetFactGraph GET /api/projects/:id/fact-graph?view=path|full
 func (h *ProjectHandler) GetFactGraph(c *gin.Context) {
 	projectID := c.Param("id")
-	if _, err := h.db.GetProject(projectID); err != nil {
+	if _, err := h.projects.GetProject(projectID); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
 		return
 	}
@@ -410,7 +410,7 @@ func (h *ProjectHandler) GetFactGraph(c *gin.Context) {
 	if v := c.Query("exclude_deprecated"); v == "0" || v == "false" {
 		excludeDeprecated = false
 	}
-	graph, err := project.BuildProjectFactGraph(projectStore(h.db, h.facts), projectID, view, excludeDeprecated)
+	graph, err := project.BuildProjectFactGraph(projectStore(h.projects, h.facts), projectID, view, excludeDeprecated)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -653,7 +653,7 @@ func (h *ProjectHandler) PromoteAttackChain(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问目标项目或来源对话"})
 		return
 	}
-	result, err := attackchain.PromoteToProject(h.db, h.conversations, h.chain, h.facts, projectID, conversationID)
+	result, err := attackchain.PromoteToProject(h.projects, h.conversations, h.chain, h.facts, projectID, conversationID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

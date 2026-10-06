@@ -1,15 +1,36 @@
-package database
+package store
 
 import (
-	"cyberstrike-ai/internal/sqltime"
 	"database/sql"
-
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"cyberstrike-ai/internal/sqltime"
+	"cyberstrike-ai/internal/storage"
+
 	"github.com/google/uuid"
 )
+
+// Projects owns the project row: create / read / rename / list / delete, the counters the project
+// page shows and the last-activity stamp. Deleting a project unlinks the other domains' rows by
+// calling their stores' own UnlinkProject - the connection wrapper used to do that through its
+// bridges; the SQL for each table stays where its store put it.
+//
+// The statements were copied out of internal/database verbatim. The directory cleanup and the
+// memory-usage counters are injected/wired at the bridge, so this store never reaches for the
+// connection wrapper or a logger.
+type Projects struct {
+	db   *sql.DB
+	dirs storage.ConversationDirs
+}
+
+// NewProjects binds the store to a connection.
+func NewProjects(db *sql.DB) *Projects { return &Projects{db: db} }
+
+// SetDirs wires the project-scoped directory cleanup DeleteProject performs.
+func (s *Projects) SetDirs(dirs storage.ConversationDirs) { s.dirs = dirs }
 
 // Project 渗透测试项目（跨对话共享黑板）。
 type Project struct {
@@ -24,7 +45,10 @@ type Project struct {
 }
 
 // CreateProject 创建项目。
-func (db *DB) CreateProject(p *Project) (*Project, error) {
+func (s *Projects) CreateProject(p *Project) (*Project, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store: projects requires a database")
+	}
 	if p.ID == "" {
 		p.ID = uuid.New().String()
 	}
@@ -37,7 +61,7 @@ func (db *DB) CreateProject(p *Project) (*Project, error) {
 	}
 	p.UpdatedAt = now
 
-	_, err := db.Exec(
+	_, err := s.db.Exec(
 		`INSERT INTO projects (id, name, description, scope_json, status, pinned, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.ID, p.Name, p.Description, p.ScopeJSON, p.Status, boolToInt(p.Pinned), p.CreatedAt, p.UpdatedAt,
@@ -49,11 +73,14 @@ func (db *DB) CreateProject(p *Project) (*Project, error) {
 }
 
 // GetProject 获取项目。
-func (db *DB) GetProject(id string) (*Project, error) {
+func (s *Projects) GetProject(id string) (*Project, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store: projects requires a database")
+	}
 	var p Project
 	var pinned int
 	var createdAt, updatedAt string
-	err := db.QueryRow(
+	err := s.db.QueryRow(
 		`SELECT id, name, COALESCE(description,''), COALESCE(scope_json,''), status, pinned, created_at, updated_at
 		 FROM projects WHERE id = ?`, id,
 	).Scan(&p.ID, &p.Name, &p.Description, &p.ScopeJSON, &p.Status, &pinned, &createdAt, &updatedAt)
@@ -64,15 +91,18 @@ func (db *DB) GetProject(id string) (*Project, error) {
 		return nil, fmt.Errorf("获取项目失败: %w", err)
 	}
 	p.Pinned = pinned != 0
-	p.CreatedAt = parseDBTime(createdAt)
-	p.UpdatedAt = parseDBTime(updatedAt)
+	p.CreatedAt = sqltime.Parse(createdAt)
+	p.UpdatedAt = sqltime.Parse(updatedAt)
 	return &p, nil
 }
 
 // GetProjectName returns a project display name without loading the full record.
-func (db *DB) GetProjectName(id string) (string, error) {
+func (s *Projects) GetProjectName(id string) (string, error) {
+	if s == nil || s.db == nil {
+		return "", errors.New("store: projects requires a database")
+	}
 	var name string
-	err := db.QueryRow(`SELECT name FROM projects WHERE id = ?`, id).Scan(&name)
+	err := s.db.QueryRow(`SELECT name FROM projects WHERE id = ?`, id).Scan(&name)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return "", fmt.Errorf("项目不存在")
@@ -116,7 +146,7 @@ func appendProjectListFilters(query string, args []interface{}, status, search s
 
 func appendProjectAccessFilter(query string, args []interface{}, userID, scope string) (string, []interface{}) {
 	userID = strings.TrimSpace(userID)
-	if userID == "" || scope == RBACScopeAll {
+	if userID == "" || scope == ScopeAll {
 		return query, args
 	}
 	query += ` AND (owner_user_id = ? OR EXISTS (
@@ -127,20 +157,26 @@ func appendProjectAccessFilter(query string, args []interface{}, userID, scope s
 	return query, args
 }
 
-func (db *DB) CountProjectsForAccess(status, search, userID, scope string) (int, error) {
+func (s *Projects) CountProjectsForAccess(status, search, userID, scope string) (int, error) {
+	if s == nil || s.db == nil {
+		return 0, errors.New("store: projects requires a database")
+	}
 	query := `SELECT COUNT(*) FROM projects WHERE 1=1`
 	args := []interface{}{}
 	query, args = appendProjectListFilters(query, args, status, search)
 	query, args = appendProjectAccessFilter(query, args, userID, scope)
 	var count int
-	if err := db.QueryRow(query, args...).Scan(&count); err != nil {
+	if err := s.db.QueryRow(query, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("统计项目失败: %w", err)
 	}
 	return count, nil
 }
 
 // ListProjects 列出项目。
-func (db *DB) ListProjects(status, search string, limit, offset int) ([]*Project, error) {
+func (s *Projects) ListProjects(status, search string, limit, offset int) ([]*Project, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store: projects requires a database")
+	}
 	if limit <= 0 {
 		limit = 50
 	}
@@ -151,7 +187,7 @@ func (db *DB) ListProjects(status, search string, limit, offset int) ([]*Project
 	query += " ORDER BY pinned DESC, updated_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 
-	rows, err := db.Query(query, args...)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("列出项目失败: %w", err)
 	}
@@ -166,16 +202,19 @@ func (db *DB) ListProjects(status, search string, limit, offset int) ([]*Project
 			return nil, err
 		}
 		p.Pinned = pinned != 0
-		p.CreatedAt = parseDBTime(createdAt)
-		p.UpdatedAt = parseDBTime(updatedAt)
+		p.CreatedAt = sqltime.Parse(createdAt)
+		p.UpdatedAt = sqltime.Parse(updatedAt)
 		out = append(out, &p)
 	}
 	return out, rows.Err()
 }
 
-func (db *DB) ListProjectsForAccess(status, search string, limit, offset int, userID, scope string) ([]*Project, error) {
-	if scope == RBACScopeAll || strings.TrimSpace(userID) == "" {
-		return db.ListProjects(status, search, limit, offset)
+func (s *Projects) ListProjectsForAccess(status, search string, limit, offset int, userID, scope string) ([]*Project, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store: projects requires a database")
+	}
+	if scope == ScopeAll || strings.TrimSpace(userID) == "" {
+		return s.ListProjects(status, search, limit, offset)
 	}
 	if limit <= 0 {
 		limit = 50
@@ -188,7 +227,7 @@ func (db *DB) ListProjectsForAccess(status, search string, limit, offset int, us
 	query += " ORDER BY pinned DESC, updated_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 
-	rows, err := db.Query(query, args...)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("列出项目失败: %w", err)
 	}
@@ -202,17 +241,20 @@ func (db *DB) ListProjectsForAccess(status, search string, limit, offset int, us
 			return nil, err
 		}
 		p.Pinned = pinned != 0
-		p.CreatedAt = parseDBTime(createdAt)
-		p.UpdatedAt = parseDBTime(updatedAt)
+		p.CreatedAt = sqltime.Parse(createdAt)
+		p.UpdatedAt = sqltime.Parse(updatedAt)
 		out = append(out, &p)
 	}
 	return out, rows.Err()
 }
 
 // UpdateProject 更新项目。
-func (db *DB) UpdateProject(p *Project) error {
+func (s *Projects) UpdateProject(p *Project) error {
+	if s == nil || s.db == nil {
+		return errors.New("store: projects requires a database")
+	}
 	p.UpdatedAt = time.Now()
-	_, err := db.Exec(
+	_, err := s.db.Exec(
 		`UPDATE projects SET name = ?, description = ?, scope_json = ?, status = ?, pinned = ?, updated_at = ? WHERE id = ?`,
 		p.Name, p.Description, p.ScopeJSON, p.Status, boolToInt(p.Pinned), p.UpdatedAt, p.ID,
 	)
@@ -223,43 +265,52 @@ func (db *DB) UpdateProject(p *Project) error {
 }
 
 // DeleteProject 删除项目（级联删除事实；对话 project_id 置空由 FK 处理；其他资源 project_id 置空）。
-func (db *DB) DeleteProject(id string) error {
-	if err := NewFindings(db).UnlinkProject(id); err != nil {
+func (s *Projects) DeleteProject(id string) error {
+	if s == nil || s.db == nil {
+		return errors.New("store: projects requires a database")
+	}
+	if err := NewVulnerabilities(s.db, nil).UnlinkProject(id); err != nil {
 		return fmt.Errorf("解除漏洞项目关联失败: %w", err)
 	}
-	if err := NewAssets(db).UnlinkProject(id); err != nil {
+	if err := NewAssets(s.db).UnlinkProject(id); err != nil {
 		return fmt.Errorf("解除资产项目关联失败: %w", err)
 	}
-	if err := NewWebshell(db).UnlinkProject(id); err != nil {
+	if err := NewWebshell(s.db).UnlinkProject(id); err != nil {
 		return fmt.Errorf("解除 WebShell 项目关联失败: %w", err)
 	}
-	if err := NewC2(db).UnlinkProject(id); err != nil {
+	if err := NewC2(s.db).UnlinkProject(id); err != nil {
 		return fmt.Errorf("解除 C2 监听器项目关联失败: %w", err)
 	}
-	_, err := db.Exec(`DELETE FROM projects WHERE id = ?`, id)
+	_, err := s.db.Exec(`DELETE FROM projects WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("删除项目失败: %w", err)
 	}
-	db.dirs.RemoveProject(id)
+	s.dirs.RemoveProject(id)
 	return nil
 }
 
-func boolToInt(b bool) int {
-	if b {
-		return 1
+// ProjectLastActivity 返回项目最近活动时间；ok=false 表示项目已不存在。
+func (s *Projects) ProjectLastActivity(id string) (time.Time, bool, error) {
+	if s == nil || s.db == nil {
+		return time.Time{}, false, errors.New("store: projects requires a database")
 	}
-	return 0
-}
-
-func nullIfEmpty(s string) interface{} {
-	if strings.TrimSpace(s) == "" {
-		return nil
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return time.Time{}, false, nil
 	}
-	return s
-}
-
-// parseDBTime reads a DATETIME column. Which text forms are accepted is owned by internal/sqltime,
-// the one spelling every layer now reads stored instants through; this is the data layer's entry.
-func parseDBTime(s string) time.Time {
-	return sqltime.Parse(s)
+	var createdAt, updatedAt string
+	err := s.db.QueryRow(
+		"SELECT created_at, updated_at FROM projects WHERE id = ? LIMIT 1", id,
+	).Scan(&createdAt, &updatedAt)
+	if err == sql.ErrNoRows {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	created, updated := sqltime.Parse(createdAt), sqltime.Parse(updatedAt)
+	if created.After(updated) {
+		return created, true, nil
+	}
+	return updated, true, nil
 }

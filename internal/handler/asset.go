@@ -15,10 +15,11 @@ import (
 )
 
 type AssetHandler struct {
-	db     database.AssetContextStore
-	rbac   *store.RBAC
-	assets *store.Assets
-	logger *zap.Logger
+	db       database.AssetContextStore
+	projects *store.Projects
+	rbac     *store.RBAC
+	assets   *store.Assets
+	logger   *zap.Logger
 }
 
 const (
@@ -31,7 +32,7 @@ const (
 // from one *database.DB, so `h.db == nil` still means "no database for this handler", exactly as
 // before the split.
 func NewAssetHandler(db *database.DB, logger *zap.Logger) *AssetHandler {
-	return &AssetHandler{db: database.Narrow[database.AssetContextStore](db), rbac: database.NewRBAC(db), assets: database.NewAssets(db), logger: logger}
+	return &AssetHandler{db: database.Narrow[database.AssetContextStore](db), rbac: database.NewRBAC(db), projects: database.NewProjects(db), assets: database.NewAssets(db), logger: logger}
 }
 
 func assetAccess(c *gin.Context) store.Access {
@@ -360,7 +361,7 @@ func (h *AssetHandler) UpdateProjectBinding(c *gin.Context) {
 	}
 	req.ProjectID = strings.TrimSpace(req.ProjectID)
 	if req.ProjectID != "" {
-		if _, err := h.db.GetProject(req.ProjectID); err != nil {
+		if _, err := h.projects.GetProject(req.ProjectID); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "项目不存在"})
 			return
 		}

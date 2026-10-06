@@ -163,7 +163,7 @@ func (h *WorkflowHandler) ResumeRun(c *gin.Context) {
 		return
 	}
 	result, err := workflowrunner.ResumeWorkflowRun(c.Request.Context(), workflowrunner.RunArgs{
-		DB:             workflowrunner.Store{Store: projectStore(h.db, h.facts), Ledger: h.runs},
+		DB:             workflowrunner.Store{Store: projectStore(h.projects, h.facts), Ledger: h.runs},
 		Logger:         h.logger,
 		Role:           role,
 		AppCfg:         h.cfg,

@@ -143,11 +143,11 @@ func TestAssetReadToolsRespectConversationProjectScope(t *testing.T) {
 	}
 	defer db.Close()
 
-	projectA, err := db.CreateProject(&database.Project{Name: "Project A"})
+	projectA, err := database.NewProjects(db).CreateProject(&database.Project{Name: "Project A"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectB, err := db.CreateProject(&database.Project{Name: "Project B"})
+	projectB, err := database.NewProjects(db).CreateProject(&database.Project{Name: "Project B"})
 	if err != nil {
 		t.Fatal(err)
 	}

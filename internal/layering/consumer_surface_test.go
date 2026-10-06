@@ -40,7 +40,7 @@ var consumerSurfaceFiles = []string{
 // AttackChainStore / ChatUploadsStore / WebShellStore / RobotStore / AgentStore / WorkflowStore
 // each dropped their conversation members (most now hold store.Conversations instead), and
 // ResourceExistence vanished whole.
-const consumerSurfaceMemberFloor = 34
+const consumerSurfaceMemberFloor = 15
 
 func TestConsumerSurfacesDeclareOnlyCalledMethods(t *testing.T) {
 	root := moduleRoot(t)

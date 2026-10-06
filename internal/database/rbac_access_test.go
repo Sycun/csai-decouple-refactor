@@ -163,8 +163,8 @@ func TestRoleRejectsUnknownPermission(t *testing.T) {
 
 func TestRBACProjectAndConversationListAccess(t *testing.T) {
 	db := newRBACTestDB(t)
-	p1, _ := db.CreateProject(&Project{Name: "visible"})
-	p2, _ := db.CreateProject(&Project{Name: "hidden"})
+	p1, _ := NewProjects(db).CreateProject(&Project{Name: "visible"})
+	p2, _ := NewProjects(db).CreateProject(&Project{Name: "hidden"})
 	if err := NewRBAC(db).SetResourceOwner("project", p1.ID, "u1"); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestRBACProjectAndConversationListAccess(t *testing.T) {
 	_ = NewRBAC(db).SetResourceOwner("conversation", c1.ID, "u1")
 	_ = NewRBAC(db).SetResourceOwner("conversation", c2.ID, "u2")
 
-	projects, err := db.ListProjectsForAccess("", "", 50, 0, "u1", store.ScopeOwn)
+	projects, err := NewProjects(db).ListProjectsForAccess("", "", 50, 0, "u1", store.ScopeOwn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,8 +196,8 @@ func TestRBACVulnerabilityAccessInheritsProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p1, _ := db.CreateProject(&Project{Name: "visible"})
-	p2, _ := db.CreateProject(&Project{Name: "hidden"})
+	p1, _ := NewProjects(db).CreateProject(&Project{Name: "visible"})
+	p2, _ := NewProjects(db).CreateProject(&Project{Name: "hidden"})
 	if err := NewRBAC(db).AssignResourceToUser(user.ID, "project", p1.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestRBACConversationAccessInheritsProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := db.CreateProject(&Project{Name: "assigned project"})
+	project, err := NewProjects(db).CreateProject(&Project{Name: "assigned project"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,15 +255,15 @@ func TestRBACBatchResourceAssignmentValidationAndAtomicity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p1, err := db.CreateProject(&Project{Name: "p1"})
+	p1, err := NewProjects(db).CreateProject(&Project{Name: "p1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p2, err := db.CreateProject(&Project{Name: "p2"})
+	p2, err := NewProjects(db).CreateProject(&Project{Name: "p2"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p3, err := db.CreateProject(&Project{Name: "p3"})
+	p3, err := NewProjects(db).CreateProject(&Project{Name: "p3"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -613,7 +613,7 @@ func TestRBACAssignmentLabelsAndWeakTitles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := db.CreateProject(&Project{Name: "Alpha Project"})
+	project, err := NewProjects(db).CreateProject(&Project{Name: "Alpha Project"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +656,7 @@ func TestDeleteRBACResourceAssignmentWithDetails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := db.CreateProject(&Project{Name: "Revoked Project"})
+	project, err := NewProjects(db).CreateProject(&Project{Name: "Revoked Project"})
 	if err != nil {
 		t.Fatal(err)
 	}

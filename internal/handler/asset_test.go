@@ -22,11 +22,11 @@ func TestAssetListPaginatesWithinProject(t *testing.T) {
 	}
 	defer db.Close()
 
-	project, err := db.CreateProject(&database.Project{Name: "Paged Project", Status: "active"})
+	project, err := database.NewProjects(db).CreateProject(&database.Project{Name: "Paged Project", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	otherProject, err := db.CreateProject(&database.Project{Name: "Other Project", Status: "active"})
+	otherProject, err := database.NewProjects(db).CreateProject(&database.Project{Name: "Other Project", Status: "active"})
 	if err != nil {
 		t.Fatal(err)
 	}

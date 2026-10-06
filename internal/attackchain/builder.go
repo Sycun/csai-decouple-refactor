@@ -22,11 +22,13 @@ import (
 )
 
 // Store is the persistence surface this package needs: the chain's node/edge rows, the
-// conversation evidence they are reconstructed from, and the project fact the promotion path writes
-// against. It used to take the 361-method *database.DB in every signature, which is what kept the
-// HTTP layer from narrowing its own storage field. The method list lives in
-// database.AttackChainLedger to avoid an import cycle; the alias keeps it one list to edit.
-type Store = database.AttackChainLedger
+// conversation evidence they are reconstructed from (store.Conversations), and the project row the
+// promotion path reads (store.Projects). Declared here, on the consumer side: the old shared list in
+// database went empty when both halves moved, so the alias was replaced by the one method that is
+// still this package's own need.
+type Store interface {
+	GetProject(id string) (*store.Project, error)
+}
 
 // Builder 攻击链构建器
 // ChainStore is the chain's own two tables. It arrives as a collaborator rather than as members of

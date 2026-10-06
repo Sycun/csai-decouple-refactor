@@ -60,7 +60,7 @@ func (h *AgentHandler) projectBlackboardBlock(conversationID string) string {
 	if err != nil || projectID == "" {
 		return ""
 	}
-	block, err := project.BuildProjectBlackboardBlock(projectStore(h.db, h.facts), projectID, h.config.Project)
+	block, err := project.BuildProjectBlackboardBlock(projectStore(h.projects, h.facts), projectID, h.config.Project)
 	if err != nil {
 		h.logger.Warn("构建项目黑板索引失败", zap.String("conversationId", conversationID), zap.Error(err))
 		return ""

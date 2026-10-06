@@ -114,7 +114,7 @@ func TestBuildFactIndexBlock_withLinksAndPathOverview(t *testing.T) {
 	}
 	defer db.Close()
 
-	proj, err := db.CreateProject(&database.Project{Name: "path-proj"})
+	proj, err := database.NewProjects(db).CreateProject(&database.Project{Name: "path-proj"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestBuildFactIndexBlock_withLinksAndPathOverview(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	block, err := BuildFactIndexBlock(NewStore(db, database.NewFacts(db)), proj.ID, config.ProjectConfig{Enabled: true, FactIndexMaxRunes: 6500, FactIndexPathMaxRunes: 1000})
+	block, err := BuildFactIndexBlock(NewStore(database.NewProjects(db), database.NewFacts(db)), proj.ID, config.ProjectConfig{Enabled: true, FactIndexMaxRunes: 6500, FactIndexPathMaxRunes: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}

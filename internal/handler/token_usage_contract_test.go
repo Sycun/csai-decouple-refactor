@@ -240,7 +240,7 @@ func TestConversationTokenUsageEndpointAndQueryClamps(t *testing.T) {
 	}
 	// A row's project is the conversation's project at the moment the run happened: the column is a
 	// copy taken on write, so linking a conversation afterwards does not re-file its history.
-	project, err := db.CreateProject(&database.Project{Name: "usage project"})
+	project, err := database.NewProjects(db).CreateProject(&database.Project{Name: "usage project"})
 	if err != nil {
 		t.Fatalf("CreateProject: %v", err)
 	}

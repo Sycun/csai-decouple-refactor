@@ -19,7 +19,7 @@ func TestListConversationPlanTasksSortedAndToleratesMissingDirectory(t *testing.
 
 	base := filepath.Join(tmp, "skills", ".eino", "plantask")
 	db.SetConversationDirs(base, "", "", "", "")
-	missing, err := db.ListConversationPlanTasks("missing")
+	missing, err := NewConversations(db).ListConversationPlanTasksSince("missing", time.Time{})
 	if err != nil || len(missing) != 0 {
 		t.Fatalf("missing task board = %#v, err=%v", missing, err)
 	}
@@ -43,7 +43,7 @@ func TestListConversationPlanTasksSortedAndToleratesMissingDirectory(t *testing.
 		t.Fatalf("WriteFile(highwatermark): %v", err)
 	}
 
-	tasks, err := db.ListConversationPlanTasks("conversation-1")
+	tasks, err := NewConversations(db).ListConversationPlanTasksSince("conversation-1", time.Time{})
 	if err != nil {
 		t.Fatalf("ListConversationPlanTasks: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestListConversationPlanTasksSinceHidesPreviousRunUntilTaskCreate(t *testin
 		t.Fatalf("Chtimes(old): %v", err)
 	}
 
-	tasks, err := db.ListConversationPlanTasksSince("conversation-current-run", runStartedAt)
+	tasks, err := NewConversations(db).ListConversationPlanTasksSince("conversation-current-run", runStartedAt)
 	if err != nil {
 		t.Fatalf("ListConversationPlanTasksSince(before TaskCreate): %v", err)
 	}
@@ -94,7 +94,7 @@ func TestListConversationPlanTasksSinceHidesPreviousRunUntilTaskCreate(t *testin
 	if err := os.WriteFile(newPath, []byte(`{"id":"2","subject":"本轮任务","status":"pending"}`), 0o644); err != nil {
 		t.Fatalf("WriteFile(new): %v", err)
 	}
-	tasks, err = db.ListConversationPlanTasksSince("conversation-current-run", runStartedAt)
+	tasks, err = NewConversations(db).ListConversationPlanTasksSince("conversation-current-run", runStartedAt)
 	if err != nil {
 		t.Fatalf("ListConversationPlanTasksSince(after TaskCreate): %v", err)
 	}

@@ -39,7 +39,7 @@ func TestFactGraphIntegration(t *testing.T) {
 	}
 	defer db.Close()
 
-	p, err := db.CreateProject(&database.Project{Name: "g"})
+	p, err := database.NewProjects(db).CreateProject(&database.Project{Name: "g"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestFactGraphIntegration(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	graph, err := BuildProjectFactGraph(NewStore(db, database.NewFacts(db)), p.ID, "path", true)
+	graph, err := BuildProjectFactGraph(NewStore(database.NewProjects(db), database.NewFacts(db)), p.ID, "path", true)
 	if err != nil {
 		t.Fatal(err)
 	}

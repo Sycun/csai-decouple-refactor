@@ -70,7 +70,7 @@ func TestMCPToolAuthorizerEnforcesConversationProjectBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := db.CreateProject(&database.Project{Name: "Project 123"})
+	project, err := database.NewProjects(db).CreateProject(&database.Project{Name: "Project 123"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -44,9 +44,9 @@ const (
 type ChatUploadsHandler struct {
 	logger        *zap.Logger
 	audit         *audit.Service
-	db            database.ChatUploadsStore
-	conversations *store.Conversations
 	rbac          *store.RBAC
+	conversations *store.Conversations
+	projects      *store.Projects
 	uploads       *store.ChatUploads // chat_upload_artifacts: one row per uploaded path
 }
 
@@ -59,9 +59,9 @@ func (h *ChatUploadsHandler) SetAudit(s *audit.Service) {
 func NewChatUploadsHandler(logger *zap.Logger, databases ...*database.DB) *ChatUploadsHandler {
 	h := &ChatUploadsHandler{logger: logger}
 	if len(databases) > 0 {
-		h.db = database.Narrow[database.ChatUploadsStore](databases[0])
 		h.conversations = database.NewConversations(databases[0])
 		h.rbac = database.NewRBAC(databases[0])
+		h.projects = database.NewProjects(databases[0])
 		// A nil *database.DB stays a nil store: OwnerOf then answers "not an artifact" rather than
 		// panicking, which is what the path-authorization helper below assumes.
 		if databases[0] != nil {
@@ -73,7 +73,7 @@ func NewChatUploadsHandler(logger *zap.Logger, databases ...*database.DB) *ChatU
 
 func (h *ChatUploadsHandler) pathAllowed(c *gin.Context, relativePath string) bool {
 	session, ok := security.CurrentSession(c)
-	if !ok || h.db == nil {
+	if !ok || h.rbac == nil {
 		return false
 	}
 	if session.Scope == database.RBACScopeAll {
@@ -93,7 +93,7 @@ func (h *ChatUploadsHandler) pathAllowed(c *gin.Context, relativePath string) bo
 
 func (h *ChatUploadsHandler) reductionPathAllowed(c *gin.Context, scope, id string) bool {
 	session, ok := security.CurrentSession(c)
-	if !ok || h.db == nil {
+	if !ok || h.rbac == nil {
 		return false
 	}
 	if session.Scope == database.RBACScopeAll {
@@ -150,7 +150,7 @@ func (h *ChatUploadsHandler) workspaceVirtualPathAllowed(c *gin.Context, relativ
 
 func (h *ChatUploadsHandler) conversationArtifactPathAllowed(c *gin.Context, conversationID string) bool {
 	session, ok := security.CurrentSession(c)
-	if !ok || h.db == nil {
+	if !ok || h.rbac == nil {
 		return false
 	}
 	if session.Scope == database.RBACScopeAll {
@@ -181,7 +181,7 @@ func (h *ChatUploadsHandler) absRoot() (string, error) {
 }
 
 func (h *ChatUploadsHandler) absReductionRoot() (string, error) {
-	if h.db != nil {
+	if h.rbac != nil {
 		if base := strings.TrimSpace(h.conversations.EinoReductionBaseDir()); base != "" {
 			if filepath.IsAbs(base) {
 				return filepath.Abs(base)
@@ -201,7 +201,7 @@ func (h *ChatUploadsHandler) absReductionRoot() (string, error) {
 }
 
 func (h *ChatUploadsHandler) absWorkspaceRoot() (string, error) {
-	if h.db != nil {
+	if h.rbac != nil {
 		if base := strings.TrimSpace(h.conversations.EinoWorkspaceBaseDir()); base != "" {
 			if filepath.IsAbs(base) {
 				return filepath.Abs(base)
@@ -221,7 +221,7 @@ func (h *ChatUploadsHandler) absWorkspaceRoot() (string, error) {
 }
 
 func (h *ChatUploadsHandler) absConversationArtifactsRoot() (string, error) {
-	if h.db != nil {
+	if h.rbac != nil {
 		if base := strings.TrimSpace(h.conversations.ConversationArtifactsBaseDir()); base != "" {
 			if filepath.IsAbs(base) {
 				return filepath.Abs(base)
@@ -285,7 +285,7 @@ type ChatUploadFileItem struct {
 
 func (h *ChatUploadsHandler) conversationProjectID(conversationID string, cache map[string]string) string {
 	conversationID = strings.TrimSpace(conversationID)
-	if conversationID == "" || conversationID == "_manual" || conversationID == "_new" || h.db == nil {
+	if conversationID == "" || conversationID == "_manual" || conversationID == "_new" || h.rbac == nil {
 		return ""
 	}
 	if v, ok := cache[conversationID]; ok {
@@ -301,7 +301,7 @@ func (h *ChatUploadsHandler) conversationProjectID(conversationID string, cache 
 
 func (h *ChatUploadsHandler) conversationTitle(conversationID string, cache map[string]string) string {
 	conversationID = strings.TrimSpace(conversationID)
-	if conversationID == "" || conversationID == "_manual" || conversationID == "_new" || h.db == nil {
+	if conversationID == "" || conversationID == "_manual" || conversationID == "_new" || h.rbac == nil {
 		return ""
 	}
 	if v, ok := cache[conversationID]; ok {
@@ -317,13 +317,13 @@ func (h *ChatUploadsHandler) conversationTitle(conversationID string, cache map[
 
 func (h *ChatUploadsHandler) projectName(projectID string, cache map[string]string) string {
 	projectID = strings.TrimSpace(projectID)
-	if projectID == "" || h.db == nil {
+	if projectID == "" || h.rbac == nil {
 		return ""
 	}
 	if v, ok := cache[projectID]; ok {
 		return v
 	}
-	name, err := h.db.GetProjectName(projectID)
+	name, err := h.projects.GetProjectName(projectID)
 	if err != nil {
 		name = ""
 	}

@@ -113,7 +113,14 @@ import (
 // table, the read side of messages / process_details, the agent trace columns and the create hook
 // - plus the two project-binding methods project.go had been holding for the same table. What
 // remains on the wrapper is the boot skeleton and the project domain (next cut).
-const dbMethodCeiling = 27
+// 27 -> 11: the project domain moved whole - the eight methods over the projects table, the three
+// statistics reads (two of which answer about conversations and moved to store.Conversations
+// instead), the dashboard aggregate, the two plan-task file readers and the two activity stamps
+// the cleaner asks for. ListConversationPlanTasks was the dead one on the surface allow-list;
+// deleted rather than relocated. ProjectRowStore, ProjectStore, ConversationStore,
+// ChatUploadsStore, AttackChainStore and the empty WorkflowStore shells all dissolved - their
+// consumers hold the concrete stores now. What is left is the boot skeleton itself.
+const dbMethodCeiling = 11
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

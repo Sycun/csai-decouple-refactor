@@ -1,9 +1,12 @@
-package database
+package store
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"cyberstrike-ai/internal/sqltime"
 )
 
 // ProjectDashboardFact 仪表盘跨项目近期事实条目。
@@ -31,7 +34,10 @@ type ProjectDashboardSummary struct {
 	Totals      ProjectDashboardTotals `json:"totals"`
 }
 
-func (db *DB) GetProjectDashboardSummaryForAccess(factLimit int, userID, scope string) (*ProjectDashboardSummary, error) {
+func (s *Projects) GetProjectDashboardSummaryForAccess(factLimit int, userID, scope string) (*ProjectDashboardSummary, error) {
+	if s == nil || s.db == nil {
+		return nil, errors.New("store: projects requires a database")
+	}
 	if factLimit <= 0 {
 		factLimit = 5
 	}
@@ -46,7 +52,7 @@ func (db *DB) GetProjectDashboardSummaryForAccess(factLimit int, userID, scope s
 	projectAccess := ""
 	args := []interface{}{}
 	userID = strings.TrimSpace(userID)
-	if userID != "" && scope != RBACScopeAll {
+	if userID != "" && scope != ScopeAll {
 		projectAccess = ` AND (
 			p.owner_user_id = ?
 			OR EXISTS (
@@ -57,10 +63,10 @@ func (db *DB) GetProjectDashboardSummaryForAccess(factLimit int, userID, scope s
 		args = append(args, userID, userID)
 	}
 
-	if err := db.QueryRow(`SELECT COUNT(*) FROM projects p WHERE p.status = 'active'`+projectAccess, args...).Scan(&out.Totals.ActiveProjects); err != nil {
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM projects p WHERE p.status = 'active'`+projectAccess, args...).Scan(&out.Totals.ActiveProjects); err != nil {
 		return nil, fmt.Errorf("统计活跃项目失败: %w", err)
 	}
-	if err := db.QueryRow(
+	if err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM project_facts f
 		 INNER JOIN projects p ON p.id = f.project_id
 		 WHERE f.confidence != 'deprecated' AND p.status = 'active'`+projectAccess,
@@ -71,7 +77,7 @@ func (db *DB) GetProjectDashboardSummaryForAccess(factLimit int, userID, scope s
 
 	queryArgs := append([]interface{}{}, args...)
 	queryArgs = append(queryArgs, factLimit)
-	rows, err := db.Query(
+	rows, err := s.db.Query(
 		`SELECT f.id, f.project_id, p.name, f.fact_key, f.category, f.summary, f.confidence, f.pinned, f.updated_at
 		 FROM project_facts f
 		 INNER JOIN projects p ON p.id = f.project_id
@@ -97,7 +103,7 @@ func (db *DB) GetProjectDashboardSummaryForAccess(factLimit int, userID, scope s
 		}
 		item.Pinned = pinned != 0
 		item.ProjectName = strings.TrimSpace(item.ProjectName)
-		item.UpdatedAt = parseDBTime(updatedAt)
+		item.UpdatedAt = sqltime.Parse(updatedAt)
 		out.RecentFacts = append(out.RecentFacts, item)
 	}
 	if err := rows.Err(); err != nil {

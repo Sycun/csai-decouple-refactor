@@ -26,21 +26,14 @@ var narrowedHandlers = []struct {
 	build func(db *database.DB) interface{}
 }{
 	{"AssetHandler", func(db *database.DB) interface{} { return NewAssetHandler(db, zap.NewNop()) }},
-	{"AttackChainHandler", func(db *database.DB) interface{} {
-		return NewAttackChainHandler(db, nil, zap.NewNop())
-	}},
-	{"ConversationHandler", func(db *database.DB) interface{} { return NewConversationHandler(db, zap.NewNop()) }},
 	{"AgentHandler", func(db *database.DB) interface{} {
 		return NewAgentHandler(nil, db, &config.Config{}, zap.NewNop())
 	}},
-	{"ProjectHandler", func(db *database.DB) interface{} { return NewProjectHandler(db, zap.NewNop()) }},
-	{"WorkflowHandler", func(db *database.DB) interface{} { return NewWorkflowHandler(db, zap.NewNop()) }},
 	{"runFinalizer", func(db *database.DB) interface{} { return newRunFinalizer(db, zap.NewNop(), nil, nil) }},
 	{"NotificationHandler", func(db *database.DB) interface{} { return NewNotificationHandler(db, nil, zap.NewNop()) }},
 	{"OpenAPIHandler", func(db *database.DB) interface{} { return NewOpenAPIHandler(db, zap.NewNop(), nil, nil) }},
 	{"RobotHandler", func(db *database.DB) interface{} { return NewRobotHandler(&config.Config{}, db, nil, zap.NewNop()) }},
 	{"WebShellHandler", func(db *database.DB) interface{} { return NewWebShellHandler(zap.NewNop(), db) }},
-	{"ChatUploadsHandler", func(db *database.DB) interface{} { return NewChatUploadsHandler(zap.NewNop(), db) }},
 }
 
 // storeOwnedHandlers are the domains that went one step further than a consumer interface: their
@@ -74,6 +67,11 @@ var storeOwnedHandlers = []struct {
 	}},
 	{"MonitorHandler", "executions", func(db *database.DB) interface{} { return NewMonitorHandler(nil, nil, db, zap.NewNop()) }},
 	{"AuditHandler", "conversations", func(db *database.DB) interface{} { return NewAuditHandler(db, nil, zap.NewNop()) }},
+	{"ChatUploadsHandler", "conversations", func(db *database.DB) interface{} { return NewChatUploadsHandler(zap.NewNop(), db) }},
+	{"WorkflowHandler", "projects", func(db *database.DB) interface{} { return NewWorkflowHandler(db, zap.NewNop()) }},
+	{"ProjectHandler", "projects", func(db *database.DB) interface{} { return NewProjectHandler(db, zap.NewNop()) }},
+	{"ConversationHandler", "conversations", func(db *database.DB) interface{} { return NewConversationHandler(db, zap.NewNop()) }},
+	{"AttackChainHandler", "projects", func(db *database.DB) interface{} { return NewAttackChainHandler(db, nil, zap.NewNop()) }},
 }
 
 // storeField returns a named field and requires it to be a pointer to a store from internal/store.

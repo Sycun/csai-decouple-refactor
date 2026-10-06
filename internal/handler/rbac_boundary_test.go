@@ -58,7 +58,7 @@ func TestPromoteAttackChainRequiresSourceConversationAccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	project, _ := db.CreateProject(&database.Project{Name: "owned"})
+	project, _ := database.NewProjects(db).CreateProject(&database.Project{Name: "owned"})
 	conversation, _ := database.NewConversations(db).CreateConversation("foreign", database.ConversationCreateMeta{})
 	_ = database.NewRBAC(db).SetResourceOwner("project", project.ID, "u1")
 	_ = database.NewRBAC(db).SetResourceOwner("conversation", conversation.ID, "u2")
@@ -82,8 +82,8 @@ func TestVulnerabilityCannotBeReparentedToForeignProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	owned, _ := db.CreateProject(&database.Project{Name: "owned"})
-	foreign, _ := db.CreateProject(&database.Project{Name: "foreign"})
+	owned, _ := database.NewProjects(db).CreateProject(&database.Project{Name: "owned"})
+	foreign, _ := database.NewProjects(db).CreateProject(&database.Project{Name: "foreign"})
 	_ = database.NewRBAC(db).SetResourceOwner("project", owned.ID, "u1")
 	_ = database.NewRBAC(db).SetResourceOwner("project", foreign.ID, "u2")
 	vulnerability, err := database.NewFindings(db).Create(&store.Vulnerability{Title: "v", Severity: "high", ProjectID: owned.ID})
@@ -172,8 +172,8 @@ func TestChatUploadsListIncludesAuthorizedProjectWorkspaceFiles(t *testing.T) {
 	workspaceBase := filepath.Join(fsBase, "workspace")
 	reductionBase := filepath.Join(fsBase, "reduction")
 	db.SetConversationDirs("", "", reductionBase, workspaceBase, "")
-	allowedProject, _ := db.CreateProject(&database.Project{Name: "allowed"})
-	hiddenProject, _ := db.CreateProject(&database.Project{Name: "hidden"})
+	allowedProject, _ := database.NewProjects(db).CreateProject(&database.Project{Name: "allowed"})
+	hiddenProject, _ := database.NewProjects(db).CreateProject(&database.Project{Name: "hidden"})
 	conversation, _ := database.NewConversations(db).CreateConversation("project conversation", database.ConversationCreateMeta{ProjectID: allowedProject.ID})
 	if err := database.NewRBAC(db).AssignResourceToUser(user.ID, "project", allowedProject.ID); err != nil {
 		t.Fatal(err)

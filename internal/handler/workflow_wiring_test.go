@@ -28,8 +28,9 @@ func TestWorkflowHandlersAreWiredToTheirRunLedger(t *testing.T) {
 	if workflows.runs == nil {
 		t.Fatal("NewWorkflowHandler left runs unset: the endpoints would answer 500 on every workflow request")
 	}
-	if workflows.db == nil {
-		t.Fatal("NewWorkflowHandler left its connection-wrapper surface unset")
+	// 连接包装字段已随 project/会话域迁走；同一意图（端点不会 500）现在钉在它持有的三个 store 上。
+	if workflows.projects == nil || workflows.conversations == nil || workflows.rbac == nil {
+		t.Fatal("NewWorkflowHandler left one of its stores unset: the endpoints would answer 500 on every workflow request")
 	}
 
 	agent := NewAgentHandler(nil, db, &config.Config{}, zap.NewNop())
@@ -38,7 +39,7 @@ func TestWorkflowHandlersAreWiredToTheirRunLedger(t *testing.T) {
 	}
 	// This is exactly the value the integration path hands the engine; composing it here is what
 	// proves the engine will not report its persistence as missing.
-	composed := workflowrunner.Store{Store: project.NewStore(agent.db, agent.facts), Ledger: agent.runs}
+	composed := workflowrunner.Store{Store: project.NewStore(agent.projects, agent.facts), Ledger: agent.runs}
 	if composed.Missing() {
 		t.Fatal("the engine store the agent handler composes reports itself missing, so workflow runs would refuse to start")
 	}

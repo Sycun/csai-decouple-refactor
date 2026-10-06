@@ -29,9 +29,9 @@ func TestRBACAssignResourceBatchIsAtomicAndLegacyCompatible(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p1, _ := db.CreateProject(&database.Project{Name: "p1"})
-	p2, _ := db.CreateProject(&database.Project{Name: "p2"})
-	p3, _ := db.CreateProject(&database.Project{Name: "p3"})
+	p1, _ := database.NewProjects(db).CreateProject(&database.Project{Name: "p1"})
+	p2, _ := database.NewProjects(db).CreateProject(&database.Project{Name: "p2"})
+	p3, _ := database.NewProjects(db).CreateProject(&database.Project{Name: "p3"})
 
 	h := NewRBACHandler(db, zap.NewNop())
 	router := gin.New()
@@ -84,7 +84,7 @@ func TestRBACAssignResourceAutoDetectsActualType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := db.CreateProject(&database.Project{Name: "auto-project"})
+	project, err := database.NewProjects(db).CreateProject(&database.Project{Name: "auto-project"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestRBACAssignableResourcesArePaged(t *testing.T) {
 	defer db.Close()
 
 	for _, name := range []string{"p1", "p2", "p3"} {
-		if _, err := db.CreateProject(&database.Project{Name: name}); err != nil {
+		if _, err := database.NewProjects(db).CreateProject(&database.Project{Name: name}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -158,7 +158,7 @@ func TestRBACDeleteResourceAssignmentAuditsTargetResource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	project, err := db.CreateProject(&database.Project{Name: "audit-project"})
+	project, err := database.NewProjects(db).CreateProject(&database.Project{Name: "audit-project"})
 	if err != nil {
 		t.Fatal(err)
 	}

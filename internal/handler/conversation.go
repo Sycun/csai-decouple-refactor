@@ -30,10 +30,9 @@ type ConversationTaskStateProvider interface {
 
 // ConversationHandler 对话处理器
 type ConversationHandler struct {
-	db database.ConversationStore
-
 	conversations *store.Conversations
 	rbac          *store.RBAC
+	projects      *store.Projects
 	usage         *store.ModelTokenUsage // model_token_usage: 用量页唯一的读来源
 	execArgs      *store.Execution       // tool_executions: 历史渲染补全工具参数时唯一的读来源
 	logger        *zap.Logger
@@ -61,8 +60,6 @@ func (h *ConversationHandler) SetTaskStateProvider(provider ConversationTaskStat
 // NewConversationHandler 创建新的对话处理器
 func NewConversationHandler(db *database.DB, logger *zap.Logger) *ConversationHandler {
 	return &ConversationHandler{
-		db: database.Narrow[database.ConversationStore](db),
-
 		conversations: database.NewConversations(db), rbac: database.NewRBAC(db),
 		usage:    newModelTokenUsageStore(db),
 		execArgs: newExecutionStore(db),
@@ -277,7 +274,7 @@ func (h *ConversationHandler) GetConversationPlanTasks(c *gin.Context) {
 		})
 		return
 	}
-	tasks, err := h.db.ListConversationPlanTasksSince(id, startedAt)
+	tasks, err := h.conversations.ListConversationPlanTasksSince(id, startedAt)
 	if err != nil {
 		h.logger.Error("获取对话任务列表失败", zap.String("conversationId", id), zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取任务列表失败"})

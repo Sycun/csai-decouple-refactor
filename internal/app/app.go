@@ -82,6 +82,21 @@ type App struct {
 }
 
 // New 创建新应用
+// cleanerActivity 把两个 store 的两个"最近活动"读面拼成 cleaner 需要的一份 Activities：
+// 会话一条读 conversations 表（store.Conversations），项目一条读 projects 表（store.Projects）。
+type cleanerActivity struct {
+	conversations *store.Conversations
+	projects      *store.Projects
+}
+
+func (a cleanerActivity) ConversationLastActivity(id string) (time.Time, bool, error) {
+	return a.conversations.ConversationLastActivity(id)
+}
+
+func (a cleanerActivity) ProjectLastActivity(id string) (time.Time, bool, error) {
+	return a.projects.ProjectLastActivity(id)
+}
+
 func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error) {
 	toolGuard, err := toolguard.NewManager(cfg.EffectiveToolGuard())
 	if err != nil {
@@ -470,7 +485,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 			WorkflowCheckpoints:  filepath.Join(filepath.Dir(dbPath), "workflow-checkpoints"),
 			DiagnosticLogs:       diagnosticLogDir,
 		},
-		Activity: db,
+		Activity: cleanerActivity{conversations: database.NewConversations(db), projects: database.NewProjects(db)},
 		Logger:   log.Logger,
 	})
 	storageService := storage.NewService(storageCleaner, cfg, log.Logger)
