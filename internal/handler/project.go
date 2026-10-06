@@ -138,7 +138,7 @@ func (h *ProjectHandler) ListProjects(c *gin.Context) {
 
 // GetProjectStats GET /api/projects/:id/stats
 func (h *ProjectHandler) GetProjectStats(c *gin.Context) {
-	stats, err := project.GetProjectStats(h.db, c.Param("id"))
+	stats, err := project.GetProjectStats(projectStore(h.db), c.Param("id"))
 	if err != nil {
 		if strings.Contains(err.Error(), "不存在") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
@@ -307,14 +307,14 @@ func (h *ProjectHandler) applyFactLinksAfterUpsert(projectID string, fact *store
 		if err != nil {
 			return err
 		}
-		return project.PersistFactLinksFromParsed(h.db, projectID, fact.FactKey, fact.SourceConversationID, parsed, true)
+		return project.PersistFactLinksFromParsed(projectStore(h.db), projectID, fact.FactKey, fact.SourceConversationID, parsed, true)
 	}
 	if parseBody {
 		inputs := project.ParseLinksFromBody(fact.Body)
 		if inputs == nil {
 			return nil
 		}
-		return project.PersistFactIncomingLinks(h.db, projectID, fact.FactKey, inputs, true)
+		return project.PersistFactIncomingLinks(projectStore(h.db), projectID, fact.FactKey, inputs, true)
 	}
 	return nil
 }
@@ -378,7 +378,7 @@ func (h *ProjectHandler) ListFacts(c *gin.Context) {
 		c.JSON(http.StatusOK, list)
 		return
 	}
-	counts, err := project.LoadProjectFactLinkCounts(h.db, projectID)
+	counts, err := project.LoadProjectFactLinkCounts(projectStore(h.db), projectID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -407,7 +407,7 @@ func (h *ProjectHandler) GetFactGraph(c *gin.Context) {
 	if v := c.Query("exclude_deprecated"); v == "0" || v == "false" {
 		excludeDeprecated = false
 	}
-	graph, err := project.BuildProjectFactGraph(h.db, projectID, view, excludeDeprecated)
+	graph, err := project.BuildProjectFactGraph(projectStore(h.db), projectID, view, excludeDeprecated)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -461,7 +461,7 @@ func buildPlaintextSummarizationInput(
 
 // refreshFactIndexInMessages 在 summarization 压缩后，用 DB 最新索引替换 system 中已有的项目黑板索引段。
 func refreshFactIndexInMessages(msgs []adk.Message, db project.Store, projectID string, cfg config.ProjectConfig, logger *zap.Logger) []adk.Message {
-	if db == nil || !cfg.Enabled {
+	if db.Missing() || !cfg.Enabled {
 		return msgs
 	}
 	projectID = strings.TrimSpace(projectID)

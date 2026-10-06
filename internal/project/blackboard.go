@@ -28,7 +28,7 @@ const (
 
 // BuildFactIndexBlock 为 Agent 系统提示生成项目黑板索引（key + summary + 关系边 + 攻击路径，不含 body）。
 func BuildFactIndexBlock(db Store, projectID string, cfg config.ProjectConfig) (string, error) {
-	if db == nil || !cfg.Enabled {
+	if db.Missing() || !cfg.Enabled {
 		return "", nil
 	}
 	projectID = strings.TrimSpace(projectID)

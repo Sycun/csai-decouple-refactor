@@ -778,7 +778,7 @@ func (h *AgentHandler) runRobotEinoSingleWithRetry(
 ) (string, string, error) {
 	runCfg := currentConfig(h.config)
 	resultMA, errMA := multiagent.RunEinoSingleChatModelAgent(
-		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, h.db, h.logger,
+		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.db), h.logger,
 		conversationID, h.conversationProjectID(conversationID), finalMessage, history, roleTools, progressCallback, nil, h.agentSessionContextBlock(conversationID),
 	)
 	if errMA != nil {
@@ -799,7 +799,7 @@ func (h *AgentHandler) runRobotMultiAgentWithRetry(
 ) (string, string, error) {
 	runCfg := currentConfig(h.config)
 	resultMA, errMA := multiagent.RunDeepAgent(
-		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, h.db, h.logger,
+		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.db), h.logger,
 		conversationID, h.conversationProjectID(conversationID), finalMessage, history, roleTools, progressCallback,
 		h.agentsMarkdownDir, orchestration, nil, h.agentSessionContextBlock(conversationID),
 	)

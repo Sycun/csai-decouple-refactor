@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/project"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/schema"
@@ -40,7 +41,7 @@ func TestNewEinoAgenticSummarizationMiddlewareCompactsWithNativeTypedMiddleware(
 		SummarizationOutputReserveTokens: 1024,
 	}
 
-	mw, err := newEinoAgenticSummarizationMiddleware(ctx, summaryModel, appCfg, mwCfg, "conv-agentic", nil, "", nil)
+	mw, err := newEinoAgenticSummarizationMiddleware(ctx, summaryModel, appCfg, mwCfg, "conv-agentic", project.Store{}, "", nil)
 	if err != nil {
 		t.Fatalf("newEinoAgenticSummarizationMiddleware: %v", err)
 	}
@@ -101,7 +102,7 @@ func TestEinoAgenticChatModelAgentCompactsContextBeforeBusinessModel(t *testing.
 		SummarizationEmitInternalEvents:  &emit,
 		SummarizationOutputReserveTokens: 1024,
 	}
-	sumMw, err := newEinoAgenticSummarizationMiddleware(ctx, summaryModel, appCfg, mwCfg, "conv-agentic-e2e", nil, "", nil)
+	sumMw, err := newEinoAgenticSummarizationMiddleware(ctx, summaryModel, appCfg, mwCfg, "conv-agentic-e2e", project.Store{}, "", nil)
 	if err != nil {
 		t.Fatalf("newEinoAgenticSummarizationMiddleware: %v", err)
 	}
@@ -192,7 +193,7 @@ func TestEinoAgenticSummarizationMiddlewareRetriesWhenSummaryModelReturnsEmpty(t
 		SummarizationOutputReserveTokens: 1024,
 	}
 
-	mw, err := newEinoAgenticSummarizationMiddleware(ctx, summaryModel, appCfg, mwCfg, "conv-agentic-empty-summary", nil, "", nil)
+	mw, err := newEinoAgenticSummarizationMiddleware(ctx, summaryModel, appCfg, mwCfg, "conv-agentic-empty-summary", project.Store{}, "", nil)
 	if err != nil {
 		t.Fatalf("newEinoAgenticSummarizationMiddleware: %v", err)
 	}

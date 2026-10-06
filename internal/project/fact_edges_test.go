@@ -163,7 +163,7 @@ func TestBuildProjectFactGraphPreservesStoredEdgeDirection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	graph, err := BuildProjectFactGraph(db, p.ID, "path", true)
+	graph, err := BuildProjectFactGraph(NewStore(db, db), p.ID, "path", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,10 +226,10 @@ func TestPersistFactLinksFromUsesFromAsIncoming(t *testing.T) {
 			{From: "target/primary_domain", Type: "discovered_on"},
 		},
 	}
-	if err := PersistFactLinksFromParsed(db, p.ID, "finding/sqli", "", parsed, false); err != nil {
+	if err := PersistFactLinksFromParsed(NewStore(db, db), p.ID, "finding/sqli", "", parsed, false); err != nil {
 		t.Fatal(err)
 	}
-	graph, err := BuildProjectFactGraph(db, p.ID, "path", true)
+	graph, err := BuildProjectFactGraph(NewStore(db, db), p.ID, "path", true)
 	if err != nil {
 		t.Fatal(err)
 	}

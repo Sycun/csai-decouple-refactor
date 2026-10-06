@@ -112,7 +112,7 @@ func PromoteToProject(db Store, chain ChainStore, projectID, conversationID stri
 		}
 	}
 
-	graph, _ := project.BuildProjectFactGraph(db, projectID, "full", true)
+	graph, _ := project.BuildProjectFactGraph(project.NewStore(db, db), projectID, "full", true)
 	res.Graph = graph
 	return res, nil
 }

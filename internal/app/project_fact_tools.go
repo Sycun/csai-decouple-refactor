@@ -153,12 +153,12 @@ func registerProjectFactTools(mcpServer *mcp.Server, db *database.DB, cfg *confi
 				return textResult("错误: "+err.Error(), true), nil
 			}
 			convID := agent.ConversationIDFromContext(ctx)
-			if err := project.PersistFactLinksFromParsed(db, projectID, created.FactKey, convID, linkInputs, true); err != nil {
+			if err := project.PersistFactLinksFromParsed(project.NewStore(db, db), projectID, created.FactKey, convID, linkInputs, true); err != nil {
 				return textResult("错误: 保存关系边失败: "+err.Error(), true), nil
 			}
 			created, _ = db.GetProjectFactByKey(projectID, created.FactKey)
 		} else if parsed := project.ParseLinksFromBody(created.Body); len(parsed) > 0 {
-			if err := project.PersistFactIncomingLinks(db, projectID, created.FactKey, parsed, true); err != nil {
+			if err := project.PersistFactIncomingLinks(project.NewStore(db, db), projectID, created.FactKey, parsed, true); err != nil {
 				return textResult("错误: 从 body 解析边失败: "+err.Error(), true), nil
 			}
 			created, _ = db.GetProjectFactByKey(projectID, created.FactKey)

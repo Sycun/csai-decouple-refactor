@@ -15,9 +15,22 @@ import (
 //
 // Deliberately absent: Close. A consumer of the shared handle must not be able to shut it down.
 type ProjectFactStore interface {
+	ProjectRowStore
+	BlackboardLedger
+}
+
+// ProjectRowStore is the half of the old surface that is about the project itself: creating it,
+// reading it, and the counters the project page shows. *DB answers it - the rows are its own.
+type ProjectRowStore interface {
 	CreateProject(p *Project) (*Project, error)
 	GetProject(id string) (*Project, error)
 	GetProjectStatsCounts(projectID string) (*ProjectStats, error)
+}
+
+// BlackboardLedger is the other half: the fact rows and the edges between them. store.Facts answers it
+// directly, because the SQL for these tables is no longer written here at all. The names are the ones
+// the data layer always used, so the consumers that switch to this half change a type, not a call.
+type BlackboardLedger interface {
 	ListProjectFactsForSparseCheck(projectID string) ([]store.ProjectFactSparseRow, error)
 	ListProjectFactsForIndex(projectID string, includeDeprecated bool) ([]*store.ProjectFact, error)
 	ListProjectFacts(projectID string, filter store.ProjectFactListFilter, limit, offset int) ([]*store.ProjectFact, error)
@@ -30,7 +43,11 @@ type ProjectFactStore interface {
 	AddProjectFactEdge(projectID string, in store.ProjectFactEdgeInput, sourceFactKey, sourceConversationID string) (*store.ProjectFactEdge, error)
 }
 
-var _ ProjectFactStore = (*DB)(nil)
+var (
+	_ ProjectFactStore = (*DB)(nil)
+	_ ProjectRowStore  = (*DB)(nil)
+	_ BlackboardLedger = (*store.Facts)(nil)
+)
 
 // ToolExecutionLedger is what the run finalizer needs: read a tool execution's recorded state, and
 // write one back when a cancelled run leaves an execution dangling.

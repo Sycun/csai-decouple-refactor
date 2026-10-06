@@ -6,6 +6,7 @@ import (
 
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/project"
 	"cyberstrike-ai/internal/store"
 	workflowrunner "cyberstrike-ai/internal/workflow"
 
@@ -37,7 +38,7 @@ func TestWorkflowHandlersAreWiredToTheirRunLedger(t *testing.T) {
 	}
 	// This is exactly the value the integration path hands the engine; composing it here is what
 	// proves the engine will not report its persistence as missing.
-	composed := workflowrunner.Store{Store: agent.db, Ledger: agent.runs}
+	composed := workflowrunner.Store{Store: project.NewStore(agent.db, agent.db), Ledger: agent.runs}
 	if composed.Missing() {
 		t.Fatal("the engine store the agent handler composes reports itself missing, so workflow runs would refuse to start")
 	}
