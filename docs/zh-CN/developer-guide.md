@@ -41,6 +41,19 @@ go run ./cmd/server --config config.yaml
 `~/csai-测试版`，它是开发树的一个 clone）——这样 build 出来的二进制、跑起来写的
 `config.yaml` / `data/` / `log/` 永远不会落在开发树里，也就不会被 `git add` 顺走。
 
+两件现场已经遇到的事：
+
+- **偶发的清理竞争不是回归**。`make test-race` 在 macOS 上偶尔以
+  `TempDir RemoveAll cleanup: unlinkat …/TestXxx/001: directory not empty` 失败——那是临时目录被
+  清理时仍有后台写入者，不是被测逻辑变了。实测（2026-10-06）：同一提交上整包 `-race` 连跑三次全绿，
+  唯一一次红就是这条。**碰到就重跑**，别把它记成失败。
+- **要点验就用测试树里的第二实例**，别在 `/tmp` 建沙箱（那样每换一次验证就攒一份库和一次性口令）：
+  在测试树里 `mkdir .livecheck`，把 `roles agents skills tools bundles` **软链**进去（配置里的相对路径
+  按 config 文件所在目录解析），复制一份 `config.yaml` 改端口与 `sqlite` 路径，用它启动
+  `../cyberstrike-ai -config ./config.yaml`，从 stdout 抓 `Password` 那行的一次性管理员口令换 token。
+  用完 `rm -rf .livecheck` 并把改过的配置项恢复原样。今晚的插件链就是这么验出来的：
+  冷启动只声明不启动、启用后 6 条能力挂上工具面、停用后 `pluginHost` 归零。
+
 一次性建法：
 
 ```bash
