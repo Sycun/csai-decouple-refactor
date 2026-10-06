@@ -120,7 +120,14 @@ import (
 // deleted rather than relocated. ProjectRowStore, ProjectStore, ConversationStore,
 // ChatUploadsStore, AttackChainStore and the empty WorkflowStore shells all dissolved - their
 // consumers hold the concrete stores now. What is left is the boot skeleton itself.
-const dbMethodCeiling = 11
+// 11 -> 4: the boot skeleton left too. conversations' and projects' DDL, late columns and indexes
+// moved into their stores (EnsureSchema -> MigrateLateColumns -> EnsureIndexes), the two backfills
+// the connection used to run for them went with the same three phases, the fact-version drop became
+// store.Facts.DropLegacyTables, and the WAL checkpoint loop is now a passiveCheckpointLoop the
+// wrapper only carries so Close can stop it - startPassiveCheckpointLoop and runPassiveCheckpoint
+// are not *DB methods any more. What remains is exactly the connection's life cycle: initTables,
+// initKnowledgeTables, SetConversationDirs and Close.
+const dbMethodCeiling = 4
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

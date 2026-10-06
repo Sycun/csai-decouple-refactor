@@ -61,70 +61,84 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 		{
 			storeConstructor: "NewRBAC",
 			tablePrefix:      "rbac_",
-			anchorCall:       "createConversationsTable",
+			anchorCall:       "NewConversations",
 			anchorReason:     "the six rbac_* tables reference only each other, so the anchor is any stable earlier boot step",
 			mustNotChangeSQL: "rbac_",
 		},
 		{
 			storeConstructor: "NewMonitor",
 			tablePrefix:      "tool_executions",
-			anchorCall:       "createConversationsTable",
+			anchorCall:       "NewConversations",
 			anchorReason:     "tool_executions carries a conversation_id column (no foreign key), so the anchor only has to be a stable earlier boot step",
 			mustNotChangeSQL: "tool_executions",
 		},
 		{
 			storeConstructor: "NewWorkflows",
 			tablePrefix:      "workflow_",
-			anchorCall:       "createConversationsTable",
+			anchorCall:       "NewConversations",
 			anchorReason:     "workflow_runs.conversation_id has a foreign key onto conversations",
 			mustNotChangeSQL: "workflow_",
 		},
 		{
 			storeConstructor: "NewVulnerabilities",
 			tablePrefix:      "vulnerabilit",
-			anchorCall:       "createConversationsTable",
+			anchorCall:       "NewConversations",
 			anchorReason:     "vulnerabilities.conversation_id has a foreign key onto conversations, so the table cannot be created before it",
 			mustNotChangeSQL: "vulnerabilities",
 		},
 		{
 			storeConstructor: "NewAssets",
 			tablePrefix:      "assets",
-			anchorCall:       "createProjectsTable",
+			anchorCall:       "NewProjects",
 			anchorReason:     "assets.project_id has a foreign key onto projects",
 			mustNotChangeSQL: "assets",
 		},
 		{
 			storeConstructor: "NewBatchTasks",
 			tablePrefix:      "batch_task",
-			anchorCall:       "createProjectsTable",
+			anchorCall:       "NewProjects",
 			anchorReason:     "the batch tables are still created in the block right after the projects / blackboard / findings creates - the findings table moved into its own store, so the last inline CREATE before them is the anchor",
 			mustNotChangeSQL: "batch_task",
 		},
 		{
 			storeConstructor: "NewWebshell",
 			tablePrefix:      "webshell_connection",
-			anchorCall:       "createProjectsTable",
+			anchorCall:       "NewProjects",
 			anchorReason:     "WebShell 的两张表原本排在这一批内联建表的最后；批量任务两张表现在也归自己的 store 建，所以锚点退到仍然内联建的那一张，钉住的还是同一个位置",
 			mustNotChangeSQL: "webshell_connection",
 		},
 		{
 			storeConstructor: "NewSession",
 			tablePrefix:      "messages",
-			anchorCall:       "createConversationsTable",
+			anchorCall:       "NewConversations",
 			anchorReason:     "both tables cascade off conversations, so they cannot be created before it",
 			mustNotChangeSQL: "process_details",
 		},
 		{
 			storeConstructor: "NewFacts",
 			tablePrefix:      "project_fact",
-			anchorCall:       "createProjectsTable",
+			anchorCall:       "NewProjects",
 			anchorReason:     "both blackboard tables have a foreign key onto projects",
 			mustNotChangeSQL: "project_fact",
 		},
 		{
+			storeConstructor: "NewConversations",
+			tablePrefix:      "conversations",
+			anchorCall:       "initTables",
+			anchorReason:     "conversations is the first table created on the boot path - there is no earlier boot step to anchor on, so the anchor is the initTables call itself (it also anchors that the ensure is inside the boot sweep and not somewhere later)",
+			mustNotChangeSQL: "conversations",
+		},
+		{
+			storeConstructor: "NewProjects",
+			tablePrefix:      "projects",
+			anchorCall:       "NewConversations",
+			anchorReason:     "conversations.project_id (added by store.Conversations' late-column phase) references projects, and every other projects reader follows its create - the anchor is the conversations ensure that now opens the boot sweep",
+			mustNotChangeSQL: "projects",
+		},
+		{
 			storeConstructor: "NewC2",
 			tablePrefix:      "c2_",
-			anchorCall:       "createConversationsTable",
+			anchorCall:       "NewConversations",
 			anchorReason:     "the six C2 tables only reference each other, so the anchor is any stable earlier boot step (c2_tasks keeps a conversation_id column, but no foreign key onto conversations)",
 			mustNotChangeSQL: "c2_",
 		},
@@ -294,6 +308,10 @@ func TestMultiPhaseSchemaStepsRunInOrder(t *testing.T) {
 			"idx_c2_listeners_project_id sits on the column only the backfill creates"},
 		{"NewMonitor", []string{"EnsureSchema", "MigrateLateColumns", "EnsureIndexes"},
 			"the four late columns are read back by partial-output flows, and the indexes follow the original boot order - this pins it rather than a real dependency"},
+		{"NewConversations", []string{"EnsureSchema", "MigrateLateColumns", "EnsureIndexes"},
+			"idx_conversations_project_id sits on a column only the late-column phase creates, and that phase's project_id ALTER is the one statement in this domain that references projects"},
+		{"NewProjects", []string{"EnsureSchema", "MigrateLateColumns", "EnsureIndexes"},
+			"the two indexes follow the owner-column backfill, the same order the boot file ran them in"},
 	}
 	checked := 0
 	for _, tc := range cases {
@@ -314,8 +332,8 @@ func TestMultiPhaseSchemaStepsRunInOrder(t *testing.T) {
 		}
 		checked++
 	}
-	if checked < 5 {
-		t.Fatalf("only %d multi-phase boot sequences inspected (want 5): the scan has gone blind", checked)
+	if checked < 7 {
+		t.Fatalf("only %d multi-phase boot sequences inspected (want 7): the scan has gone blind", checked)
 	}
 	// A one-phase owner must not quietly grow a second sweep: assets builds table, columns and indexes
 	// inside its own EnsureSchema, so any extra phase call here is a split nobody asked for.

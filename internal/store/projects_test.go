@@ -10,9 +10,8 @@ import (
 
 // The project row - create / list / access filters / delete with its four cross-domain unlinks, the
 // counters, the dashboard aggregate and the last-activity stamp - moved out of the connection
-// wrapper. These cases run against a real database; the projects DDL still boots from the data layer
-// (its cut is the boot skeleton's), so the test builds the same table plus the tables the cascades
-// and aggregates touch.
+// wrapper. These cases run against a real database and build the schema through the same store
+// phases the boot path calls, so the fixture walks the three phases it is claiming.
 
 func testProjectsStore(t *testing.T) (*Projects, *sql.DB) {
 	t.Helper()
@@ -21,16 +20,20 @@ func testProjectsStore(t *testing.T) (*Projects, *sql.DB) {
 		t.Fatalf("open database: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	for _, ddl := range []string{
-		`CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT, scope_json TEXT,
-			status TEXT NOT NULL DEFAULT 'active', pinned INTEGER DEFAULT 0, owner_user_id TEXT,
-			created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)`,
-		`CREATE TABLE conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL, project_id TEXT, role_name TEXT,
-			agent_mode TEXT, pinned INTEGER DEFAULT 0, owner_user_id TEXT, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL)`,
-	} {
-		if _, err := db.Exec(ddl); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
+	if err := NewProjects(db).EnsureSchema(); err != nil {
+		t.Fatalf("projects schema: %v", err)
+	}
+	if err := NewProjects(db).MigrateLateColumns(); err != nil {
+		t.Fatalf("projects late columns: %v", err)
+	}
+	if err := NewProjects(db).EnsureIndexes(); err != nil {
+		t.Fatalf("projects indexes: %v", err)
+	}
+	if err := NewConversations(db).EnsureSchema(); err != nil {
+		t.Fatalf("conversations schema: %v", err)
+	}
+	if err := NewConversations(db).MigrateLateColumns(); err != nil {
+		t.Fatalf("conversations late columns: %v", err)
 	}
 	if err := NewRBAC(db).EnsureSchema(); err != nil {
 		t.Fatalf("rbac schema: %v", err)

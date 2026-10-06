@@ -67,7 +67,9 @@ func deadDBSurface(t *testing.T, root string) (dead []string, scanned int) {
 	// deleted) left for store.C2, 91 after the monitor domain's twenty-two exported methods left
 	// for store.Monitor (twenty-three minus the dead LoadToolExecutionListPage), and 2 after the
 	// project domain's exported reads left for store.Projects and store.Conversations - what is
-	// left is the boot skeleton (SetConversationDirs, Close). The floor keeps a wide gap
+	// left is the boot skeleton (SetConversationDirs, Close). The boot-skeleton cut then moved the
+	// checkpoint loop off *DB without changing this count: the loop is its own type, and the two
+	// exported names above are still all the connection wrapper exposes. The floor keeps a wide gap
 	// on purpose: it catches a scan that stopped reading the directory, and it has tripped seven times
 	// now for the right reason - a domain cut landing - which is the reminder to re-measure rather than
 	// to widen it.

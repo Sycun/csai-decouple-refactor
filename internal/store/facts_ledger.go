@@ -431,3 +431,13 @@ func scanFact(rows *sql.Rows) (*ProjectFact, error) {
 	f.UpdatedAt = sqltime.Parse(updatedAt)
 	return &f, nil
 }
+
+// DropLegacyTables removes the fact-version archive the first release wrote. The table has no
+// readers left and no CREATE anywhere: dropping it is the migration, and it is idempotent.
+func (s *Facts) DropLegacyTables() error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DROP TABLE IF EXISTS project_fact_versions`)
+	return err
+}

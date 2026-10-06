@@ -28,8 +28,9 @@ func (m *Monitor) EnsureSchema() error {
 
 // MigrateLateColumns adds the columns the first release shipped without: the four partial-output
 // preview columns and the two ownership columns (owner_user_id, conversation_id) RBAC's migration
-// used to backfill for this table. The column check mirrors the data layer's addColumnIfMissing,
-// including which errors it refuses to read as a duplicate.
+// used to backfill for this table. The column check is the same probe-and-tolerance the package's
+// addColumnIfMissing runs (conversations_schema.go), including which errors it refuses to read as a
+// duplicate.
 func (m *Monitor) MigrateLateColumns() error {
 	if m == nil || m.db == nil {
 		return errors.New("store: monitor requires a database")

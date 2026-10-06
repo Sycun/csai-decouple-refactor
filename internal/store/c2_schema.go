@@ -32,8 +32,9 @@ func (c *C2) EnsureSchema() error {
 }
 
 // MigrateListenerColumns adds the project binding the first release shipped without. The index on
-// that column is EnsureIndexes' job, which must run after this; the column check mirrors the data
-// layer's addColumnIfMissing, including which errors it refuses to read as a duplicate.
+// that column is EnsureIndexes' job, which must run after this; the column check is the same
+// probe-and-tolerance the package's addColumnIfMissing runs (conversations_schema.go), including
+// which errors it refuses to read as a duplicate.
 func (c *C2) MigrateListenerColumns() error {
 	if c == nil || c.db == nil {
 		return errors.New("store: c2 requires a database")
