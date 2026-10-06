@@ -1717,6 +1717,30 @@ Go 的 `Parse` 里布局的空格也匹配 `T`、`.999999999` 也匹配短小数
 教训：异步边界的测试必须等**副作用发生**，不是等"提交副作用的那次调用"返回——
 本地不带 `-race` 单跑时它是绿的，只有全套 race 才暴露。
 
+### 全新库启动的表清点（第十七刀之后当场复跑，验收用）
+
+一条命令能复验"每张表确实有一个创建者、而且那个创建者在启动里被调到"：
+在一个**空 data 目录**里起服务（独立端口、`knowledge.enabled: true`、独立 `knowledge.db`），
+然后用 `sqlite3`/`python3 -c` 比对 store 里所有 `CREATE TABLE IF NOT EXISTS` 的表名与实际存在的表。
+
+当场结果（15 张 store 所有的表）：
+- **主库 12 张全部就位**：`audit_logs`、`c2_payload_artifacts`、`capability_unit_switches`、
+  `chat_upload_artifacts`、`hitl_conversation_configs`、`hitl_interrupts`、`model_token_usage`、
+  `robot_binding_codes`、`robot_user_bindings`、`robot_user_sessions`、`skill_stats`、
+  （`notification_reads_by_user` 见下）；
+- **知识库 3 张在 `data/knowledge.db`**：`knowledge_base_items`、`knowledge_embeddings`、
+  `knowledge_retrieval_logs`；`knowledge_retrieval_logs` 在主库里也有一张**不带外键**的版本
+  （一张表两种拼写，两种都由它的主人给出，见 §11「第九片」）；
+- **唯一不在启动时创建的是 `notification_reads_by_user`**：它由通知自己的读路径 `EnsureSchema`。
+  实测 `GET /api/notifications/summary` 首条请求 **200**、返回完整键集合，调用之后表就存在，
+  整段日志 `no such table` **0 条**——惰性创建在这里是成立的，不是被漏掉的主人；
+- 启动日志里 `建表失败` / `结构迁移` / `表失败` **0 条**。
+
+这条清点同时是第八、九、十一~十七刀的**共同回归门**：那些切片都把 `CREATE TABLE` 从
+`initTables` 搬进 store + 启动的那一次 ensure；少接一次 ensure，这里就会少一张表。
+（同一形状的缺陷在第八片真机点验时抓到过一次：audit purge 在 `audit.NewService` 构造里跑，
+建表必须在那之前——见 §11「第八片」。）
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
