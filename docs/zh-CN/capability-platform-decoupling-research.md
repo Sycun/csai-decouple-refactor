@@ -1288,6 +1288,16 @@ store 侧 6 条真库用例（前缀级联删除、子树改名带同一套 `LIK
 删除项才进入删除列表；修完 sync 立刻把那个副本删掉并复验一致。
 教训：**门禁的"来源"也必须被验**——`ls-files` 说的是索引里有什么，不是工作区里有什么。
 
+**同类扫描的收口（2026-10-06，与第七片同晚）**：`SaveToolStats` 那一次暴露的不是一个方法，
+而是一类——**声明出来却没人调用**的接口成员。把 `internal/database/stores.go` + `surfaces.go`
+里全部窄接口的成员用 AST 数出来（实测 **286 个成员**），逐个在生产代码里找调用点：
+**0 个没人调用**（唯一那一例已随 `SaveToolStats` 一起删）。为了让它不再长回来，
+新门禁 `TestConsumerSurfacesDeclareOnlyCalledMethods` 进 `make layering-check`：
+接口里出现"生产代码没人调"的成员即红（探针：往 `AuditStore` 塞一个
+`NothingEverCallsThisMethod` 立刻红，同时 `var _ AuditStore = (*DB)(nil)` 也在编译期拦住）；
+成员数下限只防"解析器什么都没读到"，**不惩罚删成员**——删成员是进展。
+判据的误差方向与 `TestDatabaseSurfaceHasNoUnreachableMethods` 同：别处同名方法只会让它**少报**。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
