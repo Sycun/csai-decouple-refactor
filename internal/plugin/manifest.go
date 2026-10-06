@@ -43,6 +43,16 @@ func LoadManifestDir(dir string) (*Manifest, error) {
 }
 
 func LoadManifest(path string) (*Manifest, error) {
+	// How a pack was found depends on how the server was started: `-config ./config.yaml` makes the
+	// bundles root relative, and a unit's path is the handle every consumer opens the file with. The
+	// plug-in host deliberately refuses a binary path it would have to guess a working directory for,
+	// so the pack's directory is made absolute here, once, instead of each reader re-deciding what
+	// directory a path was typed against.
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("resolve bundle manifest %s: %w", path, err)
+	}
+	path = abs
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read bundle manifest: %w", err)

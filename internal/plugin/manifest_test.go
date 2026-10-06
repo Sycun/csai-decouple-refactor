@@ -225,3 +225,45 @@ func TestUnitIdentityIsDerivedNotTyped(t *testing.T) {
 		}
 	}
 }
+
+// A pack found through a relative bundles root still has to hand its consumers absolute paths: the
+// plug-in host refuses to resolve a binary against a working directory, and the unit path is what
+// the console, the digest and the capability registration all open files with.
+func TestManifestFromARelativeDirectoryYieldsAbsolutePaths(t *testing.T) {
+	root := t.TempDir()
+	pack := filepath.Join(root, "bundles", "rel-pack")
+	if err := os.MkdirAll(filepath.Join(pack, "roles"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(pack, "roles", "rel.yaml"), "name: rel\nuser_prompt: x\n")
+	writeFile(t, filepath.Join(pack, ManifestFileName),
+		"id: rel-pack\nname: 相对路径包\nversion: 1.0.0\nunits:\n  - kind: role\n    path: roles/rel.yaml\n")
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	t.Cleanup(func() { _ = os.Chdir(wd) })
+
+	m, err := LoadManifestDir(filepath.Join("bundles", "rel-pack"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := m.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(bundle.Dir) {
+		t.Fatalf("the pack directory is relative: %q", bundle.Dir)
+	}
+	for _, u := range bundle.Units {
+		if !filepath.IsAbs(u.Path) {
+			t.Fatalf("unit %s carries a relative path %q: a consumer would open it against whatever "+
+				"directory the process happens to run from", u.ID, u.Path)
+		}
+		if rel, err := filepath.Rel(bundle.Dir, u.Path); err != nil || strings.HasPrefix(rel, "..") {
+			t.Fatalf("unit %s left the pack directory: %q", u.ID, u.Path)
+		}
+	}
+}

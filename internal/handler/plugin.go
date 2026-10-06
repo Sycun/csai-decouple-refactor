@@ -382,7 +382,6 @@ func (h *PluginHandler) EnableUnit(c *gin.Context) {
 		h.replyMutationError(c, "enable", id, err)
 		return
 	}
-	report := h.republishCatalog(c, unitIDKind(id) == plugin.KindTool || unitIDKind(id) == plugin.KindPlugin)
 	mcpStarted, mcpMessage := false, ""
 	pluginCaps, pluginMessage := []string(nil), ""
 	if unitIDKind(id) == plugin.KindPlugin {
@@ -412,6 +411,11 @@ func (h *PluginHandler) EnableUnit(c *gin.Context) {
 		mcpStarted = declared > 0 && unit.Enabled
 		mcpMessage = msg
 	}
+	// The tool surface is recomposed *after* the switch has been applied. A plugin's capabilities only
+	// exist once its trust domain is declared and verified, so rebuilding earlier would compose a
+	// surface that misses the very entry points this request just made callable - and the console
+	// would answer with the capability list while nothing can be called.
+	report := h.republishCatalog(c, unitIDKind(id) == plugin.KindTool || unitIDKind(id) == plugin.KindPlugin)
 	if h.audit != nil {
 		h.audit.RecordOK(c, "plugin", "unit_enabled", "启停能力单元", "plugin_unit", id, map[string]interface{}{
 			"enabled": *body.Enabled, "roles": report.roles,
