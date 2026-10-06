@@ -383,33 +383,6 @@ func (db *DB) initTables() error {
 		FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE SET NULL
 	);`
 
-	createVulnerabilityAlertSubscriptionsTable := `
-	CREATE TABLE IF NOT EXISTS vulnerability_alert_subscriptions (
-		user_id TEXT PRIMARY KEY,
-		enabled INTEGER NOT NULL DEFAULT 0,
-		min_severity TEXT NOT NULL DEFAULT 'high',
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (user_id) REFERENCES rbac_users(id) ON DELETE CASCADE
-	);`
-	createVulnerabilityAlertDeliveriesTable := `
-	CREATE TABLE IF NOT EXISTS vulnerability_alert_deliveries (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		vulnerability_id TEXT NOT NULL,
-		user_id TEXT NOT NULL,
-		platform TEXT NOT NULL,
-		external_user_id TEXT NOT NULL,
-		status TEXT NOT NULL DEFAULT 'pending',
-		attempts INTEGER NOT NULL DEFAULT 0,
-		next_attempt_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		last_error TEXT NOT NULL DEFAULT '',
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		UNIQUE(vulnerability_id, platform, external_user_id),
-		FOREIGN KEY (vulnerability_id) REFERENCES vulnerabilities(id) ON DELETE CASCADE,
-		FOREIGN KEY (user_id) REFERENCES rbac_users(id) ON DELETE CASCADE
-	);`
-
 	// 创建批量任务队列表
 	createBatchTaskQueuesTable := `
 	CREATE TABLE IF NOT EXISTS batch_task_queues (
@@ -795,11 +768,10 @@ func (db *DB) initTables() error {
 	if err := db.initRBACTables(); err != nil {
 		return fmt.Errorf("创建RBAC表失败: %w", err)
 	}
-	if _, err := db.Exec(createVulnerabilityAlertSubscriptionsTable); err != nil {
-		return fmt.Errorf("创建漏洞提醒订阅表失败: %w", err)
-	}
-	if _, err := db.Exec(createVulnerabilityAlertDeliveriesTable); err != nil {
-		return fmt.Errorf("创建漏洞提醒投递表失败: %w", err)
+	// 漏洞提醒的两张表由它们的 store 自己建：订阅页与投递 worker 是仅有的两个读者。
+	// 顺序不能提前——两张表都对 rbac_users 有外键，投递表还对外键到 vulnerabilities。
+	if err := store.NewVulnerabilityAlerts(db.DB).EnsureSchema(); err != nil {
+		return fmt.Errorf("创建漏洞提醒表失败: %w", err)
 	}
 
 	for tableName, ddl := range map[string]string{

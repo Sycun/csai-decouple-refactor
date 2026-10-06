@@ -53,7 +53,10 @@ import (
 // conversation and project deletes used to write inline.
 // 295 -> 294: the private best-effort wrapper the findings writes used lost its last caller when the
 // SQL left this package; the adapter in findings_store.go now does that job next to the logger.
-const dbMethodCeiling = 294
+// 294 -> 287: the vulnerability alert domain moved whole - the subscription read and write, the
+// recipient expansion, the outbox enqueue, the due-list drain and both mark-backoff writes - together
+// with the DDL of its two tables, which EnsureSchema now creates itself.
+const dbMethodCeiling = 287
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

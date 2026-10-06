@@ -297,28 +297,23 @@ type RBACStore interface {
 
 var _ RBACStore = (*DB)(nil)
 
-// RobotStore is the persistence surface required by RobotHandler.
+// RobotStore is the persistence surface required by RobotHandler. The alert subscription and the
+// durable outbox are not in it any more - they are store.VulnerabilityAlerts, and the robot handler
+// holds that store directly (its worker only needs the queue, its commands only need the subscription).
 type RobotStore interface {
 	GetRBACUserByID(id string) (*RBACUser, error)
 	CreateConversation(title string, meta ConversationCreateMeta) (*Conversation, error)
 	CreateProject(p *Project) (*Project, error)
 	DeleteConversation(id string) error
-	EnqueueVulnerabilityAlertDeliveries(vulnerabilityID string, recipients []VulnerabilityAlertRecipient) error
 	GetConversation(id string) (*Conversation, error)
 	GetConversationProjectID(conversationID string) (string, error)
 	GetProject(id string) (*Project, error)
-	GetVulnerabilityAlertSubscription(userID string) (*VulnerabilityAlertSubscription, error)
 	ListConversationsForAccess(limit, offset int, search, sortBy, projectID, userID, scope string) ([]*Conversation, error)
-	ListDueVulnerabilityAlertDeliveries(limit int) ([]VulnerabilityAlertDelivery, error)
 	ListProjectsForAccess(status, search string, limit, offset int, userID, scope string) ([]*Project, error)
-	ListVulnerabilityAlertRecipients(vuln *store.Vulnerability) ([]VulnerabilityAlertRecipient, error)
-	MarkVulnerabilityAlertDeliveryFailed(id int64, attempts int, sendErr error) error
-	MarkVulnerabilityAlertDeliverySent(id int64) error
 	ResolveRBACAccess(userID string) (*RBACAccess, error)
 	SetConversationProjectID(conversationID, projectID string) error
 	SetResourceOwner(resourceType, resourceID, userID string) error
 	UpdateConversationTitle(id, title string) error
-	UpsertVulnerabilityAlertSubscription(userID string, enabled bool, minSeverity string) (*VulnerabilityAlertSubscription, error)
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 
@@ -326,13 +321,11 @@ var _ RobotStore = (*DB)(nil)
 
 // VulnerabilityStore is what VulnerabilityHandler still needs from the connection wrapper once the
 // finding rows themselves moved to store.Vulnerabilities: the three RBAC lookups a finding's owner and
-// candidates are decided with, and the alert subscription the same page edits. The name says which
-// handler it serves, not which table it owns - the record's CRUD is deliberately not here.
+// candidates are decided with. The alert subscription the same page edits is store.VulnerabilityAlerts,
+// so it is not here either. The name says which handler this surface serves, not which table it owns.
 type VulnerabilityStore interface {
 	AssignResourceToUser(userID, resourceType, resourceID string) error
-	GetVulnerabilityAlertSubscription(userID string) (*VulnerabilityAlertSubscription, error)
 	SetResourceOwner(resourceType, resourceID, userID string) error
-	UpsertVulnerabilityAlertSubscription(userID string, enabled bool, minSeverity string) (*VulnerabilityAlertSubscription, error)
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 

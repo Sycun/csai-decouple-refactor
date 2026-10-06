@@ -77,6 +77,7 @@ type robotPendingConfirmation struct {
 type RobotHandler struct {
 	config               *config.Config
 	db                   database.RobotStore
+	alerts               *store.VulnerabilityAlerts // 提醒订阅与待投递队列都在这张表的主人手里
 	agentHandler         *AgentHandler
 	logger               *zap.Logger
 	mu                   sync.RWMutex
@@ -99,6 +100,7 @@ func NewRobotHandler(cfg *config.Config, db *database.DB, agentHandler *AgentHan
 	handler := &RobotHandler{
 		config:               cfg,
 		db:                   database.Narrow[database.RobotStore](db),
+		alerts:               newVulnerabilityAlerts(db),
 		threadBindings:       newRobotSessionsStore(db),
 		identity:             newRobotIdentityStore(db),
 		agentHandler:         agentHandler,

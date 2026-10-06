@@ -784,7 +784,7 @@ grep -rn go:embed --include='*.go' . | grep -v _test | wc -l       # 3（原 0�
 **21**——那是第五刀之后一次下降只进了 log、上限没人跟。已收紧为 20 并在常量旁写下原因；
 **同类漂移至今撞到两次**（`dbMethodCeiling` 328/327 与这里 21/20），所以本节的每个数字都只写当场命令的输出。
 
-第二十一刀落地后同形复测（2026-10-06 07:53 当场命令，全部为本段第一手读数）：测试函数 **1509**
+第二十一、二十二刀落地后同形复测（2026-10-06 08:09 当场命令，全部为本段第一手读数）：测试函数 **1517**、`internal/store` 生产文件 **19** 个、包内测试 **152** 条、`*database.DB` 方法 **287**
 （上一版此处为 1485，那是第十四片后的读数；第**二十一刀三个提交自己新增 21 条**：升级形状回归 2 条、
 9 条路由的契约用例 8 条、store 记录侧真库测试 10 条、归属门禁 1 条——**其余差额来自十五至二十刀**，
 本段不把别人加的测试记在自己头上）；`internal/store` 生产文件仍 **18** 个、包内测试 **145** 条（原 134）；
@@ -1998,6 +1998,63 @@ Update **不**移动 `conversation_id`（SET 列表里没有它，但缓存会�
 全程日志里**只有一条 error，是我自己先拿不存在的 conversation_id 触发的外键失败**（预期内的 500），
 没有 panic、没有 nil 解引用。
 
+### P6 第二十二刀 —— 漏洞提醒整片（7 个方法 + 两张表的 DDL）进 `store.VulnerabilityAlerts`，`*DB` 294 → 287
+
+`internal/database/vulnerability_alert.go` **删除**。七个方法变成 store 的
+`GetSubscription` / `UpsertSubscription` / `ListRecipients` / `Enqueue` / `ListDue` /
+`MarkSent` / `MarkFailed`，三个随行类型（订阅、收件人、待投递）与那份五级严重度排名一起搬过去
+（`NormalizeAlertSeverity`）。**两张表的 `CREATE TABLE` 也搬了**——订阅页与投递 worker 是它们仅有的
+两个读者，schema 必须跟读者走。
+
+**DDL 是逐字符搬的**：把 `git show HEAD` 里那两段 `CREATE TABLE IF NOT EXISTS vulnerability_alert_*`
+与 store 现在的 `alertSchema` 各抽出两条语句比对，**两条都 EQUAL**（`sets match: True`）。
+建表原来分两次 `db.Exec`，合成一次多语句 `Exec`；SQLite 按语句执行，行为不变。
+
+**开机接线是新加的门禁，不是顺手写的一句注释**：`TestVulnerabilityAlertSchemaIsEnsuredAtBoot`
+用 go/ast 读 `internal/database/database.go`，要求
+① `store.NewVulnerabilityAlerts(db.DB).EnsureSchema()` **恰好出现一次**（0 次=全新装机永远没有这两张表，
+>1 次=有人又加了一遍清扫）；② 它的偏移**必须晚于** `db.initRBACTables()`（两张表都对 `rbac_users`
+有外键，投递表还外键到 `vulnerabilities`——先建就 FK 指向不存在的表）；③ 那个门禁的
+"没找到 RBAC 清扫"分支本身要硬失败，否则顺序断言会在一个空集上"通过"；
+④ 老家文件里不许再留 `CREATE TABLE IF NOT EXISTS vulnerability_alert_` 的第二个副本。
+**四个方向各注入一次探针，全部"注入即红 / 撤销即绿"**：删掉调用 → `called 0 times`；
+复制一份 → `called 2 times`；把调用挪到 RBAC 之前 → `ensured (offset 29986) before the RBAC tables (offset 30125)`；
+在老家补一段 DDL → `still created by this file as well as by their store`。
+
+**窄接口随之收窄**：`RobotStore` 去掉 6 个告警成员（它的 worker 只要队列、它的命令只要订阅表，
+两侧都改持 `*store.VulnerabilityAlerts`），`VulnerabilityStore` 再去掉 2 个，只剩 RBAC 那三条。
+`newVulnerabilityAlerts(db)` 沿用同一条 nil 规矩：**没有连接就是 nil 句柄**，方法回错误、
+命令路径如实报"命令失败"，而不是安静地什么都不提醒。
+
+**归属清单认领了三张表**：`vulnerability_alert_subscriptions`、`vulnerability_alert_deliveries`，
+以及 `robot_user_bindings`——最后这张此前**故意不认领**，就是因为收件人展开那条 JOIN 还在数据层；
+现在 JOIN 的两侧都在 store 里了，认领才是真的（原来那段解释留在门禁头上）。
+水位：`*DB` **294 → 287**；死面扫描下限 250 → 240（实测 249），它这次**如实红了一次**
+——不是扫描瞎了，是又删掉七个方法，正是它该提醒"该收紧"的形态。
+
+**测试**：`internal/store/vulnerability_alerts_test.go` **6 个用例**、真库、零 mock
+（建表幂等且两张表确实由 store 建；读默认值**不写库**；严重度大小写归一 + 未知值拒绝 + 空 user id 拒绝；
+收件人的四条可达路径 × 每人自己的阈值 × 关掉绑定的 / 关掉订阅的 / 无可达路径的三种不该来；
+同一条漏洞对同一个账号只投一次；投递行带着 join 回来的漏洞；backoff 把 `next_attempt_at` 推远且
+第五次变 `failed`；`MarkFailed(id, n, nil)` 写空串而不是 `"<nil>"`；`ListDue` 的 limit 钳位与
+`next_attempt_at, id` 排序；无连接句柄九个方法逐个拒绝）。
+原来那条跨 RBAC/绑定/漏洞的集成测试留在 `internal/database/vulnerability_alert_test.go`
+（它的夹具要用 `database.NewDB` + `BootstrapRBAC` + 真实绑定码消耗才搭得起来，
+搬到 store 只会把夹具降级成手搭表），改为直接调 store。
+
+**真机点验（两轮启动，全新库 + 原地重启）**：第一轮建库后
+`sqlite_master` 里两张告警表都在（**由 store 建出来的**），
+`GET /api/vulnerability-alerts/subscription` 回默认 `enabled:false / high`、
+`PUT` 改成 `critical` 回读一致、`PUT urgent` 回 `"invalid minimum severity \"urgent\""`；
+第二轮用**同一个数据目录**重启，日志 0 error / 0 panic，订阅行原样还在
+（`('admin', 1, 'critical')`），`EnsureSchema` 对已有库幂等。
+两轮都按记录的 PID 停掉、沙箱删除；`~/csai-生产版` 那个实例全程未碰。
+
+**一次被门禁抓住的过程失误**：删 DDL 的行切片把 `database.go` 的空白留坏了，
+`make fmt-check`（硬零）当场红在 `gofmt needed on 1 file(s)`——我此前只在几个改动文件上单独跑过 gofmt，
+没有复测整树。修 `gofmt -w` 后全套 `gates` 才 exit 0。**记在这里是因为"我本地跑过了"从来不是证据**，
+整树那条命令才是。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
@@ -2047,7 +2104,7 @@ Update **不**移动 `conversation_id`（SET 列表里没有它，但缓存会�
 | P3 契约与前端 | **部分：三套事件名契约已完成并双侧比对**；逐文件 ES 模块未做 | `go test -count=1 -run 'TestSSEPage|TestPersistedDetail|TestGeneratedSSEEnum|TestPageLoads' ./internal/handler/`；手拼帧基线 0 |
 | P4 进程外插件宿主 | **部分：进程外 ABI + 软出网已落**；netns/seccomp 硬边界与内嵌 CPython **未做** | `ls internal/pluginhost`；`grep -rl 'seccomp\|CLONE_NEWNET' internal/` → **无匹配**（这就是"未做"的证据） |
 | P5 审核流水线/商店 | **部分：客户端强制 + 制品签名/撤销已落**；registry 服务端、气隙离线包、沙箱引爆自动化 **未做** | `ls internal/artifact`；`ls internal/registry` → **不存在** |
-| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、**数据层按域切出 16 个 store / `internal/store` 18 个生产文件、包内 145 条测试**（`*database.DB` 361 → **294**，只降门禁；漏洞记录整片已交，`internal/database/vulnerability.go` 删除）、**分层裸 SQL 归零**（两个自有层之外 0 条）、DATETIME 读法 24 处 → 1 处、应用回调不再挂在连接包装上、**handler 层不持有任何数据库句柄**、`vulnerabilities` 表按"唯一写入者"认领（`TestFindingsTableHasOneWriter`）、Eino 6 包（适配外 3 包）、`AgentHandler` 六刀至 **88 方法 / 20 文件**、审计注入门禁、手写 OpenAPI 文档按域拆成 5 个分组文件 + golden（157 操作逐字节等值） | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `transport layer: 0 structs hold *database.DB, 18 fields hold a narrowed database interface, 15 hold their own table store, 1146 struct fields scanned (started 19/0)`；`go test -count=1 -v -run TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt ./internal/layering/` 报 `0 statements in 0 files, over 511 production files scanned`；`go test -count=1 -run 'TestFindingContract' ./internal/handler/` 8 条契约用例；`go test -count=1 -run 'TestOpenAPI' ./internal/handler/` |
+| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、**数据层按域切出 17 个 store / `internal/store` 19 个生产文件、包内 152 条测试**（`*database.DB` 361 → **287**，只降门禁；漏洞域的记录与提醒两片都已交，`internal/database/vulnerability.go` 与 `vulnerability_alert.go` 两个文件删除）、**分层裸 SQL 归零**（两个自有层之外 0 条）、DATETIME 读法 24 处 → 1 处、应用回调不再挂在连接包装上、**handler 层不持有任何数据库句柄**、`vulnerabilities` 表按"唯一写入者"认领（`TestFindingsTableHasOneWriter`），告警两张表与 `robot_user_bindings` 进归属清单；搬走的 DDL 由 `TestVulnerabilityAlertSchemaIsEnsuredAtBoot` 盯开机接线与 FK 顺序、Eino 6 包（适配外 3 包）、`AgentHandler` 六刀至 **88 方法 / 20 文件**、审计注入门禁、手写 OpenAPI 文档按域拆成 5 个分组文件 + golden（157 操作逐字节等值） | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `transport layer: 0 structs hold *database.DB, 18 fields hold a narrowed database interface, 17 hold their own table store, 1148 struct fields scanned (started 19/0)`；`go test -count=1 -v -run TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt ./internal/layering/` 报 `0 statements in 0 files, over 511 production files scanned`；`go test -count=1 -run 'TestFindingContract' ./internal/handler/` 8 条契约用例；`go test -count=1 -run 'TestOpenAPI' ./internal/handler/` |
 | §6.1 社区知识控制 | **代码层已落**（围栏 + 入库拒绝 + 装配点守卫）；是否按运行期不可信处理仍待裁决（决策项 4） | `go test -count=1 ./internal/contentpolicy/` |
 
 **没有做成的事**（不假装完成）：`AgentHandler` 分解本体（88 方法 / 20 文件，仍是全仓最大的类型；
@@ -2056,10 +2113,9 @@ Update **不**移动 `conversation_id`（SET 列表里没有它，但缓存会�
 ~~剩余 3 个域的窄接口~~（**已在第五片做完**：阻塞点是 `h.db` 逃逸进别包签名，解法是给那些函数
 声明消费者接口——`project.Store`/`agentfinalizer.Store`/`attackchain.Store`/`workflow.Store`，
 19 → 0）、Eino 收到 ≤1 包、
-session 事件溯源、逐文件 ES 模块、`internal/database` 剩下的 **294** 个方法继续按域切
-（漏洞域的记录本体 11 个方法已整片交完，剩下的是同域告警的 **7** 个方法连两张告警表的 DDL，
-以及 c2/conversation/rbac/monitor/batch_task/project/asset 那几族；细节见 §11 第二十一刀与
-本节末「漏洞域：三件铺垫已拆完，行结构已经搬过去」）、
+session 事件溯源、逐文件 ES 模块、`internal/database` 剩下的 **287** 个方法继续按域切
+（漏洞域两片都交完了；剩下的族是 c2 47 / conversation 48 / rbac 40 / monitor 22 / batch_task 22 /
+project 18 / asset 18，以及同文件的 `vulnerability_alert.go` 已不存在；细节见 §11 第二十一、二十二刀）、
 P4 硬网络边界、P4 内嵌 CPython、P5 registry / 气隙包 / 引爆自动化、
 以及 **§10 的 9 个决策项一个都没有被裁决**（其中 1、4、5、6 直接决定 P4/P5 的形态）。
 因此**目标未达成**，本表就是"还差什么"的清单。
@@ -2090,12 +2146,12 @@ P4 硬网络边界、P4 内嵌 CPython、P5 registry / 气隙包 / 引爆自动�
 **9 条路由先钉住线上形状**（第二十一刀中）→ **记录本身的全部语句进 store**（第二十一刀后半，
 `internal/database/vulnerability.go` 整文件删除，`*database.DB` **306 → 294**）。
 
-还剩的漏洞域工作，第一次可以说得完整：
-`internal/database/vulnerability_alert.go` 的 **7** 个方法（**206** 行）连
-`vulnerability_alert_subscriptions`、`vulnerability_alert_deliveries` 两张表的 DDL 与开机 ensure
-一起进告警 store；那张表要 JOIN 的 `robot_user_bindings` 届时才谈得上归属认领（现在故意没认领，
-理由写在 `internal/store/ownership_test.go` 顶部）。`vulnerabilities` 表**已经**由
-`TestFindingsTableHasOneWriter` 按"谁可以改它"认领（6 条语句全在 store，别处的读不受限）。
+漏洞域到此交完（第二十二刀）：告警的 **7** 个方法连两张表的 DDL 与开机 ensure 都进了
+`store.VulnerabilityAlerts`，`robot_user_bindings` 也随之进归属清单（JOIN 的两侧现在都在 store 里）。
+`vulnerabilities` 表由 `TestFindingsTableHasOneWriter` 按"谁可以改它"认领（6 条语句全在 store，
+别处的读不受限）。**唯一没有claim 成的一句**：告警的删除事务仍在同一事务里写
+`project_facts`（解除 `related_vulnerability_id`），那张表的主人还是项目域，
+所以它有两个写入者——这是原行为，拆开就失去原子性，记在 §11 第二十一刀末尾而不是算作完成。
 
 **搬动过程中自伤两次，都已就地修好并记为规矩**：脚本切块时把 `CreateVulnerability` 一并拖进
 了 store（搬回），删旧定义的正则先于新增把过滤器的 SQL 构造器**删了**（从

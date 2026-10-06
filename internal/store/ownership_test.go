@@ -17,16 +17,16 @@ import (
 //
 // Test files in other packages are allowed to create fixtures directly: they set up
 // a database, they are not a second write path.
-// robot_user_bindings is deliberately NOT on this list yet: the alert-recipient query in
-// internal/database/vulnerability_alert.go joins it to know which platform accounts to notify, and that
-// query belongs to the vulnerability alert domain. It moves together with vulnerability_alert_subscriptions,
-// so the table is claimed here once - by the store that will own both sides of the join - rather than
-// half-claimed now and then reported as a leak.
+// robot_user_bindings is on the list now that the alert-recipient query - the one statement outside
+// store.RobotIdentity that joined it - moved to store.VulnerabilityAlerts with its own two tables.
+// Claiming it half-way (a second writer still reading it from the data layer) would have been a leak
+// reported as ownership.
 func TestOwnedTablesAreOnlyWrittenFromThisPackage(t *testing.T) {
 	root := moduleRoot(t)
 	owned := []string{"hitl_interrupts", "hitl_conversation_configs", "notification_reads_by_user", "skill_stats", "chat_upload_artifacts", "audit_logs",
 		"knowledge_retrieval_logs", "knowledge_base_items", "knowledge_embeddings", "model_token_usage",
-		"robot_user_sessions", "robot_binding_codes", "c2_payload_artifacts"}
+		"robot_user_sessions", "robot_binding_codes", "c2_payload_artifacts",
+		"vulnerability_alert_subscriptions", "vulnerability_alert_deliveries", "robot_user_bindings"}
 	pattern := regexp.MustCompile(`(?i)\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|FROM|JOIN)\s+` + `(` + strings.Join(owned, "|") + `)`)
 
 	var offenders []string
