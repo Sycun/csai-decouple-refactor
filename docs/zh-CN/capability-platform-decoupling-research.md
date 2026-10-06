@@ -1762,7 +1762,8 @@ store.Access 的接口"。是编译和门禁全绿之后我重读注释才发现
 不能只看 build/vet/test 的颜色。
 
 第三块铺垫（`appendVulnerabilityAccessFilter` 与 `store/access.go` 那条子句的差分归一）
-仍未做，所以漏洞域整片还没开工——原因清单与顺序在 §12.3「漏洞域为什么搬不动」。
+仍未做（当夜第十九刀做的正是这块），所以当时漏洞域整片还没开工——原因清单与后续进度在
+§12.3「漏洞域：三件铺垫已拆完，行结构已经搬过去」。
 
 ### P6 第十九刀 —— 同一张表的可见性规则的两份拷贝合成一条，顺带把"无身份 = 全见"这个默认翻过来
 
@@ -1799,7 +1800,36 @@ store.Access 的接口"。是编译和门禁全绿之后我重读注释才发现
 两条都是差分测试自己红的，不是编译红。
 
 至此 §12.3 列的三块铺垫全部拆完（复数改名、访问类型合一、可见性子句归一），
-漏洞域整片（11 + 8 个方法、两张告警表、`robot_user_bindings` 的归属认领）已经没有前置阻塞。
+漏洞域整片（11 + 7 个方法、两张告警表、`robot_user_bindings` 的归属认领）已经没有前置阻塞。
+
+### P6 第二十刀 —— 漏洞的行结构与它的列表过滤器进 store，把"还剩多少"变成可比较的数字
+
+这一刀不搬任何查询，只搬**类型**：`Vulnerability`（22 字段的行结构，JSON tag 就是控制台、
+导出文档、告警文本三方共同读的线上形状）与 `VulnerabilityListFilter`（列表/统计/导出共用的
+过滤器）**连同它的 SQL 构造器**一起从 `internal/database/vulnerability.go` 搬进
+`internal/store/vulnerability.go`。构造器从非导出的 `appendWhere` 改名为导出的
+`ConstrainWhere`，转义器 `escapeVulnerabilityLikePattern` 跟着改名为 `escapeLikePattern`——
+第十九刀记录的就是"构造器与类型不可分"，搬法的区别只在于这次是**带着 4 个调用点一起改**，
+而不是留着它们隔着包引用一个不可见的方法。
+
+全仓 20 个文件的类型引用跟着改：`handler/vulnerability.go`、`handler/openapi.go`、
+`app/vulnerability_tools.go`、`app/vulnerability_alert_route.go`、`audit/resource_availability.go`、
+`database/stores.go` 的 3 个窄接口（`ResourceExistence` / `OpenAPIStore` / `VulnerabilityStore`，
+另有 `RobotStore` 的告警收件人签名）与 6 处测试夹具。字段与 tag 一个没动，编译器逐项验收。
+
+**搬完才第一次量得出剩余**：`internal/database/vulnerability.go` **532 → 396** 行、
+方法 **11** 个；`vulnerability_alert.go` **206** 行、**7** 个方法。`*database.DB` 的方法总数
+这一刀不变（仍是 **306**），因为搬的是类型不是方法——这正是这一刀的全部目的：
+让下一刀（18 个方法连三张表的 DDL）变成纯机械搬迁，不再夹带跨包类型决策。
+
+**三处自伤，都就地修好**：① 脚本按行区间切块时把紧跟在过滤器下面的 `CreateVulnerability`
+一起拖进了 store（搬回老家）；② 删除老家旧定义的那条正则**先于**在新家写好执行，把过滤器的
+SQL 构造器删掉了——从 `git show HEAD:internal/database/vulnerability.go` 逐字节取回，
+再改名导出。**规矩**：跨包搬类型时「先在新家写好，再删老家」，且删的那条正则必须限定在老家文件。
+③ 同一批跨包正则又一次改了注释（`// VulnerabilityListFilter 列表/统计/导出共用的筛选条件`
+被改成 `// store.VulnerabilityListFilter …` 并留在老家，成了没人认领的孤儿注释）；
+按第十九刀定下的流程重读了全部被改到的注释行，孤儿注释与 `store` 包里那两句指向已改标题的
+文档引用一并删改。**注释不在任何门禁射程内这件事，是这两刀连续撞上的同一个坑。**
 
 ### 明确还没做（不假装完成）
 
@@ -1860,31 +1890,45 @@ store.Access 的接口"。是编译和门禁全绿之后我重读注释才发现
 声明消费者接口——`project.Store`/`agentfinalizer.Store`/`attackchain.Store`/`workflow.Store`，
 19 → 0）、Eino 收到 ≤1 包、
 session 事件溯源、逐文件 ES 模块、`internal/database` 剩下的 **306** 个方法继续按域切
-（下一刀应把 `vulnerability.go` + `vulnerability_alert.go` **一起**搬，且必须先做下面三件铺垫，
-本晚试过拆开搬类型、结论是不成立，细节见本节末「漏洞域为什么搬不动」）、
+（下一刀把漏洞域的 **11 + 7** 个方法连三张表的 DDL 一起搬；前置的三件铺垫与本片的行结构搬迁
+都已落地，细节见本节末「漏洞域：三件铺垫已拆完，行结构已经搬过去」）、
 P4 硬网络边界、P4 内嵌 CPython、P5 registry / 气隙包 / 引爆自动化、
 以及 **§10 的 9 个决策项一个都没有被裁决**（其中 1、4、5、6 直接决定 P4/P5 的形态）。
 因此**目标未达成**，本表就是"还差什么"的清单。
 
-**漏洞域为什么搬不动（一次被撤销的尝试留下的清单）**
+**漏洞域：三件铺垫已拆完，行结构已经搬过去**
 本晚试过把 `database.Vulnerability`（行结构）与 `VulnerabilityListFilter` 先搬进 store、
-方法随后再搬。做到第三步编译就停住了，原因不是工作量而是**耦合形状**：
-1. `VulnerabilityListFilter.appendWhere`（约 55 行）是**类型的成员**，被
+方法随后再搬。第一次做到第三步编译就停住了，原因不是工作量而是**耦合形状**，
+三条阻塞逐一处理如下：
+1. ~~`VulnerabilityListFilter.appendWhere`（约 55 行）是**类型的成员**，被
    `ListVulnerabilities*` / `Count*` / `GetVulnerabilityStats*` / 导出这 **4 条查询**调用；
    类型搬走后它只能变成 store 的非导出方法，留在数据层的那 4 条查询立刻 `cannot refer to
-   unexported method`。也就是说**过滤条件与它的 SQL 构造器不可分**，要么连着 4 条查询一起搬。
-2. 同一个文件里还定义着 `RBACListAccess` —— 那是 RBAC 域的类型，`VulnerabilityStore` 与
-   另外 5 个 handler 字段都在用它。它不同先走，漏洞域搬完就会把 RBAC 的类型留在 store 里。
-3. `appendVulnerabilityAccessFilter`（按 `RBACListAccess` 的四条可见性路径）与
-   `internal/store/access.go` 已有的那份是**同一条规则的第二种拼写**（`store.Vulnerability.RecentFindings`
-   用的是后一份）。搬过去必须像第十二片那样做**差分测试**再收成一份，不能抄第三份，也不能直接换。
-铺垫清单（按依赖顺序）：先把 `store.Vulnerability` 这个**store 类型改名成复数**
-（`Vulnerabilities`，行结构才好占用单数名）→ `RBACListAccess` 进 store（或先并进 `store.Access`）→
-`appendVulnerabilityAccessFilter` 与 store 子句做差分并归一 → 最后 11 + 8 个方法一次搬完。
-改动面：`internal/database/vulnerability.go` 532 行、`vulnerability_alert.go` 205 行、
-`handler/vulnerability.go` 10 处、`app/vulnerability_tools.go` 8 处、`handler/openapi.go` 3 处、
-`app/vulnerability_alert_route.go` 3 处、`audit/resource_availability.go` 1 处、`stores.go` 3 个接口，
-以及三处测试夹具。搬完才能把 `robot_user_bindings` 补进归属清单（现在为这条 JOIN 故意没认领）。
+   unexported method`。也就是说**过滤条件与它的 SQL 构造器不可分**，要么连着 4 条查询一起搬。~~
+   **已解**：构造器跟着类型进 store 并导出为 `VulnerabilityListFilter.ConstrainWhere`，
+   转义器同步导出边界内的 `escapeLikePattern`。数据层的 4 条查询改为调用它，编译通过。
+2. ~~同一个文件里还定义着 `RBACListAccess`。~~ **已解**（第十七、十八片）：它并入 `store.Access`，
+   授权词汇只剩一份。
+3. ~~`appendVulnerabilityAccessFilter` 与 `internal/store/access.go` 已有的那份是**同一条规则的
+   第二种拼写**。~~ **已解**（第十九片）：先写差分测试 `access_clause_parity_test.go`
+   （7 条种子漏洞 × 7 个身份 × `own`/`assigned` 两种范围 = 14 次逐一比对旧拼写的原文常量），
+   把差异限定成"无身份时失败闭合"这一条并单独断言（旧写法在此返回全部 7 条），再合成
+   `store.ConstrainFinding` 一条。差分测试同时抓出了我在合并过程中写出的自比 bug
+   （`ConstrainConversation(..., "c.id", ...)` 退化成 `WHERE c.id = c.id`，等价于不设限），
+   探针重放确认门禁真会红。
+
+于是本片的实际内容：**行结构与过滤器进 `internal/store/vulnerability.go`**，全仓 19 个文件的
+类型引用跟着改（`handler/vulnerability.go`、`app/vulnerability_tools.go`、`handler/openapi.go`、
+`app/vulnerability_alert_route.go`、`audit/resource_availability.go`、`stores.go` 的 3 个窄接口
+与测试夹具）。搬完后剩余工作量第一次变得可比：`internal/database/vulnerability.go` 532 → **396**
+行 / **11** 个方法，`vulnerability_alert.go` **206** 行 / **7** 个方法。
+下一刀把这 **18 个方法**连 `vulnerabilities`、`vulnerability_alert_subscriptions`、
+`vulnerability_alert_deliveries` 三张表的 DDL 一起搬进 `store.Vulnerabilities` 与告警 store，
+搬完才能把 `robot_user_bindings` 补进归属清单（现在为那条 JOIN 故意没认领）。
+
+**搬动过程中自伤两次，都已就地修好并记为规矩**：脚本切块时把 `CreateVulnerability` 一并拖进
+了 store（搬回），删旧定义的正则先于新增把过滤器的 SQL 构造器**删了**（从
+`git show HEAD:internal/database/vulnerability.go` 逐字节取回再改名导出）。
+教训：跨包搬类型时**先在新家写好，再删老家**，删的那条正则必须限定在老家文件。
 
 ### 12.2 交付方式：二开分叉，任务结束推自己的 fork，不提 PR
 

@@ -16,6 +16,7 @@ import (
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -85,7 +86,7 @@ func TestVulnerabilityCannotBeReparentedToForeignProject(t *testing.T) {
 	foreign, _ := db.CreateProject(&database.Project{Name: "foreign"})
 	_ = db.SetResourceOwner("project", owned.ID, "u1")
 	_ = db.SetResourceOwner("project", foreign.ID, "u2")
-	vulnerability, err := db.CreateVulnerability(&database.Vulnerability{Title: "v", Severity: "high", ProjectID: owned.ID})
+	vulnerability, err := db.CreateVulnerability(&store.Vulnerability{Title: "v", Severity: "high", ProjectID: owned.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

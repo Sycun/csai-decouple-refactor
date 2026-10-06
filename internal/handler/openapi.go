@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -86,12 +87,12 @@ func (h *OpenAPIHandler) GetConversationResults(c *gin.Context) {
 	}
 
 	// 获取漏洞列表
-	vulnList, err := h.db.ListVulnerabilities(1000, 0, database.VulnerabilityListFilter{ConversationID: conversationID})
+	vulnList, err := h.db.ListVulnerabilities(1000, 0, store.VulnerabilityListFilter{ConversationID: conversationID})
 	if err != nil {
 		h.logger.Warn("获取漏洞列表失败", zap.Error(err))
-		vulnList = []*database.Vulnerability{}
+		vulnList = []*store.Vulnerability{}
 	}
-	vulnerabilities := make([]database.Vulnerability, len(vulnList))
+	vulnerabilities := make([]store.Vulnerability, len(vulnList))
 	for i, v := range vulnList {
 		vulnerabilities[i] = *v
 	}

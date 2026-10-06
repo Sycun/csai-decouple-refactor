@@ -251,7 +251,7 @@ func TestAssetAdvancedFiltersAndBulkMetadata(t *testing.T) {
 	if err := db.MarkAssetScanned(input[0].ID, conversation.ID, "", "", store.Access{Scope: RBACScopeAll}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.CreateVulnerability(&Vulnerability{ConversationID: conversation.ID, Title: "critical finding", Severity: "critical", Target: input[0].Domain}); err != nil {
+	if _, err := db.CreateVulnerability(&store.Vulnerability{ConversationID: conversation.ID, Title: "critical finding", Severity: "critical", Target: input[0].Domain}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -374,7 +374,7 @@ func TestAssetScanLinkReturnsTimeAndRelatedVulnerabilities(t *testing.T) {
 	if err := db.MarkAssetScanned(assets[0].ID, conv.ID, "", "", store.Access{Scope: RBACScopeAll}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.CreateVulnerability(&Vulnerability{ConversationID: conv.ID, Title: "finding", Severity: "high", Target: "192.0.2.10"}); err != nil {
+	if _, err := db.CreateVulnerability(&store.Vulnerability{ConversationID: conv.ID, Title: "finding", Severity: "high", Target: "192.0.2.10"}); err != nil {
 		t.Fatal(err)
 	}
 	linked, err := db.GetAsset(assets[0].ID, store.Access{Scope: RBACScopeAll})
@@ -384,7 +384,7 @@ func TestAssetScanLinkReturnsTimeAndRelatedVulnerabilities(t *testing.T) {
 	if linked.LastScanAt == nil || linked.LastScanConversationID != conv.ID || linked.VulnerabilityCount != 1 || linked.RiskLevel != "high" {
 		t.Fatalf("unexpected scan metadata: %#v", linked)
 	}
-	vulns, err := db.ListVulnerabilities(10, 0, VulnerabilityListFilter{ConversationID: conv.ID})
+	vulns, err := db.ListVulnerabilities(10, 0, store.VulnerabilityListFilter{ConversationID: conv.ID})
 	if err != nil || len(vulns) != 1 {
 		t.Fatalf("list linked vulnerabilities: len=%d err=%v", len(vulns), err)
 	}

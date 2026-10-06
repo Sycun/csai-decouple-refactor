@@ -30,7 +30,7 @@ var auditActionsResourceRemoved = map[string]bool{
 // in - internal/database/stores.go keeps ResourceExistence aligned with it.
 type ResourceExistenceSource interface {
 	ConversationExists(id string) (bool, error)
-	GetVulnerability(id string) (*database.Vulnerability, error)
+	GetVulnerability(id string) (*store.Vulnerability, error)
 	GetBatchQueue(queueID string) (*database.BatchTaskQueueRow, error)
 	GetC2Listener(id string) (*database.C2Listener, error)
 	GetC2Session(id string) (*database.C2Session, error)

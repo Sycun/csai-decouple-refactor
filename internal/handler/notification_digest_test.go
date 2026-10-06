@@ -10,6 +10,7 @@ import (
 
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -29,7 +30,7 @@ func TestDigestListsFindingsWithoutAConversation(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	if _, err := db.CreateVulnerability(&database.Vulnerability{
+	if _, err := db.CreateVulnerability(&store.Vulnerability{
 		Title:    "SQL injection in the export endpoint",
 		Severity: "high",
 		Status:   "open",
@@ -43,7 +44,7 @@ func TestDigestListsFindingsWithoutAConversation(t *testing.T) {
 	}
 	// A second one that *is* attached, so the test would notice a query that only ever
 	// returns one row for some other reason.
-	if _, err := db.CreateVulnerability(&database.Vulnerability{
+	if _, err := db.CreateVulnerability(&store.Vulnerability{
 		ConversationID: "c-seeded",
 		Title:          "Exposed keys",
 		Severity:       "critical",

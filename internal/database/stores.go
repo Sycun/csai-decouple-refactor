@@ -114,7 +114,7 @@ type ResourceExistence interface {
 	GetC2Session(id string) (*C2Session, error)
 	GetC2Task(id string) (*C2Task, error)
 	GetToolExecution(id string) (*mcp.ToolExecution, error)
-	GetVulnerability(id string) (*Vulnerability, error)
+	GetVulnerability(id string) (*store.Vulnerability, error)
 	GetWebshellConnection(id string) (*WebShellConnection, error)
 }
 
@@ -236,7 +236,7 @@ var _ NotificationStore = (*DB)(nil)
 type OpenAPIStore interface {
 	GetConversation(id string) (*Conversation, error)
 	GetMessages(conversationID string) ([]Message, error)
-	ListVulnerabilities(limit, offset int, filter VulnerabilityListFilter) ([]*Vulnerability, error)
+	ListVulnerabilities(limit, offset int, filter store.VulnerabilityListFilter) ([]*store.Vulnerability, error)
 }
 
 var _ OpenAPIStore = (*DB)(nil)
@@ -313,7 +313,7 @@ type RobotStore interface {
 	ListConversationsForAccess(limit, offset int, search, sortBy, projectID, userID, scope string) ([]*Conversation, error)
 	ListDueVulnerabilityAlertDeliveries(limit int) ([]VulnerabilityAlertDelivery, error)
 	ListProjectsForAccess(status, search string, limit, offset int, userID, scope string) ([]*Project, error)
-	ListVulnerabilityAlertRecipients(vuln *Vulnerability) ([]VulnerabilityAlertRecipient, error)
+	ListVulnerabilityAlertRecipients(vuln *store.Vulnerability) ([]VulnerabilityAlertRecipient, error)
 	MarkVulnerabilityAlertDeliveryFailed(id int64, attempts int, sendErr error) error
 	MarkVulnerabilityAlertDeliverySent(id int64) error
 	ResolveRBACAccess(userID string) (*RBACAccess, error)
@@ -329,17 +329,17 @@ var _ RobotStore = (*DB)(nil)
 // VulnerabilityStore is the persistence surface required by VulnerabilityHandler.
 type VulnerabilityStore interface {
 	AssignResourceToUser(userID, resourceType, resourceID string) error
-	CountVulnerabilitiesForAccess(filter VulnerabilityListFilter, access store.Access) (int, error)
-	CreateVulnerability(vuln *Vulnerability) (*Vulnerability, error)
-	DeleteVulnerabilitiesByFilterForAccess(filter VulnerabilityListFilter, access store.Access) (int64, error)
+	CountVulnerabilitiesForAccess(filter store.VulnerabilityListFilter, access store.Access) (int, error)
+	CreateVulnerability(vuln *store.Vulnerability) (*store.Vulnerability, error)
+	DeleteVulnerabilitiesByFilterForAccess(filter store.VulnerabilityListFilter, access store.Access) (int64, error)
 	DeleteVulnerability(id string) error
-	GetVulnerability(id string) (*Vulnerability, error)
+	GetVulnerability(id string) (*store.Vulnerability, error)
 	GetVulnerabilityAlertSubscription(userID string) (*VulnerabilityAlertSubscription, error)
 	GetVulnerabilityFilterOptionsForAccess(access store.Access) (map[string][]string, error)
-	GetVulnerabilityStatsForAccess(filter VulnerabilityListFilter, access store.Access) (map[string]interface{}, error)
-	ListVulnerabilitiesForAccess(limit, offset int, filter VulnerabilityListFilter, access store.Access) ([]*Vulnerability, error)
+	GetVulnerabilityStatsForAccess(filter store.VulnerabilityListFilter, access store.Access) (map[string]interface{}, error)
+	ListVulnerabilitiesForAccess(limit, offset int, filter store.VulnerabilityListFilter, access store.Access) ([]*store.Vulnerability, error)
 	SetResourceOwner(resourceType, resourceID, userID string) error
-	UpdateVulnerability(id string, vuln *Vulnerability) error
+	UpdateVulnerability(id string, vuln *store.Vulnerability) error
 	UpsertVulnerabilityAlertSubscription(userID string, enabled bool, minSeverity string) (*VulnerabilityAlertSubscription, error)
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
