@@ -2297,6 +2297,37 @@ store 自己的测试用的是 fake，只能证明"store 会去问"；只有走�
 **这一刀没做**：`project_facts` / `project_fact_edges` 整域仍在数据层。把它抽成 `store.Facts` 是下一片的活，
 做完之后 `unlinkFactReferences` 才有一个真正的家（现在它借住在项目域的文件里，但已经是那张表唯一的写入口）。
 
+### P6 第二十七刀（一）—— 黑板的 HTTP 面先钉住：4 条契约用例，顺手发现两处既有缺陷
+
+搬 `project_facts` / `project_fact_edges`（**20 个 `*DB` 方法**：`project.go` 里名字带 `ProjectFact` 的 8 个 +
+`project_fact_edges.go` 的 12 个，后者含 1 个非导出的 insert；114 处 `database.ProjectFact*` 类型引用；
+仅那 8 个事实方法就有 **57 处**调用点（边另算）；两张表 + 6 条索引）之前，先把它的线上形状钉住——此前**一条 HTTP 层用例都没有**。
+新文件 `internal/handler/fact_contract_test.go`：**4 个用例**走真 router
+（`GET/POST/PUT/DELETE /api/projects/:id/facts`、`/facts/deprecate`、`/facts/restore`、`/fact-edges`）。
+
+钉住的既有形状（都是"改了就不算中性搬迁"的那些）：
+列表是**裸数组**（不是 `{facts:[…]}`）；顺序是 `pinned DESC, updated_at DESC`——用例特意让 pinned 行**最旧**，
+这样"针压过时间"这条真被断言到（探针：把 ORDER BY 里的 `pinned DESC` 去掉 → `first row = note.gone,
+want the pinned fact first even though it is the oldest row`，撤销即绿）；`exclude_deprecated` **默认不排除**；
+`body` 走 `COALESCE(body,'')` 恒为字符串不是 null；`limit<=0` 回落 100 而不是"零条"；
+`?fact_key=` 是**单对象**详情、`include_links=1` 才带 `incoming_links`/`outgoing_links`（后者 `omitempty`，
+没有出边是**键消失**而不是 `[]`）；`include_link_counts=1` 换成包裹结构且**每行都带** `link_counts`；
+废弃一条事实会**连带把相关边标成 deprecated**；删除事实**连带删边**；
+错误口径三条各自钉住：未知 key → 404 `事实不存在`，恢复"未处于废弃状态"/非法 confidence → **400**，
+`clear_body`/写失败 → 400。
+
+**顺手发现的两处既有缺陷（如实记下，不在这一刀里改——把修复混进搬运动会让"中性"无法证明）**：
+1. **PUT 改 `fact_key` 必然失败**：`UpsertProjectFact` 按 `(project_id, fact_key)` 找旧行，key 一变就落到
+   INSERT 分支并带着**原来的主键**写下去，撞 `UNIQUE constraint failed: project_facts.id`，
+   控制台拿到一个 400 + 裸 SQLite 文本；`RenameProjectFactKeyEdges` 因此**从来没被这条路径触发过**。
+2. **`clear_body` 不清空 body**：handler 把 `existing.Body = ""` 后交给 `mergeFactBodyOnUpdate`，
+   而那条合并规则是"来的是空串就保留库里已有的"，于是空串永远清不掉任何东西；
+   如果旧 body 里带 `依赖事实:` 这类链接行，随后还会走一遍 body 链接解析，把自动同步段**追加回去**。
+   用例把两种表现都按**现状**钉住（有链接的行 body 里仍含原链接行；无链接的行 body 原样不动）。
+
+两条都记在这里、并留在测试注释里当"改之前的照片"。第二十七刀（二）搬完 store 之后再单独立一个 commit 修，
+修的时候这两条断言就是要跟着改语义的那两处——它们的存在就是为了让那次改动看得见。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
