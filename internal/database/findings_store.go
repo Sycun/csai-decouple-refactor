@@ -27,7 +27,7 @@ func (e findingEffects) ConversationProjectID(conversationID string) (string, er
 // UnlinkFactReferences hands the project domain's own write to it. The findings store cannot do this
 // itself without becoming a second owner of project_facts.
 func (e findingEffects) UnlinkFactReferences(tx *sql.Tx, findingIDs []string) error {
-	return unlinkFactReferences(tx, findingIDs)
+	return NewFacts(e.db).UnlinkFindingReferences(tx, findingIDs)
 }
 
 func (e findingEffects) RefreshAssetRiskCache(conversationIDs ...string) {

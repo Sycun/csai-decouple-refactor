@@ -25,6 +25,11 @@ import (
 // store.RobotIdentity that joined it - moved to store.VulnerabilityAlerts with its own two tables.
 // Claiming it half-way (a second writer still reading it from the data layer) would have been a leak
 // reported as ownership.
+//
+// project_facts and project_fact_edges are deliberately NOT on this list even though store.Facts now
+// owns both: the project dashboard and the project statistics aggregate read across them, and this
+// scan bans reads as well as writes. They are claimed by writer instead - see writeLedger and
+// TestProjectFactsHasOneWriter, the same treatment the findings table gets.
 func TestOwnedTablesAreOnlyWrittenFromThisPackage(t *testing.T) {
 	root := moduleRoot(t)
 	owned := []string{"hitl_interrupts", "hitl_conversation_configs", "notification_reads_by_user", "skill_stats", "chat_upload_artifacts", "audit_logs",
@@ -195,6 +200,8 @@ var writeLedger = map[string][]string{
 	"model_token_usage":                 {"model_token_usage.go"},
 	"notification_reads_by_user":        {"notification_reads.go"},
 	"process_details":                   {"session.go"},
+	"project_facts":                     {"facts_ledger.go"},
+	"project_fact_edges":                {"facts_edges.go"},
 	"robot_binding_codes":               {"robot_identity.go"},
 	"robot_user_bindings":               {"robot_identity.go"},
 	"robot_user_sessions":               {"robot_sessions.go"},
@@ -272,43 +279,49 @@ func TestStoreWritesOnlyTablesItOwns(t *testing.T) {
 	// The ledger size is exact while the scan's coverage is a floor: this package grows as domains are
 	// extracted, but every added table has to be an intentional edit with a file behind it. A floor on
 	// the ledger would let a failing offender be silenced by listing the table it names.
-	if len(writeLedger) != 27 {
-		t.Fatalf("the write ledger lists %d tables, want exactly 27 - measured 2026-10-06: %d statements over "+
-			"these tables from %d files", len(writeLedger), statements, len(writes))
+	if len(writeLedger) != 29 {
+		t.Fatalf("the write ledger lists %d tables, want exactly 29 - measured 2026-10-06 when the blackboard "+
+			"arrived: %d statements over %d tables from %d files", len(writeLedger), statements, distinct, len(writes))
 	}
 	if len(writes) < 20 {
 		t.Fatalf("write ledger covers %d files, want at least 20 - the scan has gone blind", len(writes))
 	}
-	if distinct < 27 {
-		t.Fatalf("write ledger covers %d tables, want at least 27 - the scan has gone blind", distinct)
+	if distinct < 29 {
+		t.Fatalf("write ledger covers %d tables, want at least 29 - the scan has gone blind", distinct)
 	}
 }
 
-// TestProjectFactsHasOneWriter pins the delete path's side effect to the facts domain.
+// TestProjectFactsHasOneWriter pins both blackboard tables to the store that owns them.
 //
-// Deleting a finding used to carry the unlink as SQL in the store that owned the delete, so
-// project_facts had two writers and the schema's "one owner" claim was false for that table. The store
-// now hands the ids to the project domain on the same transaction, and this is the test that keeps the
-// handover from drifting back.
+// Two steps of drift are in this table's history, and the test guards both. Deleting a finding used to
+// carry the unlink as SQL inside the findings store, so project_facts had two writers; the ids are
+// handed over now, on the caller's transaction. Then the whole domain's SQL moved into store.Facts,
+// which is where it has to stay - the delegation on *database.DB is one line and no statement, and a
+// second copy of any of these writes would show up here.
 func TestProjectFactsHasOneWriter(t *testing.T) {
 	root := moduleRoot(t)
 	tables := createdTables(t, root)
-	const owner = "internal/database/project.go"
+	owners := map[string]string{
+		"project_facts":      "internal/store/facts_ledger.go",
+		"project_fact_edges": "internal/store/facts_edges.go",
+	}
+	// Six statements for the facts (insert, four updates including the unlink this test exists for,
+	// delete) and nine for the edges (two inserts, three updates, four deletes - measured with the
+	// count this test prints when it goes red).
+	wants := map[string]int{"project_facts": 6, "project_fact_edges": 9}
 
-	ownWrites := 0
+	counts := map[string]int{}
 	var offenders []string
 	for _, dir := range []string{"internal", "cmd"} {
 		for path := range productionGoFiles(t, filepath.Join(root, dir)) {
 			rel := mustRel(t, root, path)
-			if strings.HasPrefix(rel, "internal/store/") {
-				continue // claimed by TestStoreWritesOnlyTablesItOwns, which checks every table there
-			}
 			for _, w := range writeTargets(t, path, tables) {
-				if w.table != "project_facts" {
+				owner, tracked := owners[w.table]
+				if !tracked {
 					continue
 				}
 				if rel == owner {
-					ownWrites++
+					counts[w.table]++
 					continue
 				}
 				offenders = append(offenders, rel+": "+w.statement)
@@ -316,17 +329,17 @@ func TestProjectFactsHasOneWriter(t *testing.T) {
 		}
 	}
 
-	// Six statements as this slice landed: the insert, the four updates (the fact body, the confidence
-	// flips in and out of deprecated, and the link this test exists to keep here) and the delete.
-	if ownWrites != 6 {
-		t.Fatalf("%s writes project_facts in %d statements, want exactly 6 - a scan finding fewer is not "+
-			"a claim about ownership", owner, ownWrites)
+	for table, want := range wants {
+		if counts[table] != want {
+			t.Fatalf("%s is written in %d statements by its owner, want exactly %d - a scan finding fewer "+
+				"is not a claim about ownership", table, counts[table], want)
+		}
 	}
 	if len(offenders) > 0 {
 		sort.Strings(offenders)
-		t.Fatalf("project_facts is written from outside its owner: %v. "+
-			"Clear a fact's link to a finding through database.unlinkFactReferences on the caller's "+
-			"transaction instead of writing the table there.", offenders)
+		t.Fatalf("the blackboard tables are written from outside store.Facts: %v. "+
+			"Add a method to store.Facts (and delegate from *database.DB if a consumer still calls through "+
+			"it) instead of writing project_facts or project_fact_edges somewhere else.", offenders)
 	}
 }
 

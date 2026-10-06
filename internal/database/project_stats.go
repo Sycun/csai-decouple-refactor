@@ -1,7 +1,6 @@
 package database
 
 import (
-	"cyberstrike-ai/internal/store"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -44,27 +43,6 @@ func (db *DB) GetProjectStatsCounts(projectID string) (*ProjectStats, error) {
 		return nil, fmt.Errorf("统计对话失败: %w", err)
 	}
 	return stats, nil
-}
-
-// ListProjectFactsForSparseCheck 返回用于待补全检测的事实字段（非 deprecated）。
-func (db *DB) ListProjectFactsForSparseCheck(projectID string) ([]store.ProjectFactSparseRow, error) {
-	rows, err := db.Query(
-		`SELECT category, fact_key, COALESCE(body,'') FROM project_facts WHERE project_id = ? AND confidence != 'deprecated'`,
-		projectID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []store.ProjectFactSparseRow
-	for rows.Next() {
-		var row store.ProjectFactSparseRow
-		if err := rows.Scan(&row.Category, &row.FactKey, &row.Body); err != nil {
-			return nil, err
-		}
-		out = append(out, row)
-	}
-	return out, rows.Err()
 }
 
 // ListConversationsByProjectID 列出绑定到项目的对话。

@@ -278,41 +278,7 @@ func (db *DB) initTables() error {
 		updated_at DATETIME NOT NULL
 	);`
 
-	// 创建项目事实表（黑板）
-	createProjectFactsTable := `
-	CREATE TABLE IF NOT EXISTS project_facts (
-		id TEXT PRIMARY KEY,
-		project_id TEXT NOT NULL,
-		fact_key TEXT NOT NULL,
-		category TEXT NOT NULL DEFAULT 'note',
-		summary TEXT NOT NULL DEFAULT '',
-		body TEXT,
-		confidence TEXT NOT NULL DEFAULT 'tentative',
-		source_conversation_id TEXT,
-		source_message_id TEXT,
-		pinned INTEGER NOT NULL DEFAULT 0,
-		related_vulnerability_id TEXT,
-		created_at DATETIME NOT NULL,
-		updated_at DATETIME NOT NULL,
-		FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-		UNIQUE(project_id, fact_key)
-	);`
-
-	// 项目事实关系边（黑板 DAG）
-	createProjectFactEdgesTable := `
-	CREATE TABLE IF NOT EXISTS project_fact_edges (
-		id TEXT PRIMARY KEY,
-		project_id TEXT NOT NULL,
-		source_fact_key TEXT NOT NULL,
-		target_fact_key TEXT NOT NULL,
-		edge_type TEXT NOT NULL,
-		confidence TEXT NOT NULL DEFAULT 'tentative',
-		source_conversation_id TEXT,
-		created_at DATETIME NOT NULL,
-		updated_at DATETIME NOT NULL,
-		FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-		UNIQUE(project_id, source_fact_key, target_fact_key, edge_type)
-	);`
+	// 黑板两张表（project_facts 与 project_fact_edges）的 DDL 与六条索引都在 store.Facts 的 EnsureSchema 里。
 
 	// 创建漏洞表
 	createVulnerabilitiesTable := `
@@ -558,12 +524,6 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_assets_risk_level ON assets(risk_level);
 	CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 	CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at);
-	CREATE INDEX IF NOT EXISTS idx_project_facts_project_id ON project_facts(project_id);
-	CREATE INDEX IF NOT EXISTS idx_project_facts_confidence ON project_facts(confidence);
-	CREATE INDEX IF NOT EXISTS idx_project_facts_related_vuln ON project_facts(related_vulnerability_id);
-	CREATE INDEX IF NOT EXISTS idx_project_fact_edges_project ON project_fact_edges(project_id);
-	CREATE INDEX IF NOT EXISTS idx_project_fact_edges_source ON project_fact_edges(project_id, source_fact_key);
-	CREATE INDEX IF NOT EXISTS idx_project_fact_edges_target ON project_fact_edges(project_id, target_fact_key);
 	CREATE INDEX IF NOT EXISTS idx_conversations_project_id ON conversations(project_id);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_project_id ON vulnerabilities(project_id);
 	CREATE INDEX IF NOT EXISTS idx_batch_tasks_queue_id ON batch_tasks(queue_id);
@@ -620,12 +580,9 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("创建projects表失败: %w", err)
 	}
 
-	if _, err := db.Exec(createProjectFactsTable); err != nil {
-		return fmt.Errorf("创建project_facts表失败: %w", err)
-	}
-
-	if _, err := db.Exec(createProjectFactEdgesTable); err != nil {
-		return fmt.Errorf("创建project_fact_edges表失败: %w", err)
+	// 顺序不能提前：两张表都对 projects 有外键。
+	if err := store.NewFacts(db.DB).EnsureSchema(); err != nil {
+		return fmt.Errorf("创建黑板表失败: %w", err)
 	}
 
 	if _, err := db.Exec(createVulnerabilitiesTable); err != nil {

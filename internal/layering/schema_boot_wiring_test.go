@@ -64,6 +64,13 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 			anchorReason:     "workflow_runs.conversation_id has a foreign key onto conversations",
 			mustNotChangeSQL: "workflow_",
 		},
+		{
+			storeConstructor: "NewFacts",
+			tablePrefix:      "project_fact",
+			anchorCall:       "createProjectsTable",
+			anchorReason:     "both blackboard tables have a foreign key onto projects",
+			mustNotChangeSQL: "project_fact",
+		},
 	}
 
 	root, err := filepath.Abs(filepath.Join("..", ".."))
