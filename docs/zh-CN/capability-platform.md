@@ -194,6 +194,10 @@ rerank 的 provider 名字是**另一个命名空间**，不要塞进模型方�
 - `plugin` 是**唯一携带可执行代码**的单元类型：声明文件里的 `capabilities` 是人审过的入口清单，
   启用时宿主启动二进制并调 `capabilities/list` **双向核对**，一致才把能力登记进 `LayerPlugin`；
   `class/permission/grants` 只来自声明文件，绝不来自插件的自我描述。目录形状与全部规则见 `bundles/README.md`。
+- 包里插件的能力**会出现在 MCP 工具面上**：它没有配方，所以每次重建由能力表补上，且排在内置注册之后
+  （同名保留内置）；停用单元既失去能力身份也失去工具。反过来，启动过程把包里 `plugin` 单元一律置为
+  「已声明、未启用」，持久化开关只重放「停用」方向——`internal/app/boot_plugins_test.go` 与
+  `make wiring-check` 的 AST 断言钉住这两半。
 - **内置能力也走同一张表**：`roles/ agents/ skills/ tools/ 由 ScanDir 扫成单元，身份与既有加载器
   逐项一致（实测 142 个：roles 13 / agents 16 / skills 23 / tools 90），由
   `internal/app/plugin_parity_test.go` 钉住——真相源是既有加载器本身，不是手写清单。

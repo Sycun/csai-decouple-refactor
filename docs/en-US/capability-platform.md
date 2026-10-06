@@ -232,6 +232,14 @@ one identity scheme and one live table:
   `destructive`. Installing declares nothing and starts nothing, and a switch is never replayed as
   "on" after a restart so that an updated pack cannot run code nobody re-approved. Directory shape
   and the full rule set are in `bundles/README.md`.
+- A pack plugin's capabilities **do reach the MCP tool surface**: they have no recipe, so each
+  rebuild composes them from the capability table, and it runs *after* the shipped registrations, so a
+  pack may add an entry point but can never take over a name the binary already answers to. Switching a
+  unit off drops both its capability identity and its tool. At start-up the opposite half applies:
+  `declarePackPluginUnits` brings every pack's plugin unit back as declared-not-started, because the
+  host holds no trust domain until the operator switches it on, and a persisted switch is replayed only
+  in the "off" direction. `internal/app/boot_plugins_test.go` and a `make wiring-check` AST assertion
+  pin both halves.
 - `bundles/<id>/bundle.yaml` is the shape of **packaging by role** (role + sub-agent + skills +
   tools); paths are confined to the bundle directory by `skillpackage.SafeRelPath` and `version` is
   mandatory, because a pack without one cannot be upgraded or rolled back. Format and ownership

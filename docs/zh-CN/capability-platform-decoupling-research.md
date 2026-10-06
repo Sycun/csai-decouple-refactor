@@ -1210,6 +1210,14 @@ CSAI_WRITE_OPENAPI_GOLDEN=1 go test ./internal/handler -run TestOpenAPIOperation
 撤销针对一次构建，改一行说明文字不该让黑名单指向别的东西），执行路径的 `revocation` stage 每次调用都查
 ——`TestRevokedPackPluginBuildIsNotCallable` 走真 authorizer：按摘要撤销该 build 下一次调用即拒、
 按发布者撤销整包即拒、内置代码不受影响。两条都有反向探针。
+**同晚把最后两段接上**：① 包内插件能力进 MCP 工具面（`ToolLayer.registerPackPluginTools`，排在内置
+注册之后、同名保留内置——包能新增入口，不能顶掉产品已有的名字），并补上此前**全仓零测试**的执行路径那一段：
+`internal/security/plugin_routing_test.go` 两面钉住「plugin runtime 绝不退回进程内执行」与非插件 runtime
+仍走配方路径（探针把 fail-closed 换成 fallthrough，`/bin/echo --text hi` 真就跑起来了，测试即红）；
+② 启动过程把包里 `plugin` 单元置为停用（`declarePackPluginUnits`），因为那一刻宿主并没有它的信任域，
+界面却显示「已启用」并把原因写成一次没发生过的启用失败——这是 MCP kind 早已做对、plugin kind 漏掉的
+另一半，只迁一半比不迁更有害。
+
 **仍然没有做的**：包内二进制的**制品签名链**（现在靠声明+双向核对+摘要撤销，没有 Ed25519 覆盖可执行文件）；
 netns/seccomp 级硬出网边界（插件仍走宿主侧 CONNECT 代理 + `StrictEgress`，这是代理白名单不是内核边界）；
 registry 服务端与气隙包导出。
