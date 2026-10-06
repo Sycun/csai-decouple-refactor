@@ -5,11 +5,12 @@ import (
 
 	"cyberstrike-ai/internal/database"
 
+	"cyberstrike-ai/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
-func auditFilterFromQuery(c *gin.Context) database.ListAuditLogsFilter {
-	filter := database.ListAuditLogsFilter{
+func auditFilterFromQuery(c *gin.Context) store.AuditListFilter {
+	filter := store.AuditListFilter{
 		Actor:         c.Query("actor"),
 		Level:         c.Query("level"),
 		Category:      c.Query("category"),

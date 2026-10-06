@@ -3,47 +3,18 @@ package database
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
+
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
 
-func TestBuildAuditLogsWhere_timeFilterSQL(t *testing.T) {
-	since := time.Date(2026, 6, 16, 17, 2, 0, 0, time.UTC)
-	until := time.Date(2026, 6, 17, 3, 3, 0, 0, time.UTC)
-	where, args := buildAuditLogsWhere(ListAuditLogsFilter{Since: &since, Until: &until})
-	if !strings.Contains(where, "strftime('%s', created_at) >=") {
-		t.Fatalf("expected epoch comparison for since, got %q", where)
-	}
-	if !strings.Contains(where, "strftime('%s', created_at) <=") {
-		t.Fatalf("expected epoch comparison for until, got %q", where)
-	}
-	if len(args) != 2 {
-		t.Fatalf("expected 2 time args, got %d", len(args))
-	}
-	for i, arg := range args {
-		s, ok := arg.(string)
-		if !ok || s == "" {
-			t.Fatalf("arg %d: want non-empty UTC RFC3339 string, got %v", i, arg)
-		}
-	}
-}
-
-func TestBuildAuditLogsWhere_relatedUserID(t *testing.T) {
-	where, args := buildAuditLogsWhere(ListAuditLogsFilter{Category: "rbac", RelatedUserID: "user-123"})
-	if !strings.Contains(where, "resource_id = ?") || !strings.Contains(where, "detail_json LIKE ?") {
-		t.Fatalf("expected related-user predicates, got %q", where)
-	}
-	if len(args) != 4 {
-		t.Fatalf("expected category plus 3 related-user args, got %#v", args)
-	}
-	if args[1] != "user-123" || args[2] != `%"user_id":"user-123"%` || args[3] != `%"userId":"user-123"%` {
-		t.Fatalf("unexpected related-user args: %#v", args)
-	}
-}
-
+// TestListAuditLogs_timeFilterMixedStorageFormats runs against the operator's own database when one
+// exists, because the point of it is that real rows - written by different builds, some before the
+// UTC storage rule - still fall inside a window query. It skips when that file is absent, so a clean
+// checkout is not a failure. The window filter itself is pinned on synthetic rows in
+// internal/store/audit_logs_filter_test.go.
 func TestListAuditLogs_timeFilterMixedStorageFormats(t *testing.T) {
 	root, err := os.Getwd()
 	if err != nil {
@@ -61,8 +32,7 @@ func TestListAuditLogs_timeFilterMixedStorageFormats(t *testing.T) {
 
 	since, _ := ParseRFC3339Time("2026-06-16T17:02:00Z")
 	until, _ := ParseRFC3339Time("2026-06-17T03:03:00Z")
-	filter := ListAuditLogsFilter{Since: &since, Until: &until, Limit: 50}
-	logs, err := db.ListAuditLogs(filter)
+	logs, err := store.NewAuditLogs(db.DB).List(store.AuditListFilter{Since: &since, Until: &until, Limit: 50})
 	if err != nil {
 		t.Fatal(err)
 	}

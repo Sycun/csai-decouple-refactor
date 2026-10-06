@@ -112,6 +112,21 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	if err != nil {
 		return nil, fmt.Errorf("初始化数据库失败: %w", err)
 	}
+	// Each of these tables is created by the store that owns it, and it happens here rather than
+	// wherever the consumer is assembled: the audit service purges expired records while it is being
+	// built, the skill page reads its counters as soon as the handlers exist. A store that creates its
+	// schema after its first reader would log "no such table" on every fresh installation - which is
+	// exactly what the live boot of the audit cut showed.
+	if err := ensureAuditLogsSchema(db); err != nil {
+		log.Logger.Warn("初始化 audit_logs 表失败", zap.Error(err))
+	}
+	if err := ensureSkillStatsSchema(db); err != nil {
+		log.Logger.Warn("初始化 skill_stats 表失败", zap.Error(err))
+	}
+	// chat_upload_artifacts carries a foreign key onto conversations, which NewDB has just created.
+	if err := ensureChatUploadArtifactSchema(db); err != nil {
+		log.Logger.Warn("初始化 chat_upload_artifacts 表失败", zap.Error(err))
+	}
 
 	// 认证管理器（数据库初始化后挂载 RBAC）
 	authManager := security.NewAuthManager(cfg.Auth.SessionDurationHours)
@@ -552,15 +567,6 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	unitSwitches := store.NewCapabilitySwitches(db.DB)
 	if err := unitSwitches.EnsureSchema(); err != nil {
 		log.Logger.Warn("初始化能力单元开关表失败，本次启动的开关不会持久化", zap.Error(err))
-	}
-	// skill_stats left the connection wrapper, so the store that owns the table creates it.
-	if err := ensureSkillStatsSchema(db); err != nil {
-		log.Logger.Warn("初始化 skill_stats 表失败", zap.Error(err))
-	}
-	// chat_upload_artifacts left the RBAC initialisation too: the table is created by the store that
-	// owns it, and the access-control code no longer decides whether uploads can be authorized.
-	if err := ensureChatUploadArtifactSchema(db); err != nil {
-		log.Logger.Warn("初始化 chat_upload_artifacts 表失败", zap.Error(err))
 	}
 	switchesApplied, switchNotes := applyPersistedSwitches(pluginTable, unitSwitches, log.Logger)
 	if len(switchNotes) > 0 {

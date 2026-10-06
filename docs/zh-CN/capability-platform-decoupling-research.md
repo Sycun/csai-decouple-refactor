@@ -1317,6 +1317,32 @@ store 侧 6 条真库用例（前缀级联删除、子树改名带同一套 `LIK
 成员数下限只防"解析器什么都没读到"，**不惩罚删成员**——删成员是进展。
 判据的误差方向与 `TestDatabaseSurfaceHasNoUnreachableMethods` 同：别处同名方法只会让它**少报**。
 
+### P6 数据层第八片 —— `audit_logs`（第八个交回主人的表，附带一个启动顺序缺陷）
+
+`AuditStore` 这个接口本身是错的：它把 `audit_logs` 的三条查询和**另外七张表的八条存在性查询**
+混在同一个 surface 里（因为审计页面要把自己的 storage 交给 `audit.ApplyResourceAvailability`）。
+这一刀把它拆开：八条存在性查询单独成为 `database.ResourceExistence`（消费者仍是 `internal/audit`
+自己声明的 `ResourceExistenceSource`），`audit_logs` 的五条 SQL + **建表与四条索引**
+进 `internal/store/audit_logs.go`；`database.AuditLog` / `ListAuditLogsFilter` 两个类型
+一起变成 `store.AuditLog` / `store.AuditListFilter`（5 个文件的引用同批改掉）。
+`*DB` 方法 **333 → 328**，`AuditStore` 这个接口整体消失。
+
+**启动顺序缺陷（真机点验抓出来的，不是测试）**：`audit.NewService(...)` 在构造之后立刻
+`PurgeExpired()`，而我最初把 `ensureAuditLogsSchema` 放在后面（原先表是 `NewDB` 开库时建的，
+顺序无所谓）。空库启动就出现一条
+`warn audit/service.go:138 清理过期审计日志失败 error="no such table: audit_logs"`。
+修法是把三个 store 的建表统一提到 `database.NewDB` 之后、任何消费者构造之前
+（`chat_upload_artifacts` 的外键指向 conversations，而 conversations 正是 `NewDB` 里建的，
+所以这个位置同时满足两边的约束）。
+并加了一条**顺序门禁**：`ensureAuditLogsSchema` 的位置必须在 `audit.NewService` 之前（按 AST 偏移比较）。
+探针教训值得记：我两次把探针写成"把 block 插在 anchor **前面**"（`replace(anchor, block+anchor)`），
+于是门禁"绿"了两轮——**探针必须先证明它真的改了现场**（这次是打印两份代码的行号），
+再谈它有没有让门禁变红；改对成 `replace(anchor, anchor+block)` 后立刻红，恢复后绿。
+
+空库真机复验（端口 18104、独立 db、按记录下来的 PID 收尾）：`no such table` 与建表失败行数 **0**；
+`/api/audit/logs`、`/api/audit/summary`、`/api/skills/stats`、`/api/chat-uploads` 全部 200；
+`sqlite_master` 里 `audit_logs` + 四条 `idx_audit_logs_*` 都在。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

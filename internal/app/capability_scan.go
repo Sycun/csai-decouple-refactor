@@ -320,3 +320,12 @@ func ensureChatUploadArtifactSchema(db *database.DB) error {
 	}
 	return store.NewChatUploads(db.DB).EnsureSchema()
 }
+
+// ensureAuditLogsSchema creates audit_logs through the store that owns it, before the audit service
+// can be asked to write a record.
+func ensureAuditLogsSchema(db *database.DB) error {
+	if db == nil {
+		return nil
+	}
+	return store.NewAuditLogs(db.DB).EnsureSchema()
+}

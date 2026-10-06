@@ -37,6 +37,9 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	pluginUnitsDeclared := 0
 	skillStatsSchema := 0
 	chatUploadSchema := 0
+	auditLogsSchema := 0
+	auditSchemaOffset := -1
+	auditServiceOffset := -1
 	pluginCalls := 0
 	pluginWithoutToolLayer := 0
 	pluginWithoutMCPProvisioner := 0
@@ -77,6 +80,9 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 						// builds from config.yaml. Without this call the server is in the table and
 						// in the console after a restart while nothing connects to it.
 						mcpProvisioned++
+					case "ensureAuditLogsSchema":
+						auditLogsSchema++
+						auditSchemaOffset = fset.Position(call.Pos()).Offset
 					case "ensureChatUploadArtifactSchema":
 						chatUploadSchema++
 					case "ensureSkillStatsSchema":
@@ -93,6 +99,18 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 				return true
 			}
 			switch sel.Sel.Name {
+			case "NewService":
+				// The audit service purges expired records while it is constructed, so the store's
+				// own EnsureSchema has to have run first: assembling it earlier is legal Go and shows
+				// up as "no such table: audit_logs" on a fresh installation.
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "audit" {
+					// Keep the *earliest* construction: there is more than one call site, and the
+					// first is what has to find the table already there.
+					offset := fset.Position(call.Pos()).Offset
+					if auditServiceOffset < 0 || offset < auditServiceOffset {
+						auditServiceOffset = offset
+					}
+				}
 			case "Rebuild":
 				// The boot-time tool-layer rebuild for packs that ship a recipe. Missing it is
 				// silent: the recipe sits in the table and stays invisible to every run until
@@ -176,6 +194,16 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	if mcpProvisioned < 1 {
 		t.Fatalf("provisionDeclaredServers is never called at boot: a pack's MCP server would be in " +
 			"the table and in the console but absent from the live manager until the pack is reinstalled")
+	}
+	if !(auditSchemaOffset >= 0 && auditServiceOffset >= 0 && auditSchemaOffset < auditServiceOffset) {
+		t.Fatalf("audit_logs' schema is not created before the audit service is assembled "+
+			"(ensure at offset %d, audit.NewService at %d): the service purges expired records during "+
+			"construction, so on a fresh database it queries a table nobody made yet",
+			auditSchemaOffset, auditServiceOffset)
+	}
+	if auditLogsSchema < 1 {
+		t.Fatalf("ensureAuditLogsSchema is never called at boot: audit_logs left the start-up sweep, so " +
+			"on a fresh installation the first record written would hit a table nobody created")
 	}
 	if chatUploadSchema < 1 {
 		t.Fatalf("ensureChatUploadArtifactSchema is never called at boot: the table used to be created by " +

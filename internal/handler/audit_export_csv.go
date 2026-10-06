@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	"cyberstrike-ai/internal/database"
-
+	"cyberstrike-ai/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
-func writeAuditLogsCSV(c *gin.Context, logs []*database.AuditLog) {
+func writeAuditLogsCSV(c *gin.Context, logs []*store.AuditLog) {
 	c.Header("Content-Type", "text/csv; charset=utf-8")
 	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="audit-logs-%s.csv"`, time.Now().Format("20060102")))
 

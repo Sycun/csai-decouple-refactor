@@ -10,6 +10,7 @@ import (
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
 
+	"cyberstrike-ai/internal/store"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -18,6 +19,7 @@ import (
 // Service persists platform audit logs.
 type Service struct {
 	db           *database.DB
+	logs         *store.AuditLogs // audit_logs: the only table this service writes
 	cfg          *config.Config
 	logger       *zap.Logger
 	failThrottle *failureThrottle
@@ -25,8 +27,15 @@ type Service struct {
 
 // NewService creates an audit service.
 func NewService(db *database.DB, cfg *config.Config, logger *zap.Logger) *Service {
+	// A nil *database.DB stays a nil store: the guards above answer "audit disabled" instead of
+	// calling methods through a typed-nil interface.
+	var logs *store.AuditLogs
+	if db != nil {
+		logs = store.NewAuditLogs(db.DB)
+	}
 	return &Service{
 		db:           db,
+		logs:         logs,
 		cfg:          cfg,
 		logger:       logger,
 		failThrottle: newFailureThrottle(),
@@ -43,7 +52,7 @@ func (s *Service) Enabled() bool {
 
 // Record writes one audit row from a Gin request context.
 func (s *Service) Record(c *gin.Context, e Entry) {
-	if s == nil || !s.Enabled() || s.db == nil {
+	if s == nil || !s.Enabled() || s.logs == nil {
 		return
 	}
 	if strings.TrimSpace(e.Category) == "" || strings.TrimSpace(e.Action) == "" {
@@ -84,7 +93,7 @@ func (s *Service) Record(c *gin.Context, e Entry) {
 		clientIPVal = clientIP(c)
 	}
 
-	row := &database.AuditLog{
+	row := &store.AuditLog{
 		ID:           "audit_" + strings.ReplaceAll(uuid.New().String(), "-", ""),
 		CreatedAt:    time.Now(),
 		Level:        e.Level,
@@ -100,7 +109,7 @@ func (s *Service) Record(c *gin.Context, e Entry) {
 		Message:      e.Message,
 		Detail:       detail,
 	}
-	if err := s.db.AppendAuditLog(row); err != nil && s.logger != nil {
+	if err := s.logs.Append(row); err != nil && s.logger != nil {
 		s.logger.Warn("写入审计日志失败",
 			zap.String("action", e.Action),
 			zap.Error(err),
@@ -115,7 +124,7 @@ func (s *Service) RecordSystem(e Entry) {
 
 // PurgeExpired deletes rows older than retention_days when configured.
 func (s *Service) PurgeExpired() {
-	if s == nil || s.db == nil || s.cfg == nil {
+	if s == nil || s.logs == nil || s.cfg == nil {
 		return
 	}
 	days := s.cfg.Audit.RetentionDaysEffective()
@@ -123,7 +132,7 @@ func (s *Service) PurgeExpired() {
 		return
 	}
 	cutoff := time.Now().AddDate(0, 0, -days)
-	n, err := s.db.DeleteAuditLogsBefore(cutoff)
+	n, err := s.logs.DeleteBefore(cutoff)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warn("清理过期审计日志失败", zap.Error(err))

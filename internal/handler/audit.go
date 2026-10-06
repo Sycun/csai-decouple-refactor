@@ -8,20 +8,29 @@ import (
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
 
+	"cyberstrike-ai/internal/store"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
 // AuditHandler serves platform audit log APIs.
 type AuditHandler struct {
-	db     database.AuditStore
+	logs   *store.AuditLogs           // audit_logs: 这个页面唯一的读来源
+	db     database.ResourceExistence // 只剩"被审计的资源还在不在"那八条查询
 	audit  *audit.Service
 	logger *zap.Logger
 }
 
 // NewAuditHandler creates an audit log handler.
 func NewAuditHandler(db *database.DB, auditSvc *audit.Service, logger *zap.Logger) *AuditHandler {
-	return &AuditHandler{db: database.Narrow[database.AuditStore](db), audit: auditSvc, logger: logger}
+	return &AuditHandler{
+		// Narrow, not a plain assignment: a nil *database.DB has to stay a nil interface, or every
+		// guard below takes the wrong branch.
+		logs:   newAuditLogsStore(db),
+		db:     database.Narrow[database.ResourceExistence](db),
+		audit:  auditSvc,
+		logger: logger,
+	}
 }
 
 // Meta GET /api/audit/meta
@@ -43,19 +52,19 @@ func (h *AuditHandler) Meta(c *gin.Context) {
 
 // Summary GET /api/audit/summary
 func (h *AuditHandler) Summary(c *gin.Context) {
-	if h.db == nil {
+	if h.logs == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "database unavailable"})
 		return
 	}
 	base := auditFilterForAccess(c, auditFilterFromQuery(c))
-	total, err := h.db.CountAuditLogs(base)
+	total, err := h.logs.Count(base)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	failFilter := base
 	failFilter.Result = "failure"
-	failures, err := h.db.CountAuditLogs(failFilter)
+	failures, err := h.logs.Count(failFilter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -63,7 +72,7 @@ func (h *AuditHandler) Summary(c *gin.Context) {
 	since := time.Now().AddDate(0, 0, -7)
 	recentFilter := base
 	recentFilter.Since = &since
-	recent7d, err := h.db.CountAuditLogs(recentFilter)
+	recent7d, err := h.logs.Count(recentFilter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -79,7 +88,7 @@ func (h *AuditHandler) Summary(c *gin.Context) {
 
 // ListLogs GET /api/audit/logs
 func (h *AuditHandler) ListLogs(c *gin.Context) {
-	if h.db == nil {
+	if h.logs == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "database unavailable"})
 		return
 	}
@@ -88,12 +97,12 @@ func (h *AuditHandler) ListLogs(c *gin.Context) {
 	filter.Limit = pageSize
 	filter.Offset = (page - 1) * pageSize
 
-	logs, err := h.db.ListAuditLogs(filter)
+	logs, err := h.logs.List(filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	total, err := h.db.CountAuditLogs(filter)
+	total, err := h.logs.Count(filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -108,11 +117,11 @@ func (h *AuditHandler) ListLogs(c *gin.Context) {
 
 // GetLog GET /api/audit/logs/:id
 func (h *AuditHandler) GetLog(c *gin.Context) {
-	if h.db == nil {
+	if h.logs == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "database unavailable"})
 		return
 	}
-	row, err := h.db.GetAuditLogByID(c.Param("id"))
+	row, err := h.logs.GetByID(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "审计记录不存在"})
 		return
@@ -127,7 +136,7 @@ func (h *AuditHandler) GetLog(c *gin.Context) {
 
 // ExportLogs GET /api/audit/logs/export — JSON or CSV (?format=csv), max 5000 rows.
 func (h *AuditHandler) ExportLogs(c *gin.Context) {
-	if h.db == nil {
+	if h.logs == nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "database unavailable"})
 		return
 	}
@@ -135,7 +144,7 @@ func (h *AuditHandler) ExportLogs(c *gin.Context) {
 	filter.Limit = 5000
 	filter.Offset = 0
 
-	logs, err := h.db.ListAuditLogs(filter)
+	logs, err := h.logs.List(filter)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -151,9 +160,18 @@ func (h *AuditHandler) ExportLogs(c *gin.Context) {
 	})
 }
 
-func auditFilterForAccess(c *gin.Context, filter database.ListAuditLogsFilter) database.ListAuditLogsFilter {
+func auditFilterForAccess(c *gin.Context, filter store.AuditListFilter) store.AuditListFilter {
 	if session, ok := security.CurrentSession(c); ok && session.Scope != database.RBACScopeAll {
 		filter.Actor = session.Username
 	}
 	return filter
+}
+
+// newAuditLogsStore is the only way this package comes by audit_logs. A handler built without a
+// database keeps a nil store, whose methods answer an error instead of panicking.
+func newAuditLogsStore(db *database.DB) *store.AuditLogs {
+	if db == nil {
+		return nil
+	}
+	return store.NewAuditLogs(db.DB)
 }

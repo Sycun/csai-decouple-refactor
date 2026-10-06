@@ -620,24 +620,6 @@ func (db *DB) initTables() error {
 		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);`
 
-	createAuditLogsTable := `
-	CREATE TABLE IF NOT EXISTS audit_logs (
-		id TEXT PRIMARY KEY,
-		created_at DATETIME NOT NULL,
-		level TEXT NOT NULL DEFAULT 'info',
-		category TEXT NOT NULL,
-		action TEXT NOT NULL,
-		result TEXT NOT NULL,
-		actor TEXT NOT NULL DEFAULT 'admin',
-		session_hint TEXT,
-		client_ip TEXT,
-		user_agent TEXT,
-		resource_type TEXT,
-		resource_id TEXT,
-		message TEXT NOT NULL,
-		detail_json TEXT
-	);`
-
 	createC2ProfilesTable := `
 	CREATE TABLE IF NOT EXISTS c2_profiles (
 		id TEXT PRIMARY KEY,
@@ -789,10 +771,6 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_c2_events_created_at ON c2_events(created_at);
 	CREATE INDEX IF NOT EXISTS idx_c2_events_category ON c2_events(category);
 	CREATE INDEX IF NOT EXISTS idx_c2_events_session ON c2_events(session_id);
-	CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
-	CREATE INDEX IF NOT EXISTS idx_audit_logs_category ON audit_logs(category);
-	CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
-	CREATE INDEX IF NOT EXISTS idx_audit_logs_result ON audit_logs(result);
 	CREATE INDEX IF NOT EXISTS idx_workflow_definitions_updated_at ON workflow_definitions(updated_at);
 	CREATE INDEX IF NOT EXISTS idx_workflow_definitions_enabled ON workflow_definitions(enabled);
 	CREATE INDEX IF NOT EXISTS idx_workflow_runs_workflow ON workflow_runs(workflow_id);
@@ -883,10 +861,6 @@ func (db *DB) initTables() error {
 
 	if _, err := db.Exec(createWebshellConnectionStatesTable); err != nil {
 		return fmt.Errorf("创建webshell_connection_states表失败: %w", err)
-	}
-
-	if _, err := db.Exec(createAuditLogsTable); err != nil {
-		return fmt.Errorf("创建audit_logs表失败: %w", err)
 	}
 
 	if err := db.initRBACTables(); err != nil {

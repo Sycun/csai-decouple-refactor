@@ -5,6 +5,7 @@ import (
 
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/mcp"
+	"cyberstrike-ai/internal/store"
 )
 
 var auditActionsResourceRemoved = map[string]bool{
@@ -26,7 +27,7 @@ var auditActionsResourceRemoved = map[string]bool{
 // listing eight lookups is cheaper than handing the audit log reader the whole 361-method database.
 //
 // The handlers' own store interfaces must be a superset of this one, since they pass their storage
-// in - internal/database/stores.go keeps AuditStore aligned with it.
+// in - internal/database/stores.go keeps ResourceExistence aligned with it.
 type ResourceExistenceSource interface {
 	ConversationExists(id string) (bool, error)
 	GetVulnerability(id string) (*database.Vulnerability, error)
@@ -43,7 +44,7 @@ type ResourceExistenceSource interface {
 // db is an interface, so callers must pass one built by database.Narrow: a nil *database.DB stored
 // in an interface is not nil, and the guard below would then fall through into method calls on a nil
 // receiver instead of reporting "availability unknown".
-func ApplyResourceAvailability(db ResourceExistenceSource, log *database.AuditLog) {
+func ApplyResourceAvailability(db ResourceExistenceSource, log *store.AuditLog) {
 	if log == nil || strings.TrimSpace(log.ResourceID) == "" {
 		return
 	}

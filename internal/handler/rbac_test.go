@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"cyberstrike-ai/internal/store"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -148,6 +149,11 @@ func TestRBACDeleteResourceAssignmentAuditsTargetResource(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	// audit_logs is created by the store that owns it, at assembly time - a test opening a database
+	// directly runs the same step rather than relying on the wrapper having once created every table.
+	if err := store.NewAuditLogs(db.DB).EnsureSchema(); err != nil {
+		t.Fatal(err)
+	}
 	user, err := db.CreateRBACUser("audit-member", "Audit Member", "hash", true, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -179,7 +185,7 @@ func TestRBACDeleteResourceAssignmentAuditsTargetResource(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 
-	logs, err := db.ListAuditLogs(database.ListAuditLogsFilter{Category: "rbac", RelatedUserID: user.ID, Limit: 10})
+	logs, err := store.NewAuditLogs(db.DB).List(store.AuditListFilter{Category: "rbac", RelatedUserID: user.ID, Limit: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
