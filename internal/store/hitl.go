@@ -266,15 +266,18 @@ func (s *HITL) ConversationOwners(ids []string) (map[string]string, error) {
 		for rows.Next() {
 			var id, conversationID string
 			if err := rows.Scan(&id, &conversationID); err != nil {
-				continue
+				rows.Close()
+				return owners, err
 			}
 			owners[id] = conversationID
 		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
+		// The cursor is closed per batch rather than deferred, so the error it leaves behind has to be
+		// collected before that: a truncated batch used to answer as "these ids are unknown".
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
 			return owners, err
 		}
-		rows.Close()
 	}
 	return owners, nil
 }
@@ -454,8 +457,11 @@ func (s *HITL) PendingApprovals(limit int, access Access) ([]PendingApproval, er
 	for rows.Next() {
 		var item PendingApproval
 		var createdSec sql.NullInt64
+		// All four columns are NOT NULL in the table (the created-epoch one is read through NullInt64
+		// because it is computed), so a scan failure is a fault to report, not a row to lose: this
+		// list is what the approval badge counts.
 		if err := rows.Scan(&item.ID, &item.ConversationID, &item.ToolName, &createdSec); err != nil {
-			continue
+			return nil, err
 		}
 		item.CreatedAtSec = createdSec.Int64
 		items = append(items, item)

@@ -93,10 +93,16 @@ func (s *NotificationReads) ReadStates(userID string, eventIDs []string) (map[st
 	defer rows.Close()
 	for rows.Next() {
 		var id string
+		// event_id is part of the table's unique key and cannot be NULL; a scan failure is a fault.
+		// Answering it by skipping would report that row as unread, which is the one thing this
+		// read must not get wrong.
 		if err := rows.Scan(&id); err != nil {
-			continue
+			return result, err
 		}
 		result[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return result, err
 	}
 	return result, nil
 }

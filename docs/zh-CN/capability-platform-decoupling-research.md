@@ -2203,6 +2203,46 @@ workflow 那条按 `createConversationsTable` 定外键顺序，三个方向探�
 第二遍启动不再打印 admin 密码所以要用首遍的），都记在这里以免下次误判成服务端缺陷。
 服务只按记录的 PID 停；`~/csai-生产版` 那个实例（PID 83620）全程未碰。
 
+### P6 第二十五刀 —— 把"扫描失败就丢行"这一类按全量扫一遍：store 层清零，数据层记成账
+
+前三刀的缺陷都不是"这一片独有"，而是**同一形状在不同域里各自出现**（摘要丢 NULL 会话、
+列表丢 NULL 标签）。所以这一刀不再等下一个域自己撞上，而是把判据摆到全仓：
+**凡是 `rows.Scan` 失败之后 `continue` 的循环，逐处判定。**
+
+**先记录扫法本身犯的两次错**（都跟"空集看起来像好消息"同族）：
+1. 第一版扫法用 `os.walk` 后判断 `'/database/' in root`，而 `root` 的实际形态是
+   `internal/database`（没有前导斜杠），于是**一个文件都没扫**，输出"0 处"——
+   一个"全仓零债务"的假结论。补上 `files > 40` 与"必须找到至少一处"两条断言才暴露真相：**44 处**。
+2. 按文本窗口判（`continue` 上方 9 行里出现过 `.Scan(`）会**误报**：44 处里有一多半是
+   与扫描无关的 `continue`（`!data.Valid` 的空数据跳过、`!ok` 的坏 payload 跳过、
+   `pragma_table_info` 的"列已存在"检查、`MarkableEventID` 拒收不可标记 id）。
+   判据因此改成**读语法树**：`if err != nil { …continue… }` 且扫描在 if 的 init 里
+   或是**紧邻的前一条语句**，并且允许 body 先 `logger.Warn` 再 `continue`
+   （那正是这些缺陷能藏很久的原因——有日志不等于没丢行）。
+   **AST 口径下的真实数字：数据层 27 处、store 层 0 处（修完之后）。**
+
+**store 层清掉的 7 处**（每处的列都已在 DDL/迁移里判定为"不可能为 NULL"，所以扫描失败只能是故障）：
+`vulnerability.go` 的两个 GROUP BY 桶（吞一个桶会让 `by_severity` 之和小于同一响应里的 `total`）、
+筛选建议的 `collect`（静默变短的 picker 列表）、`hitl.go` 的批量 owner 读
+（原来连 `rows.Err()` 都没有，截断会被答成"这些 id 不存在"）与 `PendingApproval` 列表
+（审批徽标数的就是它）、`notification_reads.go` 的已读集合（跳过的行会被报成"未读"）。
+全部改成返回错误并补 `rows.Err()`；两处随循环作用域显式 `Close`（不能用 `defer`：那是按批次循环的）。
+**这些分支按构造不可达，所以没有测试能覆盖它们——这一点如实写在这里，不拿"加了守卫"当"有测试"。**
+
+**新门禁** `TestScanErrorsAreNotAnsweredByDroppingRows`（`internal/layering/scan_error_swallow_test.go`）：
+- `internal/store` 任何文件出现该形状即失败，理由写进报错里：**这个包自己写 DDL，
+  所以它没有"这列可能为 NULL"的借口**；
+- `internal/database` 按文件钉**实测账**（c2 12 / conversation 3 / monitor 8 / database 3 / webshell 1，
+  合计 27），只许降；某项降到 0 就删掉那行而不是留着个 0；
+- 反空跑：`files ≥ 400` 且 `.Scan(` 计数 `≥ 200`（实测 internal+cmd 生产文件 550 个、249 处），
+  否则直接失败——**这条断言的存在就是因为第 1 次扫法给了个"0 债务"的假绿灯。**
+**探针三向**：store 里注入一处 → `internal/store/vulnerability.go: 1 sites, ceiling 0 - this package owns its DDL…`；
+c2.go 加第 13 处 → `c2.go: 13 sites, ceiling 12`；撤销后绿。
+门禁文件被解析失败时也是硬失败（第一次探针写了段不合法的 Go，
+测试直接 `parse internal/database/c2.go: …` 红掉——这条判据不许"读不懂就当没有"）。
+
+**顺带的账**：`*database.DB` 未变（仍 262）；本刀不动方法数，只把一类缺陷从"逐片撞见"变成"门禁盯住"。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目
