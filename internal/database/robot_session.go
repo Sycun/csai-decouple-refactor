@@ -1,7 +1,9 @@
 package database
 
 import (
+	"cyberstrike-ai/internal/sqltime"
 	"database/sql"
+
 	"fmt"
 	"strings"
 	"time"
@@ -34,13 +36,7 @@ func (db *DB) GetRobotSessionBinding(sessionKey string) (*RobotSessionBinding, e
 		}
 		return nil, fmt.Errorf("查询机器人会话绑定失败: %w", err)
 	}
-	if t, e := time.Parse("2006-01-02 15:04:05.999999999-07:00", updatedAt); e == nil {
-		b.UpdatedAt = t
-	} else if t, e := time.Parse("2006-01-02 15:04:05", updatedAt); e == nil {
-		b.UpdatedAt = t
-	} else {
-		b.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
-	}
+	b.UpdatedAt = sqltime.Parse(updatedAt)
 	if strings.TrimSpace(b.RoleName) == "" {
 		b.RoleName = "默认"
 	}

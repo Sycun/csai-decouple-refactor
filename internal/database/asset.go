@@ -1,7 +1,9 @@
 package database
 
 import (
+	"cyberstrike-ai/internal/sqltime"
 	"database/sql"
+
 	"encoding/json"
 	"fmt"
 	"net"
@@ -546,18 +548,7 @@ func parseAssetScanTime(value interface{}) (time.Time, bool) {
 	default:
 		raw = fmt.Sprint(typed)
 	}
-	for _, layout := range []string{
-		time.RFC3339Nano,
-		"2006-01-02 15:04:05.999999999-07:00",
-		"2006-01-02 15:04:05.999999999Z07:00",
-		"2006-01-02 15:04:05-07:00",
-		"2006-01-02 15:04:05",
-	} {
-		if parsed, err := time.Parse(layout, strings.TrimSpace(raw)); err == nil {
-			return parsed, true
-		}
-	}
-	return time.Time{}, false
+	return sqltime.ParseOK(strings.TrimSpace(raw))
 }
 
 const assetEffectiveLastScanExpr = `COALESCE(

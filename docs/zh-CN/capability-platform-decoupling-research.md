@@ -1541,6 +1541,43 @@ HTTP 契约 **4 条**（顶层与 recent 的**键集合**逐字钉住、`project
 **一处口径收窄值得写明**：`model_token_usage` 的建表现在只由服务端启动路径执行；
 `cmd/server` 里那条改密码 CLI 仍会 `database.NewDB`，但不再顺手建这张它永远不写的表。
 
+### P6 数据层第十三片 —— 「一个 DATETIME 列怎么读回时间」原来有 24 个读者、24 套写法
+
+这不是搬表，是**收一条被抄了 24 遍的规则**。`sqltime` 上一片只管"怎么写/怎么比"，
+这次把它不管的第三半——**怎么读回来**——收进同一个家：`sqltime.Parse` / `ParseOK`，认 12 种历史写法
+（RFC3339 两式、空格分隔与 `T` 分隔 × 有/无偏移 × 有无小数秒、以及 `Z07:00` 变体）。
+
+改之前的真实分布（按"函数级"数，不是按文件）：`internal/database/conversation.go` **14 处**
+（会话/消息/过程详情各自拼一条 `if t,e := time.Parse(...)` 链）、`batch_task.go` 3 处、
+`asset.go` `parseAssetScanTime`、`monitor.go` `LoadToolStatsSummary`、`robot_session.go`、
+`project.go` `parseDBTime`（唯一那份 10 写法"超集"）、`knowledge/manager.go` 2 处（一处内联 7 写法表 +
+`itemTimeLayouts`）、`store/model_token_usage.go` 1 处。**同一个列值能否读出一个真实时间，取决于哪段代码读到它**
+——这就是"一行时间显示成 0001 年 / 空白 / 少一天"这类只有真机才复现的杂症的根。
+
+改完：**`time.Parse` 一个存下来的 DATETIME 的地方只剩 `internal/sqltime`**（新门禁实测 0 个文件，扫描覆盖 551 个生产文件——这条判据的遍历域是除 `internal/sqltime` 外的全部生产码，比裸 SQL 那条更宽）。
+顺带清掉 6 个只为那些链存在的 `var err error` / `var parseErr error` 声明与 3 条注释。
+
+**判据为什么按"调用形状"而不是按表名**：`readingStoredInstant` 只认 `time.Parse("2006-01-02[ T]15:04:05…" …)`，
+并**故意放过**两类同形但不同决定的写法——`x.Format("2006-01-02 15:04:05")` 是展示层的输出格式（现存 12 处，
+CSV/Markdown/工具回执，归显示代码管），`time.ParseInLocation(…, time.Local)` 是监控图表按本机时区打桶。
+门禁对这两类各有一条**反向对照**：把它们也抓就算红（探针验过：往 allowed 清单里塞一条真解析调用，
+立刻报 `fired on an allowed spelling`）。
+
+**三条探针**（注入即红 / 撤销即绿）：
+- 在 `internal/database/project.go` 塞一个 `time.Parse("2006-01-02 15:04:05", x)` → 门禁红并报文件名；
+- 往正向对照清单里加一条两边都不命中的 `whatever.DoThing(x)` → 门禁自杀式红（`cannot see the parse it claims to prevent`）；
+- 往 allowed 清单里放一条真解析 → 放过检查红。
+另有两条**一开始无效的探针**，值得写下来防再犯：① 只删 `layouts` 里任意一条，15 个样本仍全过——
+Go 的 `Parse` 里布局的空格也匹配 `T`、`.999999999` 也匹配短小数，于是**这 12 条互相冗余**（12 种单删都试过，全绿）。
+结论是"保留这份宽松清单"而不是"求极小集"：读老库的容错就是要宽，多试一次的成本是一次失败比较，
+这句话现在写在 `sqltime.layouts` 的注释里，不是留成读者的猜测。② 我第一版最小化脚本把红/绿判反了，
+打印出的 `load-bearing` 全是反义——发现得靠"最终清单没变但每条都'不可删'"这种自相矛盾。
+
+测试：`TestParseAcceptsEveryFormTheReplacedReadersUsed`（15 个样本 = 各被替换读者原来认的写法集合的代表值，
+逐一断言解析出的**同一瞬间**，含带偏移、无偏移、3/6/9 位小数、空格与 `T`）与
+`TestParseOKSeparatesUnparseableFromZero`（空串/垃圾 → false 且零值；库里真存了 `0001-01-01 00:00:00` → true 且零值，
+这条是 asset/monitor 那两个"要区分没读到 vs 读到零"的调用点需要的形状）。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

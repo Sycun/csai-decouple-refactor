@@ -1,7 +1,9 @@
 package database
 
 import (
+	"cyberstrike-ai/internal/sqltime"
 	"database/sql"
+
 	"fmt"
 	"strings"
 	"time"
@@ -127,14 +129,10 @@ func (db *DB) GetBatchQueue(queueID string) (*BatchTaskQueueRow, error) {
 		return nil, fmt.Errorf("查询批量任务队列失败: %w", err)
 	}
 
-	parsedTime, parseErr := time.Parse("2006-01-02 15:04:05", createdAt)
-	if parseErr != nil {
-		// 尝试其他时间格式
-		parsedTime, parseErr = time.Parse(time.RFC3339, createdAt)
-		if parseErr != nil {
-			db.logger.Warn("解析创建时间失败", zap.String("createdAt", createdAt), zap.Error(parseErr))
-			parsedTime = time.Now()
-		}
+	parsedTime, parsed := sqltime.ParseOK(createdAt)
+	if !parsed {
+		db.logger.Warn("解析创建时间失败", zap.String("createdAt", createdAt))
+		parsedTime = time.Now()
 	}
 	row.CreatedAt = parsedTime
 	return &row, nil
@@ -157,13 +155,10 @@ func (db *DB) GetAllBatchQueues() ([]*BatchTaskQueueRow, error) {
 		if err := rows.Scan(&row.ID, &row.Title, &row.Role, &row.AgentMode, &row.HITLPolicy, &row.ScheduleMode, &row.CronExpr, &row.NextRunAt, &row.ScheduleEnabled, &row.LastScheduleTriggerAt, &row.LastScheduleError, &row.LastRunError, &row.ProjectID, &row.Concurrency, &row.Status, &createdAt, &row.StartedAt, &row.CompletedAt, &row.CurrentIndex); err != nil {
 			return nil, fmt.Errorf("扫描批量任务队列失败: %w", err)
 		}
-		parsedTime, parseErr := time.Parse("2006-01-02 15:04:05", createdAt)
-		if parseErr != nil {
-			parsedTime, parseErr = time.Parse(time.RFC3339, createdAt)
-			if parseErr != nil {
-				db.logger.Warn("解析创建时间失败", zap.String("createdAt", createdAt), zap.Error(parseErr))
-				parsedTime = time.Now()
-			}
+		parsedTime, parsed := sqltime.ParseOK(createdAt)
+		if !parsed {
+			db.logger.Warn("解析创建时间失败", zap.String("createdAt", createdAt))
+			parsedTime = time.Now()
 		}
 		row.CreatedAt = parsedTime
 		queues = append(queues, &row)
@@ -224,13 +219,10 @@ func (db *DB) ListBatchQueuesForAccess(limit, offset int, status, keyword, userI
 		if err := rows.Scan(&row.ID, &row.Title, &row.Role, &row.AgentMode, &row.HITLPolicy, &row.ScheduleMode, &row.CronExpr, &row.NextRunAt, &row.ScheduleEnabled, &row.LastScheduleTriggerAt, &row.LastScheduleError, &row.LastRunError, &row.ProjectID, &row.Concurrency, &row.Status, &createdAt, &row.StartedAt, &row.CompletedAt, &row.CurrentIndex); err != nil {
 			return nil, fmt.Errorf("扫描批量任务队列失败: %w", err)
 		}
-		parsedTime, parseErr := time.Parse("2006-01-02 15:04:05", createdAt)
-		if parseErr != nil {
-			parsedTime, parseErr = time.Parse(time.RFC3339, createdAt)
-			if parseErr != nil {
-				db.logger.Warn("解析创建时间失败", zap.String("createdAt", createdAt), zap.Error(parseErr))
-				parsedTime = time.Now()
-			}
+		parsedTime, parsed := sqltime.ParseOK(createdAt)
+		if !parsed {
+			db.logger.Warn("解析创建时间失败", zap.String("createdAt", createdAt))
+			parsedTime = time.Now()
 		}
 		row.CreatedAt = parsedTime
 		queues = append(queues, &row)

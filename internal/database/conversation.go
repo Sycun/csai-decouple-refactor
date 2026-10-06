@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"cyberstrike-ai/internal/sqltime"
 	"cyberstrike-ai/internal/store"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
@@ -126,20 +127,8 @@ func (db *DB) GetConversationByWebshellConnectionID(connectionID string) (*Conve
 		return nil, fmt.Errorf("查询对话失败: %w", err)
 	}
 	conv.Pinned = pinned != 0
-	if t, e := time.Parse("2006-01-02 15:04:05.999999999-07:00", createdAt); e == nil {
-		conv.CreatedAt = t
-	} else if t, e := time.Parse("2006-01-02 15:04:05", createdAt); e == nil {
-		conv.CreatedAt = t
-	} else {
-		conv.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-	}
-	if t, e := time.Parse("2006-01-02 15:04:05.999999999-07:00", updatedAt); e == nil {
-		conv.UpdatedAt = t
-	} else if t, e := time.Parse("2006-01-02 15:04:05", updatedAt); e == nil {
-		conv.UpdatedAt = t
-	} else {
-		conv.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
-	}
+	conv.CreatedAt = sqltime.Parse(createdAt)
+	conv.UpdatedAt = sqltime.Parse(updatedAt)
 	messages, err := db.GetMessages(conv.ID)
 	if err != nil {
 		return nil, fmt.Errorf("加载消息失败: %w", err)
@@ -207,13 +196,7 @@ func (db *DB) ListConversationsByWebshellConnectionID(connectionID string) ([]We
 		if err := rows.Scan(&item.ID, &item.Title, &updatedAt); err != nil {
 			continue
 		}
-		if t, e := time.Parse("2006-01-02 15:04:05.999999999-07:00", updatedAt); e == nil {
-			item.UpdatedAt = t
-		} else if t, e := time.Parse("2006-01-02 15:04:05", updatedAt); e == nil {
-			item.UpdatedAt = t
-		} else {
-			item.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
-		}
+		item.UpdatedAt = sqltime.Parse(updatedAt)
 		list = append(list, item)
 	}
 	return list, rows.Err()
@@ -266,22 +249,9 @@ func (db *DB) GetConversation(id string) (*Conversation, error) {
 	}
 
 	// 尝试多种时间格式解析
-	var err1, err2 error
-	conv.CreatedAt, err1 = time.Parse("2006-01-02 15:04:05.999999999-07:00", createdAt)
-	if err1 != nil {
-		conv.CreatedAt, err1 = time.Parse("2006-01-02 15:04:05", createdAt)
-	}
-	if err1 != nil {
-		conv.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-	}
+	conv.CreatedAt = sqltime.Parse(createdAt)
 
-	conv.UpdatedAt, err2 = time.Parse("2006-01-02 15:04:05.999999999-07:00", updatedAt)
-	if err2 != nil {
-		conv.UpdatedAt, err2 = time.Parse("2006-01-02 15:04:05", updatedAt)
-	}
-	if err2 != nil {
-		conv.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
-	}
+	conv.UpdatedAt = sqltime.Parse(updatedAt)
 
 	conv.Pinned = pinned != 0
 
@@ -360,22 +330,9 @@ func (db *DB) GetConversationLite(id string) (*Conversation, error) {
 	}
 
 	// 尝试多种时间格式解析
-	var err1, err2 error
-	conv.CreatedAt, err1 = time.Parse("2006-01-02 15:04:05.999999999-07:00", createdAt)
-	if err1 != nil {
-		conv.CreatedAt, err1 = time.Parse("2006-01-02 15:04:05", createdAt)
-	}
-	if err1 != nil {
-		conv.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-	}
+	conv.CreatedAt = sqltime.Parse(createdAt)
 
-	conv.UpdatedAt, err2 = time.Parse("2006-01-02 15:04:05.999999999-07:00", updatedAt)
-	if err2 != nil {
-		conv.UpdatedAt, err2 = time.Parse("2006-01-02 15:04:05", updatedAt)
-	}
-	if err2 != nil {
-		conv.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
-	}
+	conv.UpdatedAt = sqltime.Parse(updatedAt)
 
 	conv.Pinned = pinned != 0
 
@@ -619,21 +576,8 @@ func scanConversationRows(rows *sql.Rows) ([]*Conversation, error) {
 		if agentMode.Valid {
 			conv.AgentMode = normalizeConversationAgentMode(agentMode.String)
 		}
-		var err1, err2 error
-		conv.CreatedAt, err1 = time.Parse("2006-01-02 15:04:05.999999999-07:00", createdAt)
-		if err1 != nil {
-			conv.CreatedAt, err1 = time.Parse("2006-01-02 15:04:05", createdAt)
-		}
-		if err1 != nil {
-			conv.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-		}
-		conv.UpdatedAt, err2 = time.Parse("2006-01-02 15:04:05.999999999-07:00", updatedAt)
-		if err2 != nil {
-			conv.UpdatedAt, err2 = time.Parse("2006-01-02 15:04:05", updatedAt)
-		}
-		if err2 != nil {
-			conv.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
-		}
+		conv.CreatedAt = sqltime.Parse(createdAt)
+		conv.UpdatedAt = sqltime.Parse(updatedAt)
 		conv.Pinned = pinned != 0
 		conversations = append(conversations, &conv)
 	}
@@ -996,25 +940,11 @@ func (db *DB) GetMessages(conversationID string) ([]Message, error) {
 			msg.ReasoningContent = reasoning.String
 		}
 
-		// 尝试多种时间格式解析
-		var err error
-		msg.CreatedAt, err = time.Parse("2006-01-02 15:04:05.999999999-07:00", createdAt)
-		if err != nil {
-			msg.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
-		}
-		if err != nil {
-			msg.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-		}
+		msg.CreatedAt = sqltime.Parse(createdAt)
 
 		// updated_at 兼容老库：字段不存在/为空时回退为 created_at
 		if updatedAt.Valid && strings.TrimSpace(updatedAt.String) != "" {
-			msg.UpdatedAt, err = time.Parse("2006-01-02 15:04:05.999999999-07:00", updatedAt.String)
-			if err != nil {
-				msg.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt.String)
-			}
-			if err != nil {
-				msg.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
-			}
+			msg.UpdatedAt = sqltime.Parse(updatedAt.String)
 		}
 		if msg.UpdatedAt.IsZero() {
 			msg.UpdatedAt = msg.CreatedAt
@@ -1055,23 +985,10 @@ func (db *DB) GetMessagesLite(conversationID string) ([]Message, error) {
 			return nil, fmt.Errorf("扫描消息失败: %w", err)
 		}
 
-		var err error
-		msg.CreatedAt, err = time.Parse("2006-01-02 15:04:05.999999999-07:00", createdAt)
-		if err != nil {
-			msg.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
-		}
-		if err != nil {
-			msg.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-		}
+		msg.CreatedAt = sqltime.Parse(createdAt)
 
 		if updatedAt.Valid && strings.TrimSpace(updatedAt.String) != "" {
-			msg.UpdatedAt, err = time.Parse("2006-01-02 15:04:05.999999999-07:00", updatedAt.String)
-			if err != nil {
-				msg.UpdatedAt, err = time.Parse("2006-01-02 15:04:05", updatedAt.String)
-			}
-			if err != nil {
-				msg.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt.String)
-			}
+			msg.UpdatedAt = sqltime.Parse(updatedAt.String)
 		}
 		if msg.UpdatedAt.IsZero() {
 			msg.UpdatedAt = msg.CreatedAt
@@ -1358,15 +1275,7 @@ func (db *DB) GetProcessDetails(messageID string) ([]ProcessDetail, error) {
 			return nil, fmt.Errorf("扫描过程详情失败: %w", err)
 		}
 
-		// 尝试多种时间格式解析
-		var err error
-		detail.CreatedAt, err = time.Parse("2006-01-02 15:04:05.999999999-07:00", createdAt)
-		if err != nil {
-			detail.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
-		}
-		if err != nil {
-			detail.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-		}
+		detail.CreatedAt = sqltime.Parse(createdAt)
 
 		details = append(details, detail)
 	}
@@ -1386,14 +1295,7 @@ func (db *DB) GetProcessDetailByID(id string) (*ProcessDetail, error) {
 		return nil, fmt.Errorf("查询过程详情失败: %w", err)
 	}
 
-	var parseErr error
-	detail.CreatedAt, parseErr = time.Parse("2006-01-02 15:04:05.999999999-07:00", createdAt)
-	if parseErr != nil {
-		detail.CreatedAt, parseErr = time.Parse("2006-01-02 15:04:05", createdAt)
-	}
-	if parseErr != nil {
-		detail.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-	}
+	detail.CreatedAt = sqltime.Parse(createdAt)
 	return &detail, nil
 }
 
@@ -1756,14 +1658,7 @@ func (db *DB) GetProcessDetailsPage(messageID string, limit, offset int) ([]Proc
 			return nil, 0, fmt.Errorf("扫描过程详情失败: %w", err)
 		}
 
-		var parseErr error
-		detail.CreatedAt, parseErr = time.Parse("2006-01-02 15:04:05.999999999-07:00", createdAt)
-		if parseErr != nil {
-			detail.CreatedAt, parseErr = time.Parse("2006-01-02 15:04:05", createdAt)
-		}
-		if parseErr != nil {
-			detail.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-		}
+		detail.CreatedAt = sqltime.Parse(createdAt)
 
 		details = append(details, detail)
 	}
@@ -1821,15 +1716,7 @@ func (db *DB) GetProcessDetailsByConversation(conversationID string) (map[string
 			return nil, fmt.Errorf("扫描过程详情失败: %w", err)
 		}
 
-		// 尝试多种时间格式解析
-		var err error
-		detail.CreatedAt, err = time.Parse("2006-01-02 15:04:05.999999999-07:00", createdAt)
-		if err != nil {
-			detail.CreatedAt, err = time.Parse("2006-01-02 15:04:05", createdAt)
-		}
-		if err != nil {
-			detail.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-		}
+		detail.CreatedAt = sqltime.Parse(createdAt)
 
 		detailsMap[detail.MessageID] = append(detailsMap[detail.MessageID], detail)
 	}

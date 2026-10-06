@@ -8,7 +8,10 @@
 // because it is determined by what that site already binds.
 package sqltime
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // UTC is the canonical text form of an instant: SQLite reads these back the same way regardless of the
 // machine's local zone.
@@ -30,4 +33,55 @@ func Seconds(column string) string {
 // than as a NULL the scan target cannot hold.
 func SecondsOrNull(column string) string {
 	return "COALESCE(" + Seconds(column) + ", 0)"
+}
+
+// layouts are the text forms a SQLite DATETIME column has been written in. UTC and the driver's own
+// RFC3339 output come first because that is what the current build writes; the space-separated family
+// is what older builds and `datetime('now')` produce, with and without an offset and with a variable
+// number of fractional digits.
+//
+// A `.999999999` fractional layout also parses shorter fractions, and a space in the layout also matches
+// the `T` separator - so this list deliberately overlaps: dropping any single entry still parses every
+// known stored form (verified, all twelve ways round). A generous reader is the point; a legacy base may
+// hold any of them, and the cost of a redundant attempt is one failed comparison.
+var layouts = []string{
+	time.RFC3339Nano,
+	time.RFC3339,
+	"2006-01-02 15:04:05.999999999-07:00",
+	"2006-01-02 15:04:05.999999999Z07:00",
+	"2006-01-02T15:04:05.999999999-07:00",
+	"2006-01-02T15:04:05.999999999Z07:00",
+	"2006-01-02 15:04:05-07:00",
+	"2006-01-02T15:04:05-07:00",
+	"2006-01-02 15:04:05.999999999",
+	"2006-01-02T15:04:05.999999999",
+	"2006-01-02 15:04:05",
+	"2006-01-02T15:04:05",
+}
+
+// Parse reads one column value back into an instant, and answers the zero time for anything in none of
+// those forms.
+//
+// Before this function existed the same column was read by a dozen local parsers, each accepting a
+// different subset - so whether a row carried a real time or a zero one depended on which code path
+// happened to read it. One accepted set means one answer.
+func Parse(text string) time.Time {
+	t, _ := ParseOK(text)
+	return t
+}
+
+// ParseOK is Parse for the callers that have to distinguish "no instant" from "the zero instant":
+// the asset scanner returns whether a value parsed at all, and a monitor summary leaves a field unset
+// rather than setting it to year one.
+func ParseOK(text string) (time.Time, bool) {
+	s := strings.TrimSpace(text)
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"cyberstrike-ai/internal/mcp"
+	"cyberstrike-ai/internal/sqltime"
 
 	"go.uber.org/zap"
 )
@@ -332,11 +333,7 @@ func (db *DB) LoadToolStatsSummary(topN int) (*ToolStatsSummaryResult, error) {
 		return nil, err
 	}
 	if lastCallRaw.Valid && strings.TrimSpace(lastCallRaw.String) != "" {
-		if t, parseErr := time.Parse(time.RFC3339Nano, lastCallRaw.String); parseErr == nil {
-			result.Summary.LastCallTime = &t
-		} else if t, parseErr := time.Parse("2006-01-02 15:04:05.999999999-07:00", lastCallRaw.String); parseErr == nil {
-			result.Summary.LastCallTime = &t
-		} else if t, parseErr := time.Parse("2006-01-02 15:04:05", lastCallRaw.String); parseErr == nil {
+		if t, parsed := sqltime.ParseOK(lastCallRaw.String); parsed {
 			result.Summary.LastCallTime = &t
 		}
 	}

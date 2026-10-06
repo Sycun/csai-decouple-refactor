@@ -2,6 +2,7 @@ package knowledge
 
 import (
 	"cyberstrike-ai/internal/contentpolicy"
+	"cyberstrike-ai/internal/sqltime"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -527,31 +528,13 @@ func (m *Manager) GetRetrievalLogs(conversationID, messageID string, limit int) 
 		createdAt := entry.CreatedAt
 		itemsJSON := sql.NullString{String: entry.ItemsJSON, Valid: entry.ItemsJSON != ""}
 
-		// 解析时间 - 支持多种格式
-		var err error
-		timeFormats := []string{
-			"2006-01-02 15:04:05.999999999-07:00",
-			"2006-01-02 15:04:05.999999999",
-			"2006-01-02T15:04:05.999999999Z07:00",
-			"2006-01-02T15:04:05Z",
-			"2006-01-02 15:04:05",
-			time.RFC3339,
-			time.RFC3339Nano,
-		}
-
-		for _, format := range timeFormats {
-			log.CreatedAt, err = time.Parse(format, createdAt)
-			if err == nil && !log.CreatedAt.IsZero() {
-				break
-			}
-		}
+		// 解析时间 - 可接受的写法由 internal/sqltime 统一持有
+		createdAtValue, parsed := sqltime.ParseOK(createdAt)
+		log.CreatedAt = createdAtValue
 
 		// 如果所有格式都失败，记录警告但继续处理
-		if log.CreatedAt.IsZero() {
-			m.logger.Warn("解析检索日志时间失败",
-				zap.String("timeStr", createdAt),
-				zap.Error(err),
-			)
+		if !parsed || log.CreatedAt.IsZero() {
+			m.logger.Warn("解析检索日志时间失败", zap.String("timeStr", createdAt))
 			// 使用当前时间作为fallback
 			log.CreatedAt = time.Now()
 		}
@@ -579,33 +562,11 @@ func (m *Manager) DeleteRetrievalLog(id string) error {
 	return nil
 }
 
-// itemTimeLayouts are every format knowledge rows have been written in over the releases of this
-// table; the loop over them used to be copied into each query function.
-var itemTimeLayouts = []string{
-	"2006-01-02 15:04:05.999999999-07:00",
-	"2006-01-02 15:04:05.999999999",
-	"2006-01-02T15:04:05.999999999Z07:00",
-	"2006-01-02T15:04:05Z",
-	"2006-01-02 15:04:05",
-	time.RFC3339,
-	time.RFC3339Nano,
-}
-
 // parseItemTimes reads two stored timestamps, falling back to created_at when updated_at is absent.
+// Which text forms count as a stored instant is owned by internal/sqltime.
 func parseItemTimes(createdAt, updatedAt string) (time.Time, time.Time) {
-	var created, updated time.Time
-	for _, format := range itemTimeLayouts {
-		if parsed, err := time.Parse(format, createdAt); err == nil && !parsed.IsZero() {
-			created = parsed
-			break
-		}
-	}
-	for _, format := range itemTimeLayouts {
-		if parsed, err := time.Parse(format, updatedAt); err == nil && !parsed.IsZero() {
-			updated = parsed
-			break
-		}
-	}
+	created := sqltime.Parse(createdAt)
+	updated := sqltime.Parse(updatedAt)
 	if updated.IsZero() && !created.IsZero() {
 		updated = created
 	}

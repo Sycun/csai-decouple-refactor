@@ -1,7 +1,9 @@
 package store
 
 import (
+	"cyberstrike-ai/internal/sqltime"
 	"database/sql"
+
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -585,20 +587,10 @@ LIMIT ?`, args...)
 	return out, nil
 }
 
-// parseUsageTime accepts the instants this column has been written in over the releases. A value in
-// none of them reads as the zero time, which the dashboard shows as "today" rather than dropping the
-// row - the same reading the API has always returned.
+// parseUsageTime reads the two instant columns of this table. A value in none of the accepted forms
+// reads as the zero time, which the dashboard shows as "today" rather than dropping the row - the same
+// reading the API has always returned, and the reason the accepted forms live in internal/sqltime
+// rather than beside the query that happens to need them.
 func parseUsageTime(s string) time.Time {
-	for _, layout := range []string{
-		"2006-01-02 15:04:05.999999999-07:00",
-		"2006-01-02 15:04:05.999999-07:00",
-		"2006-01-02 15:04:05",
-		time.RFC3339Nano,
-		time.RFC3339,
-	} {
-		if t, err := time.Parse(layout, strings.TrimSpace(s)); err == nil {
-			return t
-		}
-	}
-	return time.Time{}
+	return sqltime.Parse(s)
 }
