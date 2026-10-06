@@ -82,7 +82,11 @@ import (
 // one-line delegations are gone, BatchTaskManager holds *store.BatchTasks as its own field, and the
 // audit "is this queue still there" lookup went to the queue's owner the same way the finding and
 // WebShell lookups did - which is why the drop is 22 rather than 0.
-const dbMethodCeiling = 191
+// 189: the findings table's own schema left the data layer too - the CREATE TABLE, its seven indexes,
+// the seven late columns and the conversation-key rebuild that used to run at start-up. The two
+// migration methods are gone; EnsureSchema now runs from store.Vulnerabilities at the same boot
+// position, still after conversations because of the foreign key onto it.
+const dbMethodCeiling = 189
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

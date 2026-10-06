@@ -2884,6 +2884,54 @@ nil ids 清空该列；过程详情**原地续写不新增行**（`COUNT(*)==1`�
 全仓测试函数 **1582**；`writeLedger` 34 张表、**`writeDebt` 0 条**；
 `gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿。
 
+### P6 第三十六刀 —— 漏洞表**自己的 schema** 也交给表的 owner（`*DB` 上的迁移函数少两个）
+
+`store.Vulnerabilities` 早就认领了 `vulnerabilities` 的写，但**建表语句、7 条索引、7 个后补列、
+以及"删除对话时保留漏洞"那次表重建还留在 `database.go` 的启动里**——这正是索引归属门禁描述过的
+"半个主人"。这一刀把它补齐，新文件 `internal/store/vulnerability_schema.go`：
+`EnsureSchema`（建表 + 索引）、`MigrateLateColumns`（7 列，**逐列都尝试、失败汇总成一条错误**，
+与原先"每列记一条 warn 并继续"等价且信息不减）、`MigrateConversationFK`（表重建：新表 → 复制
+（`COALESCE` 把旧的 NULL 文本列落成 `''`）→ DROP → RENAME → 同事务重建 7 条索引，返回"是否真的重建了"，
+启动那一侧照原样打那条 Info），外键形状探针导出成
+`store.ConversationFKOnDeleteSetNull`（数据层那条回归测试继续用它判同一条事实）。
+**水位 191 → 189**（`migrateVulnerabilitiesTable` / `migrateVulnerabilitiesConversationFK` 两个方法没了），
+`database.go` 里的 `CREATE INDEX` 行数从 39 降到 **25**。
+
+**门禁跟着收口，两道探针各自验红**：boot 清单新增 `NewVulnerabilities` 一条（锚点
+`createConversationsTable`，理由就是那条外键）；`mustNotChangeSQL: "vulnerabilities"` 这条判据
+**当场抓到一处真实重复**——`migrateProjectsTable` 里还有一句
+`ALTER TABLE vulnerabilities ADD COLUMN project_id`，而 project_id 已在表 owner 的 CREATE TABLE
+与 `MigrateLateColumns` 里，于是删掉那一句（`conversations` 那条留着：它的表还没有主人）。
+① 把那句 ALTER 塞回去 → `the boot file still runs "ALTER TABLE vulnerabilities" against tables
+NewVulnerabilities owns`；② 把启动那行 `EnsureSchema()` 换成一句无关 Exec →
+`NewVulnerabilities: EnsureSchema is called 0 times on the boot path, want exactly 1`；各自撤回复绿。
+两条旧锚点（`NewBatchTasks` / `NewWebshell` 钉的 `createVulnerabilitiesTable`）随字面量一起消失，
+按"仍在原位内联建的那张表"改钉 `createProjectsTable` 并写清理由——**锚点失效必须报错而不是静默通过**，
+这一条本来就是该门禁的判据（`the ordering anchor … was not found … which is a failure rather than a pass`）。
+
+**写账本多了一行**：表重建用的暂存表 `vulnerabilities_new` 也是本包创建、本包写入的表，
+所以进 `writeLedger`（**34 → 35**），而不是让它变成"账本外的写"。
+
+**一条门禁逼出来的改写（语义不变）**：`MigrateLateColumns` 最初照抄原函数形状
+（`err := QueryRow(…).Scan(&count)` 之后 `if err != nil { … continue }`），被
+`TestScanErrorsAreNotAnsweredByDroppingRows` 判成"扫描失败就当这一行不存在"——
+这里它其实是在探测 schema 而不是在遍历结果行，但**门禁按形状判、不按意图判**。
+改法是把这个探测抽成 `columnCount(table, column)`（返回 `(int, error)`）并用 `isDuplicateColumnError`
+命名"列已存在"这条正常答案：`continue` 前面不再是一次 `.Scan(` 调用，形状合法、控制流一字未改。
+这与 WebShell 的 `MigrateConnectionsTable` 当初被同一条门禁逼出来的改法是同一个。
+
+**新测试** `internal/store/vulnerability_schema_test.go` **3 个用例**（真库）：
+建表 + 7 条索引逐一数 + 二次幂等 + **全新库不需要补列**（逐列断言已在 CREATE TABLE 里）；
+**老形状修复**——用第一版发布的 DDL（缺 7 列、外键没有 `ON DELETE SET NULL`）建库、塞一行数据，
+补列跑两遍（第二遍全是 duplicate）→ 重建返回 true、`PRAGMA foreign_key_list` 的 onDelete 变成 SET NULL、
+**那一行数据活下来**、7 条索引一条没少、再跑一次返回 `(false, nil)`；
+无连接时 4 个 schema 方法一律拒（含 `MigrateConversationFK` 返回 `(false, err)`），
+外加"空库上探针答 `(false, nil)` 而不是报错"这条启动依赖。
+
+**账（实测）**：`*database.DB` **189**；`internal/store` 包内测试 **206 → 209**；全仓测试函数 **1585**；
+`writeLedger` 35 张表、`writeDebt` 仍 **0**；`gofmt -l` 空、`go build ./...`、`go vet ./...`、
+`go test -count=1 ./...` 全绿。
+
 ### 明确还没做（不假装完成）
 
 - P6 剩余：数据层按域切 Store（已落地 HITL/会话(含 messages 内容写回)/通知已读/漏洞最近条目/执行失败条目

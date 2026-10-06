@@ -207,6 +207,7 @@ var writeLedger = map[string][]string{
 	"project_fact_edges":                {"facts_edges.go"},
 	"webshell_connections":              {"webshell.go"},
 	"webshell_connection_states":        {"webshell.go"},
+	"vulnerabilities_new":               {"vulnerability_schema.go"},
 	"assets":                            {"assets.go"},
 	"batch_task_queues":                 {"batch_task.go"},
 	"batch_tasks":                       {"batch_task.go"},
@@ -287,15 +288,15 @@ func TestStoreWritesOnlyTablesItOwns(t *testing.T) {
 	// The ledger size is exact while the scan's coverage is a floor: this package grows as domains are
 	// extracted, but every added table has to be an intentional edit with a file behind it. A floor on
 	// the ledger would let a failing offender be silenced by listing the table it names.
-	if len(writeLedger) != 34 {
-		t.Fatalf("the write ledger lists %d tables, want exactly 34 - measured 2026-10-06 when the blackboard "+
+	if len(writeLedger) != 35 {
+		t.Fatalf("the write ledger lists %d tables, want exactly 35 - measured 2026-10-06 when the blackboard "+
 			"arrived: %d statements over %d tables from %d files", len(writeLedger), statements, distinct, len(writes))
 	}
 	if len(writes) < 20 {
 		t.Fatalf("write ledger covers %d files, want at least 20 - the scan has gone blind", len(writes))
 	}
-	if distinct < 34 {
-		t.Fatalf("write ledger covers %d tables, want at least 34 - the scan has gone blind", distinct)
+	if distinct < 35 {
+		t.Fatalf("write ledger covers %d tables, want at least 35 - the scan has gone blind", distinct)
 	}
 }
 
@@ -330,8 +331,8 @@ func TestNoLedgerTableIsWrittenByADebtFile(t *testing.T) {
 			"one writer since 2026-10-06, so a new line here is a second writer being approved. Hand the "+
 			"statement to the table's owner instead.", len(writeDebt), entries)
 	}
-	if len(writeLedger) < 34 {
-		t.Fatalf("the ledger lists %d tables (floor 34): the scan has gone blind, which would make an empty debt list meaningless", len(writeLedger))
+	if len(writeLedger) < 35 {
+		t.Fatalf("the ledger lists %d tables (floor 35): the scan has gone blind, which would make an empty debt list meaningless", len(writeLedger))
 	}
 }
 

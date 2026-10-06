@@ -281,29 +281,7 @@ func (db *DB) initTables() error {
 	// 黑板两张表（project_facts 与 project_fact_edges）的 DDL 与六条索引都在 store.Facts 的 EnsureSchema 里。
 
 	// 创建漏洞表
-	createVulnerabilitiesTable := `
-	CREATE TABLE IF NOT EXISTS vulnerabilities (
-		id TEXT PRIMARY KEY,
-		conversation_id TEXT,
-		conversation_tag TEXT,
-		task_tag TEXT,
-		title TEXT NOT NULL,
-		description TEXT,
-		severity TEXT NOT NULL,
-		status TEXT NOT NULL DEFAULT 'open',
-		vulnerability_type TEXT,
-		target TEXT,
-		preconditions TEXT,
-		reproduction_steps TEXT,
-		evidence TEXT,
-		impact TEXT,
-		recommendation TEXT,
-		retest_notes TEXT,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		project_id TEXT,
-		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
-	);`
+	// vulnerabilities 表的 DDL、七条索引与七个后补列都在 store.Vulnerabilities 里。
 
 	// assets 表的 DDL、十三个后补列与十条索引都在 store.Assets 的 EnsureSchema 里，按那个顺序自建。
 	// 这一段索引不再留在这里：全局建索引的那一步跑在所有补列之后，看起来更晚更安全，
@@ -435,16 +413,9 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_tool_executions_start_time ON tool_executions(start_time);
 	CREATE INDEX IF NOT EXISTS idx_tool_executions_status ON tool_executions(status);
 	CREATE INDEX IF NOT EXISTS idx_conversations_pinned ON conversations(pinned);
-	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_conversation_id ON vulnerabilities(conversation_id);
-	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_conversation_tag ON vulnerabilities(conversation_tag);
-	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_task_tag ON vulnerabilities(task_tag);
-	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_severity ON vulnerabilities(severity);
-	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_status ON vulnerabilities(status);
-	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_created_at ON vulnerabilities(created_at);
 	CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 	CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at);
 	CREATE INDEX IF NOT EXISTS idx_conversations_project_id ON conversations(project_id);
-	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_project_id ON vulnerabilities(project_id);
 	CREATE INDEX IF NOT EXISTS idx_c2_listeners_created_at ON c2_listeners(created_at);
 	CREATE INDEX IF NOT EXISTS idx_c2_listeners_project_id ON c2_listeners(project_id);
 	CREATE INDEX IF NOT EXISTS idx_c2_listeners_status ON c2_listeners(status);
@@ -498,7 +469,8 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("创建黑板表失败: %w", err)
 	}
 
-	if _, err := db.Exec(createVulnerabilitiesTable); err != nil {
+	// 外键指向 conversations，所以这一步不能提前到它之前。
+	if err := store.NewVulnerabilities(db.DB, nil).EnsureSchema(); err != nil {
 		return fmt.Errorf("创建vulnerabilities表失败: %w", err)
 	}
 	// 外键指向 projects，所以顺序不能提前到它之前。建表、补列、建索引三步的先后由 store 自己保证。
@@ -566,12 +538,17 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("创建批量任务索引失败: %w", err)
 	}
 
-	if err := db.migrateVulnerabilitiesTable(); err != nil {
+	if err := store.NewVulnerabilities(db.DB, nil).MigrateLateColumns(); err != nil {
 		db.logger.Warn("迁移vulnerabilities表失败", zap.Error(err))
 		// 不返回错误，允许继续运行
 	}
-	if err := db.migrateVulnerabilitiesConversationFK(); err != nil {
-		db.logger.Warn("迁移vulnerabilities会话外键失败", zap.Error(err))
+	rebuilt, fkErr := store.NewVulnerabilities(db.DB, nil).MigrateConversationFK()
+	if fkErr != nil {
+		db.logger.Warn("迁移vulnerabilities会话外键失败", zap.Error(fkErr))
+	}
+	if rebuilt {
+		// 原来这句 Info 由迁移函数自己打；现在由启动这一侧打，内容不变。
+		db.logger.Info("vulnerabilities 表已迁移：删除对话时保留漏洞记录")
 	}
 
 	if err := db.migrateProjectsTable(); err != nil {
@@ -780,6 +757,9 @@ func (db *DB) migrateConversationsTable() error {
 }
 
 // migrateProjectsTable 迁移 projects / conversations / vulnerabilities 的项目关联字段。
+// migrateProjectsTable backfills the project stamp on the tables whose schema the data layer still
+// owns. `vulnerabilities` is deliberately absent: project_id is in store.Vulnerabilities' own CREATE
+// TABLE and in its MigrateLateColumns, and the boot gate refuses an ALTER for a table that has an owner.
 func (db *DB) migrateProjectsTable() error {
 	for _, col := range []struct {
 		table string
@@ -787,7 +767,6 @@ func (db *DB) migrateProjectsTable() error {
 		stmt  string
 	}{
 		{"conversations", "project_id", "ALTER TABLE conversations ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE SET NULL"},
-		{"vulnerabilities", "project_id", "ALTER TABLE vulnerabilities ADD COLUMN project_id TEXT"},
 	} {
 		var count int
 		err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?", col.table, col.name).Scan(&count)
@@ -813,158 +792,6 @@ func (db *DB) migrateProjectsTable() error {
 func (db *DB) dropProjectFactVersionsTable() error {
 	_, err := db.Exec(`DROP TABLE IF EXISTS project_fact_versions`)
 	return err
-}
-
-// migrateVulnerabilitiesConversationFK 将 vulnerabilities.conversation_id 外键改为 ON DELETE SET NULL，删除对话时保留漏洞记录。
-func (db *DB) migrateVulnerabilitiesConversationFK() error {
-	ok, err := vulnerabilitiesConversationFKOnDeleteSetNull(db.DB)
-	if err != nil {
-		return err
-	}
-	if ok {
-		return nil
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("开启事务失败: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	const createNew = `
-	CREATE TABLE vulnerabilities_new (
-		id TEXT PRIMARY KEY,
-		conversation_id TEXT,
-		conversation_tag TEXT,
-		task_tag TEXT,
-		title TEXT NOT NULL,
-		description TEXT,
-		severity TEXT NOT NULL,
-		status TEXT NOT NULL DEFAULT 'open',
-		vulnerability_type TEXT,
-		target TEXT,
-		preconditions TEXT,
-		reproduction_steps TEXT,
-		evidence TEXT,
-		impact TEXT,
-		recommendation TEXT,
-		retest_notes TEXT,
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		project_id TEXT,
-		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
-	);`
-	if _, err := tx.Exec(createNew); err != nil {
-		return fmt.Errorf("创建 vulnerabilities_new 失败: %w", err)
-	}
-
-	const copyRows = `
-	INSERT INTO vulnerabilities_new (
-		id, conversation_id, conversation_tag, task_tag, title, description,
-		severity, status, vulnerability_type, target, preconditions, reproduction_steps,
-		evidence, impact, recommendation, retest_notes,
-		created_at, updated_at, project_id
-	)
-	SELECT
-		id, conversation_id, conversation_tag, task_tag, title, description,
-		severity, status, vulnerability_type, target,
-		COALESCE(preconditions, ''), COALESCE(reproduction_steps, ''),
-		COALESCE(evidence, ''), impact, recommendation, COALESCE(retest_notes, ''),
-		created_at, updated_at, project_id
-	FROM vulnerabilities;`
-	if _, err := tx.Exec(copyRows); err != nil {
-		return fmt.Errorf("复制 vulnerabilities 数据失败: %w", err)
-	}
-	if _, err := tx.Exec(`DROP TABLE vulnerabilities`); err != nil {
-		return fmt.Errorf("删除旧 vulnerabilities 表失败: %w", err)
-	}
-	if _, err := tx.Exec(`ALTER TABLE vulnerabilities_new RENAME TO vulnerabilities`); err != nil {
-		return fmt.Errorf("重命名 vulnerabilities 表失败: %w", err)
-	}
-
-	indexes := []string{
-		`CREATE INDEX IF NOT EXISTS idx_vulnerabilities_conversation_id ON vulnerabilities(conversation_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_vulnerabilities_conversation_tag ON vulnerabilities(conversation_tag)`,
-		`CREATE INDEX IF NOT EXISTS idx_vulnerabilities_task_tag ON vulnerabilities(task_tag)`,
-		`CREATE INDEX IF NOT EXISTS idx_vulnerabilities_severity ON vulnerabilities(severity)`,
-		`CREATE INDEX IF NOT EXISTS idx_vulnerabilities_status ON vulnerabilities(status)`,
-		`CREATE INDEX IF NOT EXISTS idx_vulnerabilities_created_at ON vulnerabilities(created_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_vulnerabilities_project_id ON vulnerabilities(project_id)`,
-	}
-	for _, stmt := range indexes {
-		if _, err := tx.Exec(stmt); err != nil {
-			return fmt.Errorf("重建 vulnerabilities 索引失败: %w", err)
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("提交 vulnerabilities 外键迁移失败: %w", err)
-	}
-	db.logger.Info("vulnerabilities 表已迁移：删除对话时保留漏洞记录")
-	return nil
-}
-
-func vulnerabilitiesConversationFKOnDeleteSetNull(db *sql.DB) (bool, error) {
-	rows, err := db.Query(`PRAGMA foreign_key_list(vulnerabilities)`)
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-
-	found := false
-	for rows.Next() {
-		var id, seq int
-		var table, from, to, onUpdate, onDelete, match string
-		if err := rows.Scan(&id, &seq, &table, &from, &to, &onUpdate, &onDelete, &match); err != nil {
-			return false, err
-		}
-		if from == "conversation_id" {
-			found = true
-			if !strings.EqualFold(onDelete, "SET NULL") {
-				return false, nil
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return false, err
-	}
-	return found, nil
-}
-
-// migrateVulnerabilitiesTable 迁移 vulnerabilities 表，补充标签字段
-func (db *DB) migrateVulnerabilitiesTable() error {
-	columns := []struct {
-		name string
-		stmt string
-	}{
-		{name: "conversation_tag", stmt: "ALTER TABLE vulnerabilities ADD COLUMN conversation_tag TEXT"},
-		{name: "task_tag", stmt: "ALTER TABLE vulnerabilities ADD COLUMN task_tag TEXT"},
-		{name: "project_id", stmt: "ALTER TABLE vulnerabilities ADD COLUMN project_id TEXT"},
-		{name: "preconditions", stmt: "ALTER TABLE vulnerabilities ADD COLUMN preconditions TEXT"},
-		{name: "reproduction_steps", stmt: "ALTER TABLE vulnerabilities ADD COLUMN reproduction_steps TEXT"},
-		{name: "evidence", stmt: "ALTER TABLE vulnerabilities ADD COLUMN evidence TEXT"},
-		{name: "retest_notes", stmt: "ALTER TABLE vulnerabilities ADD COLUMN retest_notes TEXT"},
-	}
-
-	for _, col := range columns {
-		var count int
-		err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('vulnerabilities') WHERE name=?", col.name).Scan(&count)
-		if err != nil {
-			if _, addErr := db.Exec(col.stmt); addErr != nil {
-				errMsg := strings.ToLower(addErr.Error())
-				if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-					db.logger.Warn("添加vulnerabilities字段失败", zap.String("field", col.name), zap.Error(addErr))
-				}
-			}
-			continue
-		}
-		if count == 0 {
-			if _, addErr := db.Exec(col.stmt); addErr != nil {
-				db.logger.Warn("添加vulnerabilities字段失败", zap.String("field", col.name), zap.Error(addErr))
-			}
-		}
-	}
-	return nil
 }
 
 // migrateWebshellConnectionsTable 迁移 webshell_connections 表，补充新字段

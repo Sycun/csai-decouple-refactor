@@ -66,6 +66,13 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 			mustNotChangeSQL: "workflow_",
 		},
 		{
+			storeConstructor: "NewVulnerabilities",
+			tablePrefix:      "vulnerabilit",
+			anchorCall:       "createConversationsTable",
+			anchorReason:     "vulnerabilities.conversation_id has a foreign key onto conversations, so the table cannot be created before it",
+			mustNotChangeSQL: "vulnerabilities",
+		},
+		{
 			storeConstructor: "NewAssets",
 			tablePrefix:      "assets",
 			anchorCall:       "createProjectsTable",
@@ -75,14 +82,14 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 		{
 			storeConstructor: "NewBatchTasks",
 			tablePrefix:      "batch_task",
-			anchorCall:       "createVulnerabilitiesTable",
-			anchorReason:     "the two tables are built where the two CREATE statements used to run, and batch_tasks cascades off batch_task_queues inside the same EnsureSchema",
+			anchorCall:       "createProjectsTable",
+			anchorReason:     "the batch tables are still created in the block right after the projects / blackboard / findings creates - the findings table moved into its own store, so the last inline CREATE before them is the anchor",
 			mustNotChangeSQL: "batch_task",
 		},
 		{
 			storeConstructor: "NewWebshell",
 			tablePrefix:      "webshell_connection",
-			anchorCall:       "createVulnerabilitiesTable",
+			anchorCall:       "createProjectsTable",
 			anchorReason:     "WebShell 的两张表原本排在这一批内联建表的最后；批量任务两张表现在也归自己的 store 建，所以锚点退到仍然内联建的那一张，钉住的还是同一个位置",
 			mustNotChangeSQL: "webshell_connection",
 		},
