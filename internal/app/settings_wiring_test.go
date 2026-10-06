@@ -39,7 +39,12 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	chatUploadSchema := 0
 	auditLogsSchema := 0
 	knowledgeRetrievalSchema := 0
+	modelTokenUsageSchema := 0
 	auditSchemaOffset := -1
+	usageSchemaOffset := -1
+	usageSchemaFile := ""
+	newDBOffset := -1
+	newDBFile := ""
 	auditServiceOffset := -1
 	pluginCalls := 0
 	pluginWithoutToolLayer := 0
@@ -83,6 +88,13 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 						mcpProvisioned++
 					case "ensureKnowledgeRetrievalSchema":
 						knowledgeRetrievalSchema++
+					case "ensureModelTokenUsageSchema":
+						// model_token_usage left the data layer's start-up sweep, and its history
+						// carry-over reads process_details: called before the main database exists,
+						// it fails with "no such table" and the usage page stays empty forever.
+						modelTokenUsageSchema++
+						usageSchemaOffset = fset.Position(call.Pos()).Offset
+						usageSchemaFile = fset.Position(call.Pos()).Filename
 					case "ensureAuditLogsSchema":
 						auditLogsSchema++
 						auditSchemaOffset = fset.Position(call.Pos()).Offset
@@ -102,6 +114,16 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 				return true
 			}
 			switch sel.Sel.Name {
+			case "NewDB":
+				// The main connection: every table it used to create itself now gets ensured after
+				// this point, so the earliest call is the ordering anchor.
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "database" {
+					offset := fset.Position(call.Pos()).Offset
+					if newDBOffset < 0 || offset < newDBOffset {
+						newDBOffset = offset
+						newDBFile = fset.Position(call.Pos()).Filename
+					}
+				}
 			case "NewService":
 				// The audit service purges expired records while it is constructed, so the store's
 				// own EnsureSchema has to have run first: assembling it earlier is legal Go and shows
@@ -203,6 +225,19 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 			"(ensure at offset %d, audit.NewService at %d): the service purges expired records during "+
 			"construction, so on a fresh database it queries a table nobody made yet",
 			auditSchemaOffset, auditServiceOffset)
+	}
+	// Offsets are per-file, so the two calls only order against each other inside one file: an anchor
+	// picked up from another file would compare unrelated number spaces and could bless any placement.
+	if !(newDBOffset >= 0 && usageSchemaOffset > newDBOffset && usageSchemaFile == newDBFile) {
+		t.Fatalf("model_token_usage is not ensured after the main database exists (database.NewDB at "+
+			"offset %d, ensureModelTokenUsageSchema at %d): its history carry-over reads process_details, "+
+			"so running it earlier fails with \"no such table\" and the usage page stays empty",
+			newDBOffset, usageSchemaOffset)
+	}
+	if modelTokenUsageSchema < 1 {
+		t.Fatalf("ensureModelTokenUsageSchema is never called at boot: the table left the data layer's " +
+			"start-up sweep, so a fresh installation would write process details all day and lose every " +
+			"usage row to \"no such table: model_token_usage\"")
 	}
 	if knowledgeRetrievalSchema < 1 {
 		t.Fatalf("ensureKnowledgeRetrievalSchema is never called at boot: the table left the data " +

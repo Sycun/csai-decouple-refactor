@@ -20,9 +20,10 @@ import (
 // The map stays rather than the gate turning off, because a half-migrated table has to be listable
 // with a ceiling. Adding a file here is a review item; deleting one is progress.
 //
-// This axis being zero does not mean the SQL is gone: the same scan counts 448 statements still
-// written inside internal/database, which owns the schema-wide queries. Those are tracked by the
-// method ceiling in database_surface_ratchet_test.go, not here.
+// This axis being zero does not mean the SQL is gone: the same scan counts 429 statements still
+// written inside internal/database (87 inside internal/store), which own the schema-wide and the
+// per-domain queries. Those are tracked by the method ceiling in database_surface_ratchet_test.go,
+// not here.
 var rawSQLByFile = map[string]int{}
 
 // rawSQLReceiver matches an executing call through a database-shaped handle. It is deliberately

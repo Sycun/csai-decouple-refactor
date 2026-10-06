@@ -181,7 +181,6 @@ type ConversationStore interface {
 	FindNearestToolExecutionArguments(conversationID, toolName string, at time.Time, window time.Duration) (string, map[string]interface{}, error)
 	GetConversation(id string) (*Conversation, error)
 	GetConversationLite(id string) (*Conversation, error)
-	GetModelTokenUsageStats(filter ModelTokenUsageFilter) (*ModelTokenUsageStats, error)
 	GetProcessDetailByID(id string) (*ProcessDetail, error)
 	GetProcessDetailOffset(messageID, detailID string) (int, error)
 	GetProcessDetails(messageID string) ([]ProcessDetail, error)

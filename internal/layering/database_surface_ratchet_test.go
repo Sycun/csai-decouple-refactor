@@ -32,7 +32,10 @@ import (
 // migrateKnowledgeEmbeddingsColumns was deleted rather than relocated. That slice left the ceiling one
 // above the measurement, which a ratchet only mentions in a log line - so the descent trail below is
 // the record, and a number written here has to be re-measured rather than carried over.
-const dbMethodCeiling = 327
+// 327 -> 320: model_token_usage moved whole - two public reads, the upsert, the history backfill, the
+// timeline hook and the two private query helpers. The last two are why the drop is seven rather than
+// the four the method list shows: the counter counts every *DB receiver, exported or not.
+const dbMethodCeiling = 320
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

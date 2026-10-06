@@ -330,6 +330,21 @@ func ensureAuditLogsSchema(db *database.DB) error {
 	return store.NewAuditLogs(db.DB).EnsureSchema()
 }
 
+// ensureModelTokenUsageSchema creates model_token_usage through the store that owns it and carries
+// over the usage events written before the table existed. The carry-over walks process_details, so it
+// has to run after the timeline tables are there - which is why it belongs to start-up rather than to
+// the data layer's own init, where it used to sit.
+func ensureModelTokenUsageSchema(db *database.DB) error {
+	if db == nil {
+		return nil
+	}
+	usage := store.NewModelTokenUsage(db.DB)
+	if err := usage.EnsureSchema(); err != nil {
+		return err
+	}
+	return usage.BackfillFromProcessDetails()
+}
+
 // ensureKnowledgeRetrievalSchema creates knowledge_retrieval_logs through the store that owns it.
 func ensureKnowledgeRetrievalSchema(db *database.DB) error {
 	if db == nil {

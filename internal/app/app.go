@@ -131,6 +131,11 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	if err := ensureKnowledgeRetrievalSchema(db); err != nil {
 		log.Logger.Warn("初始化 knowledge_retrieval_logs 表失败", zap.Error(err))
 	}
+	// model_token_usage has foreign keys onto process_details/messages/conversations/projects, all
+	// just created; its history carry-over reads the timeline, so it runs right after the table.
+	if err := ensureModelTokenUsageSchema(db); err != nil {
+		log.Logger.Warn("初始化 model_token_usage 表失败", zap.Error(err))
+	}
 
 	// 认证管理器（数据库初始化后挂载 RBAC）
 	authManager := security.NewAuthManager(cfg.Auth.SessionDurationHours)

@@ -11,6 +11,7 @@ import (
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -30,6 +31,7 @@ type ConversationTaskStateProvider interface {
 // ConversationHandler 对话处理器
 type ConversationHandler struct {
 	db          database.ConversationStore
+	usage       *store.ModelTokenUsage // model_token_usage: 用量页唯一的读来源
 	logger      *zap.Logger
 	audit       *audit.Service
 	taskStopper ConversationTaskStopper
@@ -56,6 +58,7 @@ func (h *ConversationHandler) SetTaskStateProvider(provider ConversationTaskStat
 func NewConversationHandler(db *database.DB, logger *zap.Logger) *ConversationHandler {
 	return &ConversationHandler{
 		db:     database.Narrow[database.ConversationStore](db),
+		usage:  newModelTokenUsageStore(db),
 		logger: logger,
 	}
 }

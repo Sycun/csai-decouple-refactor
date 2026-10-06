@@ -1481,14 +1481,65 @@ eino 索引器原来在事务里逐条校验 meta，现在先算完整批再一�
 - 把遍历下限临时调到 999999 → 报 `the walk considered 507 production files`（覆盖断言活着）。
 
 **水位复测**：分层裸 SQL **0 条 / 0 个文件**（扫描过 507 个生产文件）；同一条 SQL 文本判据在
-`internal/database` 数到 **438** 处、`internal/store` **78** 处——这两层按定义是 SQL 的主人，
-所以"归零"指的是**它们之外**，不代表数据层已无 SQL；`*database.DB` 方法 **327**（上限从 328 收紧，
-见下）；`internal/store` 生产文件 **14 个**、包内测试 **99 条**（本次新增 11 + 补强 7）。
+`internal/database` 数到 **429** 处、`internal/store` **87** 处（第十二片复测的两个数字；这两层按定义
+就是 SQL 的主人，所以"归零"指的是**它们之外**，不代表数据层已无 SQL）。本片交完时 `*database.DB` 是
+**327**（上限从 328 收紧，见下），下一片之后是 320；`internal/store` 生产文件 **14 个**、
+包内测试 **99 条**（本次新增 11 + 补强 7）。
 
 **顺带抓到 ratchet 自己的一个口径漏洞**：收紧上限时我按上一次记录写 328，AST 计数器说 327。
 查两棵树的方法名集合差，发现少的是 `migrateKnowledgeEmbeddingsColumns`——它在**上一个已提交**的切片里
 被删，而"只降不升"的门禁对下降**只打 log 不失败**，所以一处已经落后的水位被带了进来。
 结论写进门禁注释：**下降只出现在日志里，所以每次写数字必须当场复测，不能抄上一条 commit 的**。
+
+### P6 数据层第十二片 —— `model_token_usage`：把授权子句收成一条，顺手抓到两个存量缺陷
+
+这片把用量表整域交回主人：`internal/store/model_token_usage.go` 现在持有 **建表 + 四个索引 +
+写（timeline 钩子与幂等 upsert）+ 回填 + 三个统计读 + 明细读**，`internal/database/model_token_usage.go`
+整个删除，`*database.DB` **327 → 320**（少 7 个：4 个公开方法、1 个私有钩子、2 个私有查询 helper——
+计数器数的是所有 `*DB` 接收者，不只导出的，所以下降比方法清单看起来多）。
+写路径从 `db.maybeRecordModelTokenUsage(...)` 改成 `store.NewModelTokenUsage(db.DB).RecordFromProcessDetail(...)`
+加同一行 Warn 日志；建表与回填从 `initTables` 里挪进进程启动的 `ensureModelTokenUsageSchema`，
+配 AST 顺序门禁（`database.NewDB` 之后再执行，回填要读 `process_details`）。
+handler 侧：`ConversationHandler` 加 `usage *store.ModelTokenUsage` 字段，构造函数签名不变，
+`database.ConversationStore` 少一个成员（窄接口 283 → 282 个成员，全部仍有生产调用点）。
+
+**授权子句收成一条**：这一域原来用数据层那份 `appendConversationAccessFilter`（四条 OR 路径），
+store 层另有一份 `ConstrainConversation`（四条 EXISTS 路径）。抽它的时候没有再抄第三份，
+而是让 store 用它自己那条，并补一个**差分测试**：`legacyAccessClause` 把被替换掉的旧拼写原文钉在
+测试文件里，同一份种子数据、五种身份 × 两种 scope，两侧返回的 `process_detail_id` 集合逐个相等。
+唯一**故意不同**的一处被单独断言：旧拼写在 `userID == ""` 时整条子句不加（无身份的请求读到全库），
+store 那条给 `1=0`。路由本身有鉴权中间件，所以这条差异在线上不可达；它是把 fail-open 的默认
+挪成 fail-closed，而不是新增限制。
+差分测试当场抓到**我自己写错的地方**：子句最初传的是 JOIN 出来的 `c.id`，而它内部相关子查询也把这个表
+起名为 `c`，`WHERE c.id = c.id` 恒真 → 任何人看到全部行；改成本表的 `mtu.conversation_id`（JOIN 留着，
+它才是"会话删了就不再统计"的那道筛子）。
+
+**第二个存量缺陷（真机语义，不是风格）**：行上的文本列原来这样取
+`strings.TrimSpace(fmt.Sprint(m["model"]))`——payload 里没有这个键时 `fmt.Sprint(nil)` 得到
+**四个字母 `<nil>` 并写进库**，于是 `COALESCE(NULLIF(TRIM(model),''),'unknown')` 的 unknown 兜底
+永远不会命中，用量页出现一个叫 `<nil>` 的分组。改成 `textField`：缺键或 JSON null 都写空串。
+**注意**：这只管新写入；已有库里那些 `<nil>` 文本仍在（不打算在读侧为它开特例，也不让 store 悄悄改写历史）。
+
+测试：store 侧 **10 条**（建表幂等 + 四索引、钩子只吃 usage 事件、按 `process_detail_id` 幂等重写、
+total 兜底、project 列的可空读、会话删除后其用量隐身、回填一次性且保留原时刻、分组与 today 窗口、
+排序/limit/会话/项目/`__none__` 过滤、四条授权路径 + 差分 + 无连接被拒）；
+HTTP 契约 **4 条**（顶层与 recent 的**键集合**逐字钉住、`projectId` 的 omitempty 语义、
+无会话 = 全零、scope all 无需 user、按 `:id` 归一、`days/limit` 兜底、项目过滤与"写入时刻拷贝"语义、
+无库 handler 返回 500 且带 store 自己的错误串）。写数据全部走 `db.AddMessage → db.AddProcessDetail`
+真实链路，所以钩子本身也在被测范围内。
+
+探针（全部「注入即红、撤销即绿」，其中两条第一次注入是无效的，记下形状）：
+- 删掉启动那次 ensure 调用 → 接线门禁红。
+- 把子句列改回 `c.id` → 授权路径与差分测试同时红（这就是抓到我写错的那条）。
+- `textField` 换回 `fmt.Sprint(m[key])` → `<nil>` 分组钉子红。
+  （第一次探针只替换了 return 那一行，`v == nil` 的守卫还在，于是"注入即绿"= 探针无效；换掉整个函数体才红。）
+- 改一个 json tag（`reasoningTokens` → `reasoningToken`）→ 契约测试键集合红。
+- 在**另一个文件**里插一处偏移更小的 `database.NewDB(` → 顺序门禁红：偏移按文件计，
+  跨文件比较会认可任何摆放位置，所以断言现在要求两个调用同一文件。
+- 往 `internal/handler` 塞一条 `SELECT COUNT(*) FROM model_token_usage` → 归属门禁红并报出表名。
+
+**一处口径收窄值得写明**：`model_token_usage` 的建表现在只由服务端启动路径执行；
+`cmd/server` 里那条改密码 CLI 仍会 `database.NewDB`，但不再顺手建这张它永远不写的表。
 
 ### 明确还没做（不假装完成）
 
@@ -1496,9 +1547,9 @@ eino 索引器原来在事务里逐条校验 meta，现在先算完整批再一�
   共 5 个面 + 共享可见性子句，handler 裸 SQL **已归零**；**这一项已完成**：`internal/handler` 里
   **没有任何结构体再持有 `*database.DB` 或 `*sql.DB`**（19 → 0；18 个域换成各自的窄接口字段，
   另 1 个是没人读的死字段，直接删。见 §11「P6 数据层第五片」与 §12.1 表）；
-  `internal/database` 那 361 个方法本身也按域继续切（**已交回 10 个面：skill_stats 是第六片，
-  `knowledge_base_items` + `knowledge_embeddings` 是第十一（合并算一片），现测 327 个方法，
-  由 `TestDatabaseSurfaceOnlyShrinks` 钉成只降水位**；**分层裸 SQL 已归零**——`internal/handler`
+  `internal/database` 那 361 个方法本身也按域继续切（**已交回 11 个面：skill_stats 是第六片，
+  `knowledge_base_items` + `knowledge_embeddings` 是第十一（合并算一片），`model_token_usage` 是第十二，
+  现测 320 个方法，由 `TestDatabaseSurfaceOnlyShrinks` 钉成只降水位**；**分层裸 SQL 已归零**——`internal/handler`
   之后第二个持有 SQL 的 `internal/knowledge` 也交完了，见 §11「P6 数据层第十一片」）、
   `AgentHandler` 分解（**水位实测 + 门禁 + 六刀已落**：起点 130 方法/23 文件，
   现已搬到 **88 方法/21 文件**——中断队列读面 9 个方法进 `HITLQueue`、收尾链路 10 个方法进
@@ -1593,10 +1644,12 @@ origin  https://github.com/AIPentest/CyberStrikeAI.git  # 上游父仓库，只�
    后端 API 错误串未 i18n——口径与数字都要可复验：
    `grep -rhoE '"(error|message)": "[^"]*"' internal/handler/*.go | grep -c '[一-龥]'` = **391 条中文**
    （同一条命令去掉 `grep -c` 换 `-vc` = 132 条 ASCII）。属契约变更，要连同前端字典一起动。
-   再往后才是 `internal/database` 那 327 个方法（**分层裸 SQL 已归零**：`internal/knowledge` 是
+   再往后才是 `internal/database` 那 320 个方法（**分层裸 SQL 已归零**：`internal/knowledge` 是
    `internal/handler` 之后最后一个在两个自有层之外写 SQL 的包，见 §11「P6 数据层第十一片」；
-   剩下的 SQL 全在主人手里——`internal/database` 438 处、`internal/store` 78 处，
-   下一刀是把这个连接包装自己按域拆开，以及把 `database.DB` 里内嵌的 `*sql.DB` 收掉）、
+   剩下的 SQL 全在主人手里——`internal/database` 429 处、`internal/store` 87 处，
+   下一刀从这个连接包装自己按域拆开、以及把 `database.DB` 里内嵌的 `*sql.DB` 收掉开始）：
+   按文件数排下来的大水面是 `conversation.go 48 / c2.go 47 / rbac.go 40 / monitor.go 22 / batch_task.go 22`
+   （`wc` 复验：`for f in internal/database/*.go; do ...` 数 `*DB` 接收者），
    Eino 收到 ≤1 包、session 事件溯源。
 3. 需要你插队的只有一件：**§10 决策项 1**（`agent:local-execute` 是否作为阻断项立即处理），
    它决定社区制品的攻击面；其余决策项可以在 P4/P5 动工前再定。
@@ -1608,10 +1661,10 @@ origin  https://github.com/AIPentest/CyberStrikeAI.git  # 上游父仓库，只�
 go list -f '{{.ImportPath}}: {{join .Imports " "}}' ./internal/... ./cmd/... > /tmp/deps.txt
 
 # DB 方法数 / 裸 SQL / 越层 import
-grep -rhE '^func \((db|d) \*DB\)' internal/database/*.go | grep -v _test | wc -l   # 361 起测，现 327（已交回 10 个域，由 internal/layering 的只降门禁钉住）
+grep -rhE '^func \((db|d) \*DB\)' internal/database/*.go | grep -v _test | wc -l   # 361 起测，现 320（已交回 11 个域，由 internal/layering 的只降门禁钉住）
 # 分层裸 SQL（判据与接收者名字无关：字符串字面量以 SQL 开头就算）——两个自有层之外为 0
 grep -rhnE '["`][[:space:]]*(SELECT|INSERT INTO|UPDATE|DELETE FROM)\b' $(find internal cmd -name '*.go' ! -name '*_test.go' ! -path 'internal/database/*' ! -path 'internal/store/*') | wc -l   # 0
-# 同一条判据在两个自有层里：internal/database 438 处、internal/store 78 处（它们是 SQL 的主人，不是泄漏）
+# 同一条判据在两个自有层里：internal/database 429 处、internal/store 87 处（它们是 SQL 的主人，不是泄漏）
 grep -rnE 'h\.db\.(Exec|Query|QueryRow|Begin)' internal/handler/*.go | grep -v _test | wc -l  # 32（原报告口径）
 # 49 = 重构前的 HTTP 层全部接收者；当前树为 0（见 §11「当前水位」）
 grep -rhoE '\b[a-z]+\.db\.(Exec|Query|QueryRow|Begin|Prepare)\(' $(ls internal/handler/*.go | grep -v _test) | wc -l

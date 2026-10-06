@@ -1295,7 +1295,12 @@ func (db *DB) AddProcessDetailWithID(messageID, conversationID, eventType, messa
 		return "", fmt.Errorf("添加过程详情失败: %w", err)
 	}
 
-	db.maybeRecordModelTokenUsage(messageID, conversationID, id, eventType, data)
+	if err := store.NewModelTokenUsage(db.DB).RecordFromProcessDetail(messageID, conversationID, id, eventType, data); err != nil && db.logger != nil {
+		db.logger.Warn("保存模型Token用量失败",
+			zap.String("processDetailId", id),
+			zap.String("conversationId", conversationID),
+			zap.Error(err))
+	}
 
 	return id, nil
 }
