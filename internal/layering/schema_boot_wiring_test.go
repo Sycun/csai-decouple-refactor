@@ -65,6 +65,13 @@ func TestSchemaEnsuresAreWiredAtBoot(t *testing.T) {
 			mustNotChangeSQL: "workflow_",
 		},
 		{
+			storeConstructor: "NewWebshell",
+			tablePrefix:      "webshell_connection",
+			anchorCall:       "createBatchTasksTable",
+			anchorReason:     "the store creates both tables where the two CREATE statements used to run, and the state table cascades off the connection table inside the same schema string",
+			mustNotChangeSQL: "webshell_connection",
+		},
+		{
 			storeConstructor: "NewFacts",
 			tablePrefix:      "project_fact",
 			anchorCall:       "createProjectsTable",

@@ -86,6 +86,7 @@ func TestCreateProgressCallback_HidesInternalEinoDiagnostics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
+	defer db.Close() // 临时目录里的 WAL 文件要能先落下，否则 TempDir 回收会撞见"目录非空"
 	conv, err := db.CreateConversation("diag-hidden", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
@@ -133,6 +134,7 @@ func TestCreateProgressCallback_PersistsRunningResponseBeforeDone(t *testing.T) 
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
+	defer db.Close() // 临时目录里的 WAL 文件要能先落下，否则 TempDir 回收会撞见"目录非空"
 	conv, err := db.CreateConversation("refresh-running", database.ConversationCreateMeta{})
 	if err != nil {
 		t.Fatalf("CreateConversation: %v", err)
@@ -178,6 +180,7 @@ func TestCreateProgressCallback_FlushesReasoningOnDone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}
+	defer db.Close() // 临时目录里的 WAL 文件要能先落下，否则 TempDir 回收会撞见"目录非空"
 	defer os.RemoveAll(tmp)
 
 	conv, err := db.CreateConversation("test", database.ConversationCreateMeta{})

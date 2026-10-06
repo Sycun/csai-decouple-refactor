@@ -3,7 +3,7 @@ package handler
 import (
 	"strings"
 
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 )
 
 // WebshellSkillHintDefault 对话页 / Eino 单代理共用的 Skills 说明，放在 webshell 上下文末尾，
@@ -23,7 +23,7 @@ const webshellAssistantToolList = "webshell_exec、webshell_file_list、webshell
 //
 // 之所以把这段逻辑抽到共享函数里，是为了避免 agent.go / multi_agent_prepare.go 等多处复制粘贴，
 // 并确保当我们升级 OS / Encoding 文案时只需要改一处、测一处、同步生效。
-func BuildWebshellAssistantContext(conn *database.WebShellConnection, skillHint, userMsg string) string {
+func BuildWebshellAssistantContext(conn *store.WebShellConnection, skillHint, userMsg string) string {
 	if conn == nil {
 		// 兜底：调用方已保证 conn 非 nil，这里只是防御性返回原消息
 		return userMsg

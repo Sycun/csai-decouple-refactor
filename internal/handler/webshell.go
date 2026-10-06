@@ -16,6 +16,7 @@ import (
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -326,6 +327,7 @@ type WebShellHandler struct {
 	logger *zap.Logger
 	client *http.Client
 	db     database.WebShellStore
+	conns  *store.Webshell // webshell_connections + 状态表：这个页面唯一的写来源
 	audit  *audit.Service
 }
 
@@ -337,6 +339,7 @@ func (h *WebShellHandler) SetAudit(s *audit.Service) {
 // NewWebShellHandler 创建 WebShell 处理器，db 可为 nil（连接配置接口将不可用）
 func NewWebShellHandler(logger *zap.Logger, db *database.DB) *WebShellHandler {
 	return &WebShellHandler{
+		conns:  database.NewWebshell(db),
 		logger: logger,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
@@ -383,13 +386,13 @@ func (h *WebShellHandler) ListConnections(c *gin.Context) {
 		return
 	}
 	session, _ := security.CurrentSession(c)
-	list, err := h.db.ListWebshellConnectionsForAccess(session.UserID, session.Scope, c.Query("project_id"))
+	list, err := h.conns.List(store.Access{UserID: session.UserID, Scope: session.Scope}, c.Query("project_id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if list == nil {
-		list = []database.WebShellConnection{}
+		list = []store.WebShellConnection{}
 	}
 	c.JSON(http.StatusOK, list)
 }
@@ -427,7 +430,7 @@ func (h *WebShellHandler) CreateConnection(c *gin.Context) {
 	if shellType == "" {
 		shellType = "php"
 	}
-	conn := &database.WebShellConnection{
+	conn := &store.WebShellConnection{
 		ID:        "ws_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12],
 		ProjectID: projectID,
 		URL:       req.URL,
@@ -440,7 +443,7 @@ func (h *WebShellHandler) CreateConnection(c *gin.Context) {
 		OS:        normalizeWebshellOS(req.OS),
 		CreatedAt: time.Now(),
 	}
-	if err := h.db.CreateWebshellConnection(conn); err != nil {
+	if err := h.conns.Create(conn); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -498,7 +501,7 @@ func (h *WebShellHandler) UpdateConnection(c *gin.Context) {
 	if shellType == "" {
 		shellType = "php"
 	}
-	conn := &database.WebShellConnection{
+	conn := &store.WebShellConnection{
 		ID:        id,
 		ProjectID: projectID,
 		URL:       req.URL,
@@ -510,7 +513,7 @@ func (h *WebShellHandler) UpdateConnection(c *gin.Context) {
 		Encoding:  normalizeWebshellEncoding(req.Encoding),
 		OS:        normalizeWebshellOS(req.OS),
 	}
-	if err := h.db.UpdateWebshellConnection(conn); err != nil {
+	if err := h.conns.Update(conn); err != nil {
 		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 			return
@@ -518,7 +521,7 @@ func (h *WebShellHandler) UpdateConnection(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	updated, _ := h.db.GetWebshellConnection(id)
+	updated, _ := h.conns.Get(id)
 	if updated != nil {
 		c.JSON(http.StatusOK, updated)
 	} else {
@@ -537,7 +540,7 @@ func (h *WebShellHandler) DeleteConnection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
 		return
 	}
-	if err := h.db.DeleteWebshellConnection(id); err != nil {
+	if err := h.conns.Delete(id); err != nil {
 		if err == sql.ErrNoRows {
 			c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 			return
@@ -562,7 +565,7 @@ func (h *WebShellHandler) GetConnectionState(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
 		return
 	}
-	conn, err := h.db.GetWebshellConnection(id)
+	conn, err := h.conns.Get(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -571,7 +574,7 @@ func (h *WebShellHandler) GetConnectionState(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
 		return
 	}
-	stateJSON, err := h.db.GetWebshellConnectionState(id)
+	stateJSON, err := h.conns.GetState(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -594,7 +597,7 @@ func (h *WebShellHandler) SaveConnectionState(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "id is required"})
 		return
 	}
-	conn, err := h.db.GetWebshellConnection(id)
+	conn, err := h.conns.Get(id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -623,7 +626,7 @@ func (h *WebShellHandler) SaveConnectionState(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "state must be valid json"})
 		return
 	}
-	if err := h.db.UpsertWebshellConnectionState(id, string(raw)); err != nil {
+	if err := h.conns.UpsertState(id, string(raw)); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -932,7 +935,7 @@ func (h *WebShellHandler) FileOp(c *gin.Context) {
 	})
 }
 
-func (h *WebShellHandler) authorizedWebshellConnection(c *gin.Context, connectionID, requestURL string) (*database.WebShellConnection, bool) {
+func (h *WebShellHandler) authorizedWebshellConnection(c *gin.Context, connectionID, requestURL string) (*store.WebShellConnection, bool) {
 	connectionID = strings.TrimSpace(connectionID)
 	if connectionID == "" {
 		return nil, false
@@ -944,7 +947,7 @@ func (h *WebShellHandler) authorizedWebshellConnection(c *gin.Context, connectio
 	if !ok || !h.db.UserCanAccessResource(session.UserID, session.Scope, "webshell", connectionID) {
 		return nil, false
 	}
-	conn, err := h.db.GetWebshellConnection(connectionID)
+	conn, err := h.conns.Get(connectionID)
 	if err != nil || conn == nil {
 		return nil, false
 	}
@@ -970,7 +973,7 @@ func (h *WebShellHandler) canAccessProject(c *gin.Context, projectID string) boo
 }
 
 // ExecWithConnection 在指定 WebShell 连接上执行命令（供 MCP/Agent 等非 HTTP 调用）
-func (h *WebShellHandler) ExecWithConnection(conn *database.WebShellConnection, command string) (output string, ok bool, errMsg string) {
+func (h *WebShellHandler) ExecWithConnection(conn *store.WebShellConnection, command string) (output string, ok bool, errMsg string) {
 	if conn == nil {
 		return "", false, "connection is nil"
 	}
@@ -1010,7 +1013,7 @@ func (h *WebShellHandler) ExecWithConnection(conn *database.WebShellConnection, 
 }
 
 // FileOpWithConnection 在指定 WebShell 连接上执行文件操作（供 MCP/Agent 调用），支持 list / read / write
-func (h *WebShellHandler) FileOpWithConnection(conn *database.WebShellConnection, action, path, content, targetPath string) (output string, ok bool, errMsg string) {
+func (h *WebShellHandler) FileOpWithConnection(conn *store.WebShellConnection, action, path, content, targetPath string) (output string, ok bool, errMsg string) {
 	if conn == nil {
 		return "", false, "connection is nil"
 	}

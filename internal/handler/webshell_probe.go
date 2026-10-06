@@ -109,7 +109,7 @@ func (h *WebShellHandler) persistDetectedOS(connectionID, detected string) {
 	if connectionID == "" || detected == "" || detected == "auto" {
 		return
 	}
-	conn, err := h.db.GetWebshellConnection(connectionID)
+	conn, err := h.conns.Get(connectionID)
 	if err != nil || conn == nil {
 		// 不是所有调用方都能提供有效 ID（比如临时测试），这里静默返回
 		return
@@ -119,7 +119,7 @@ func (h *WebShellHandler) persistDetectedOS(connectionID, detected string) {
 		return
 	}
 	conn.OS = detected
-	if err := h.db.UpdateWebshellConnection(conn); err != nil {
+	if err := h.conns.Update(conn); err != nil {
 		h.logger.Warn("webshell 探活结果持久化失败", zap.String("id", connectionID), zap.String("os", detected), zap.Error(err))
 		return
 	}

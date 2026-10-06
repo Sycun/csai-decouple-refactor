@@ -141,6 +141,7 @@ func TestNarrowedStorageKeepsALiveDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
+	defer db.Close() // 临时目录里的 WAL 文件要能先落下，否则 TempDir 回收会撞见"目录非空"
 	for _, entry := range narrowedHandlers {
 		field := storageField(t, entry.build(db))
 		if field.IsNil() {

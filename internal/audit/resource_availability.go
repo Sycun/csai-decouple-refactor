@@ -34,7 +34,6 @@ type ResourceExistenceSource interface {
 	GetC2Listener(id string) (*database.C2Listener, error)
 	GetC2Session(id string) (*database.C2Session, error)
 	GetC2Task(id string) (*database.C2Task, error)
-	GetWebshellConnection(id string) (*database.WebShellConnection, error)
 	GetToolExecution(id string) (*mcp.ToolExecution, error)
 }
 
@@ -45,12 +44,18 @@ type FindingLookup interface {
 	Get(id string) (*store.Vulnerability, error)
 }
 
+// WebshellLookup is the webshell answer split out the same way, because that read is
+// store.Webshell.Get now rather than a method on the connection wrapper.
+type WebshellLookup interface {
+	Get(id string) (*store.WebShellConnection, error)
+}
+
 // ApplyResourceAvailability sets log.ResourceAvailable when the linked resource can be checked.
 //
 // db is an interface, so callers must pass one built by database.Narrow: a nil *database.DB stored
 // in an interface is not nil, and the guard below would then fall through into method calls on a nil
 // receiver instead of reporting "availability unknown".
-func ApplyResourceAvailability(db ResourceExistenceSource, findings FindingLookup, log *store.AuditLog) {
+func ApplyResourceAvailability(db ResourceExistenceSource, findings FindingLookup, webshells WebshellLookup, log *store.AuditLog) {
 	if log == nil || strings.TrimSpace(log.ResourceID) == "" {
 		return
 	}
@@ -62,13 +67,13 @@ func ApplyResourceAvailability(db ResourceExistenceSource, findings FindingLooku
 	if db == nil {
 		return
 	}
-	available, known := resourceStillExists(db, findings, log.ResourceType, log.ResourceID)
+	available, known := resourceStillExists(db, findings, webshells, log.ResourceType, log.ResourceID)
 	if known {
 		log.ResourceAvailable = &available
 	}
 }
 
-func resourceStillExists(db ResourceExistenceSource, findings FindingLookup, resourceType, resourceID string) (bool, bool) {
+func resourceStillExists(db ResourceExistenceSource, findings FindingLookup, webshells WebshellLookup, resourceType, resourceID string) (bool, bool) {
 	resourceID = strings.TrimSpace(resourceID)
 	if resourceID == "" {
 		return false, false
@@ -107,7 +112,10 @@ func resourceStillExists(db ResourceExistenceSource, findings FindingLookup, res
 		_, err := db.GetC2Task(resourceID)
 		return err == nil, true
 	case "webshell_connection":
-		c, err := db.GetWebshellConnection(resourceID)
+		if webshells == nil {
+			return false, false
+		}
+		c, err := webshells.Get(resourceID)
 		return err == nil && c != nil, true
 	case "tool_execution":
 		_, err := db.GetToolExecution(resourceID)

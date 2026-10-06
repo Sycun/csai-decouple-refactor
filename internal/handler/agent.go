@@ -189,6 +189,8 @@ type AgentHandler struct {
 	runs *store.Workflows
 	// facts 是黑板两张表的账本：会话里生成的项目事实与边从这里读写，不再经过连接包装。
 	facts *store.Facts
+	// webshells 是 WebShell 连接与状态表的主人：AI 助手上下文里那条连接从这里取。
+	webshells *store.Webshell
 	// skillStats is the skill_stats table, reached through its store rather than the connection wrapper.
 	stats *store.SkillStats
 	// hitlStore 是 hitl_interrupts 的域存储：HTTP 层不再在这个表上裸写 SQL。
@@ -342,6 +344,7 @@ func NewAgentHandler(agent *agent.Agent, db *database.DB, cfg *config.Config, lo
 		hitlStore:        newHITLStore(db),
 		runs:             newWorkflowStore(db),
 		facts:            database.NewFacts(db),
+		webshells:        database.NewWebshell(db),
 		hitlQueue:        newHITLQueue(database.Narrow[database.AgentStore](db), newHITLStore(db), cfg, hitlManager),
 		sessions:         newSessionStore(db),
 		logger:           logger,

@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/store"
 )
 
 func TestBuildWebshellAssistantContext_WindowsExplicit(t *testing.T) {
-	conn := &database.WebShellConnection{
+	conn := &store.WebShellConnection{
 		ID:       "ws_win01",
 		Remark:   "IIS Windows 靶机",
 		URL:      "http://example.com/shell.php",
@@ -38,7 +38,7 @@ func TestBuildWebshellAssistantContext_WindowsExplicit(t *testing.T) {
 }
 
 func TestBuildWebshellAssistantContext_LinuxAutoFromPHP(t *testing.T) {
-	conn := &database.WebShellConnection{
+	conn := &store.WebShellConnection{
 		ID:       "ws_lnx01",
 		Remark:   "", // 测试备注为空时 fallback URL
 		URL:      "http://example.com/a.php",
@@ -65,7 +65,7 @@ func TestBuildWebshellAssistantContext_LinuxAutoFromPHP(t *testing.T) {
 
 func TestBuildWebshellAssistantContext_AutoFromASPDefaultsToWindows(t *testing.T) {
 	// 保留向后兼容：旧连接没配 os，shellType=asp 时应视为 Windows
-	conn := &database.WebShellConnection{
+	conn := &store.WebShellConnection{
 		ID:       "ws_asp01",
 		Remark:   "老 ASP 靶机",
 		Type:     "asp",
@@ -85,21 +85,21 @@ func TestBuildWebshellAssistantContext_AutoFromASPDefaultsToWindows(t *testing.T
 }
 
 func TestBuildWebshellAssistantContext_MultiAgentSkillHint(t *testing.T) {
-	conn := &database.WebShellConnection{ID: "ws_m1", Remark: "x", Type: "php", OS: "linux"}
+	conn := &store.WebShellConnection{ID: "ws_m1", Remark: "x", Type: "php", OS: "linux"}
 	got := BuildWebshellAssistantContext(conn, WebshellSkillHintMultiAgent, "hi")
 	mustContain(t, got, WebshellSkillHintMultiAgent)
 	mustNotContain(t, got, "DeepAgent")
 }
 
 func TestBuildWebshellAssistantContext_DefaultSkillHintFallback(t *testing.T) {
-	conn := &database.WebShellConnection{ID: "ws_d1", Remark: "x", Type: "php", OS: "linux"}
+	conn := &store.WebShellConnection{ID: "ws_d1", Remark: "x", Type: "php", OS: "linux"}
 	// skillHint 传空字符串时应回退到 default
 	got := BuildWebshellAssistantContext(conn, "", "hi")
 	mustContain(t, got, WebshellSkillHintDefault)
 }
 
 func TestBuildWebshellAssistantContext_UTF8EncodingIsAnnotated(t *testing.T) {
-	conn := &database.WebShellConnection{
+	conn := &store.WebShellConnection{
 		ID: "ws_u1", Remark: "u", Type: "jsp", OS: "linux", Encoding: "utf-8",
 	}
 	got := BuildWebshellAssistantContext(conn, WebshellSkillHintDefault, "hi")

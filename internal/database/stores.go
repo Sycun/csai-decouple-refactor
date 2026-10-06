@@ -40,7 +40,6 @@ type AgentStore interface {
 	GetResourceOwner(resourceType, resourceID string) string
 	GetToolExecution(id string) (*mcp.ToolExecution, error)
 	GetTurnUserMessage(conversationID, anchorMessageID string) (string, error)
-	GetWebshellConnection(id string) (*WebShellConnection, error)
 	ResolveRBACAccess(userID string) (*RBACAccess, error)
 	SaveAgentTrace(conversationID, traceInputJSON, assistantOutput string) error
 	SetConversationAgentMode(id, agentMode string) error
@@ -107,7 +106,6 @@ type ResourceExistence interface {
 	GetC2Session(id string) (*C2Session, error)
 	GetC2Task(id string) (*C2Task, error)
 	GetToolExecution(id string) (*mcp.ToolExecution, error)
-	GetWebshellConnection(id string) (*WebShellConnection, error)
 }
 
 var _ ResourceExistence = (*DB)(nil)
@@ -308,16 +306,9 @@ var _ VulnerabilityStore = (*DB)(nil)
 // WebShellStore is the persistence surface required by WebShellHandler.
 type WebShellStore interface {
 	AssignResourceToUser(userID, resourceType, resourceID string) error
-	CreateWebshellConnection(c *WebShellConnection) error
-	DeleteWebshellConnection(id string) error
 	GetConversationByWebshellConnectionID(connectionID string) (*Conversation, error)
-	GetWebshellConnection(id string) (*WebShellConnection, error)
-	GetWebshellConnectionState(connectionID string) (string, error)
 	ListConversationsByWebshellConnectionID(connectionID string) ([]WebShellConversationItem, error)
-	ListWebshellConnectionsForAccess(userID, scope, projectID string) ([]WebShellConnection, error)
 	SetResourceOwner(resourceType, resourceID, userID string) error
-	UpdateWebshellConnection(c *WebShellConnection) error
-	UpsertWebshellConnectionState(connectionID, stateJSON string) error
 	UserCanAccessResource(userID, scope, resourceType, resourceID string) bool
 }
 

@@ -13,6 +13,7 @@ import (
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/mcp/builtin"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -28,7 +29,7 @@ func TestMCPToolAuthorizerEnforcesPermissionAndResource(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"ws_allowed", "ws_hidden"} {
-		if err := db.CreateWebshellConnection(&database.WebShellConnection{ID: id, URL: "http://127.0.0.1/" + id, Type: "php", Method: "post", CmdParam: "cmd", CreatedAt: time.Now()}); err != nil {
+		if err := database.NewWebshell(db).Create(&store.WebShellConnection{ID: id, URL: "http://127.0.0.1/" + id, Type: "php", Method: "post", CmdParam: "cmd", CreatedAt: time.Now()}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -82,12 +83,12 @@ func TestMCPToolAuthorizerEnforcesConversationProjectBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wsProject := database.WebShellConnection{ID: "ws_project", ProjectID: project.ID, URL: "http://127.0.0.1/project.php", Type: "php", Method: "post", CreatedAt: time.Now()}
-	wsUnbound := database.WebShellConnection{ID: "ws_unbound", URL: "http://127.0.0.1/unbound.php", Type: "php", Method: "post", CreatedAt: time.Now()}
-	if err := db.CreateWebshellConnection(&wsProject); err != nil {
+	wsProject := store.WebShellConnection{ID: "ws_project", ProjectID: project.ID, URL: "http://127.0.0.1/project.php", Type: "php", Method: "post", CreatedAt: time.Now()}
+	wsUnbound := store.WebShellConnection{ID: "ws_unbound", URL: "http://127.0.0.1/unbound.php", Type: "php", Method: "post", CreatedAt: time.Now()}
+	if err := database.NewWebshell(db).Create(&wsProject); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateWebshellConnection(&wsUnbound); err != nil {
+	if err := database.NewWebshell(db).Create(&wsUnbound); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{wsProject.ID, wsUnbound.ID} {

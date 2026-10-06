@@ -118,7 +118,7 @@ func TestPermissionScopeDoesNotWidenAcrossUnrelatedRoles(t *testing.T) {
 	if err := db.BootstrapRBAC("hash", catalog); err != nil {
 		t.Fatal(err)
 	}
-	ownWrite, err := db.UpsertRBACRole("", "own-writer", "", RBACScopeOwn, []string{"project:write"})
+	ownWrite, err := db.UpsertRBACRole("", "own-writer", "", store.ScopeOwn, []string{"project:write"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,13 +130,13 @@ func TestPermissionScopeDoesNotWidenAcrossUnrelatedRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if access.Scope != RBACScopeAll {
+	if access.Scope != store.ScopeAll {
 		t.Fatalf("compatibility scope = %q, want all", access.Scope)
 	}
-	if got := access.PermissionScopes["project:read"]; got != RBACScopeAll {
+	if got := access.PermissionScopes["project:read"]; got != store.ScopeAll {
 		t.Fatalf("project:read scope = %q, want all", got)
 	}
-	if got := access.PermissionScopes["project:write"]; got != RBACScopeOwn {
+	if got := access.PermissionScopes["project:write"]; got != store.ScopeOwn {
 		t.Fatalf("project:write scope widened to %q, want own", got)
 	}
 }
@@ -173,7 +173,7 @@ func TestRBACProjectAndConversationListAccess(t *testing.T) {
 	_ = db.SetResourceOwner("conversation", c1.ID, "u1")
 	_ = db.SetResourceOwner("conversation", c2.ID, "u2")
 
-	projects, err := db.ListProjectsForAccess("", "", 50, 0, "u1", RBACScopeOwn)
+	projects, err := db.ListProjectsForAccess("", "", 50, 0, "u1", store.ScopeOwn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestRBACProjectAndConversationListAccess(t *testing.T) {
 		t.Fatalf("projects = %#v, want only %s", projects, p1.ID)
 	}
 
-	convs, err := db.ListConversationsForAccess(50, 0, "", "", "", "u1", RBACScopeOwn)
+	convs, err := db.ListConversationsForAccess(50, 0, "", "", "", "u1", store.ScopeOwn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -335,41 +335,41 @@ func TestRBACBatchResourceAssignmentValidationAndAtomicity(t *testing.T) {
 
 func TestRBACWebshellAndBatchListAccess(t *testing.T) {
 	db := newRBACTestDB(t)
-	ws1 := WebShellConnection{ID: "ws_visible", ProjectID: "p1", URL: "http://a", Type: "php", Method: "post", CreatedAt: time.Now()}
-	ws2 := WebShellConnection{ID: "ws_hidden", ProjectID: "p2", URL: "http://b", Type: "php", Method: "post", CreatedAt: time.Now()}
-	ws3 := WebShellConnection{ID: "ws_other_project", ProjectID: "p2", URL: "http://c", Type: "php", Method: "post", CreatedAt: time.Now()}
-	ws4 := WebShellConnection{ID: "ws_unbound", URL: "http://d", Type: "php", Method: "post", CreatedAt: time.Now()}
-	if err := db.CreateWebshellConnection(&ws1); err != nil {
+	ws1 := store.WebShellConnection{ID: "ws_visible", ProjectID: "p1", URL: "http://a", Type: "php", Method: "post", CreatedAt: time.Now()}
+	ws2 := store.WebShellConnection{ID: "ws_hidden", ProjectID: "p2", URL: "http://b", Type: "php", Method: "post", CreatedAt: time.Now()}
+	ws3 := store.WebShellConnection{ID: "ws_other_project", ProjectID: "p2", URL: "http://c", Type: "php", Method: "post", CreatedAt: time.Now()}
+	ws4 := store.WebShellConnection{ID: "ws_unbound", URL: "http://d", Type: "php", Method: "post", CreatedAt: time.Now()}
+	if err := NewWebshell(db).Create(&ws1); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateWebshellConnection(&ws2); err != nil {
+	if err := NewWebshell(db).Create(&ws2); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateWebshellConnection(&ws3); err != nil {
+	if err := NewWebshell(db).Create(&ws3); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.CreateWebshellConnection(&ws4); err != nil {
+	if err := NewWebshell(db).Create(&ws4); err != nil {
 		t.Fatal(err)
 	}
 	_ = db.SetResourceOwner("webshell", ws1.ID, "u1")
 	_ = db.SetResourceOwner("webshell", ws2.ID, "u2")
 	_ = db.SetResourceOwner("webshell", ws3.ID, "u1")
 	_ = db.SetResourceOwner("webshell", ws4.ID, "u1")
-	webshells, err := db.ListWebshellConnectionsForAccess("u1", RBACScopeOwn, "")
+	webshells, err := NewWebshell(db).List(store.Access{UserID: "u1", Scope: store.ScopeOwn}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(webshells) != 3 {
 		t.Fatalf("webshells = %#v, want 3 owned webshells including unbound", webshells)
 	}
-	webshells, err = db.ListWebshellConnectionsForAccess("u1", RBACScopeOwn, "p1")
+	webshells, err = NewWebshell(db).List(store.Access{UserID: "u1", Scope: store.ScopeOwn}, "p1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(webshells) != 1 || webshells[0].ID != ws1.ID {
 		t.Fatalf("webshells scoped to p1 = %#v, want only %s", webshells, ws1.ID)
 	}
-	webshells, err = db.ListWebshellConnectionsForAccess("u1", RBACScopeOwn, ProjectFilterUnbound)
+	webshells, err = NewWebshell(db).List(store.Access{UserID: "u1", Scope: store.ScopeOwn}, store.ProjectUnbound)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +385,7 @@ func TestRBACWebshellAndBatchListAccess(t *testing.T) {
 	}
 	_ = db.SetResourceOwner("batch_task", "q_visible", "u1")
 	_ = db.SetResourceOwner("batch_task", "q_hidden", "u2")
-	queues, err := db.ListBatchQueuesForAccess(50, 0, "all", "", "u1", RBACScopeOwn)
+	queues, err := db.ListBatchQueuesForAccess(50, 0, "all", "", "u1", store.ScopeOwn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -450,7 +450,7 @@ func TestRBACC2AccessInheritsListener(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	access := store.Access{UserID: "u1", Scope: RBACScopeOwn}
+	access := store.Access{UserID: "u1", Scope: store.ScopeOwn}
 	listeners, err := db.ListC2ListenersForAccess(access, "")
 	if err != nil {
 		t.Fatal(err)
@@ -465,7 +465,7 @@ func TestRBACC2AccessInheritsListener(t *testing.T) {
 	if len(listeners) != 1 || listeners[0].ID != l1.ID {
 		t.Fatalf("listeners scoped to p1 = %#v, want only %s", listeners, l1.ID)
 	}
-	listeners, err = db.ListC2ListenersForAccess(access, ProjectFilterUnbound)
+	listeners, err = db.ListC2ListenersForAccess(access, store.ProjectUnbound)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +486,7 @@ func TestRBACC2AccessInheritsListener(t *testing.T) {
 	if len(sessions) != 1 || sessions[0].ID != "s_visible" {
 		t.Fatalf("sessions scoped to p1 = %#v, want only s_visible", sessions)
 	}
-	sessions, err = db.ListC2SessionsForAccess(ListC2SessionsFilter{ProjectID: ProjectFilterUnbound}, access)
+	sessions, err = db.ListC2SessionsForAccess(ListC2SessionsFilter{ProjectID: store.ProjectUnbound}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +507,7 @@ func TestRBACC2AccessInheritsListener(t *testing.T) {
 	if len(tasks) != 1 || tasks[0].ID != "t_visible" {
 		t.Fatalf("tasks scoped to p1 = %#v, want only t_visible", tasks)
 	}
-	tasks, err = db.ListC2TasksForAccess(ListC2TasksFilter{ProjectID: ProjectFilterUnbound}, access)
+	tasks, err = db.ListC2TasksForAccess(ListC2TasksFilter{ProjectID: store.ProjectUnbound}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -528,17 +528,17 @@ func TestRBACC2AccessInheritsListener(t *testing.T) {
 	if len(events) != 1 || events[0].ID != "e_visible" {
 		t.Fatalf("events scoped to p1 = %#v, want only e_visible", events)
 	}
-	events, err = db.ListC2EventsForAccess(ListC2EventsFilter{ProjectID: ProjectFilterUnbound}, access)
+	events, err = db.ListC2EventsForAccess(ListC2EventsFilter{ProjectID: store.ProjectUnbound}, access)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(events) != 1 || events[0].ID != "e_unbound" {
 		t.Fatalf("unbound events = %#v, want only e_unbound", events)
 	}
-	if !db.UserCanAccessResource("u1", RBACScopeOwn, "c2_task", "t_visible") {
+	if !db.UserCanAccessResource("u1", store.ScopeOwn, "c2_task", "t_visible") {
 		t.Fatalf("expected listener ownership to allow task detail")
 	}
-	if db.UserCanAccessResource("u1", RBACScopeOwn, "c2_task", "t_hidden") {
+	if db.UserCanAccessResource("u1", store.ScopeOwn, "c2_task", "t_hidden") {
 		t.Fatalf("unexpected access to hidden task")
 	}
 }

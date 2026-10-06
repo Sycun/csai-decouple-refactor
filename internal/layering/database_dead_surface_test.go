@@ -71,8 +71,8 @@ func deadDBSurface(t *testing.T, root string) (dead []string, scanned int) {
 	// store.Facts. The floor keeps a wide gap on purpose: it catches a scan that stopped reading the
 	// directory, and it has tripped four times now for the right reason - a domain cut landing -
 	// which is the reminder to re-measure rather than to widen it.
-	if len(names) < 200 {
-		t.Fatalf("only %d exported *DB methods parsed (floor 200): the scan is not reading the package", len(names))
+	if len(names) < 195 {
+		t.Fatalf("only %d exported *DB methods parsed (floor 195): the scan is not reading the package", len(names))
 		t.Fatalf("only %d exported *DB methods parsed (floor 240): the scan is not reading the package", len(names))
 	}
 

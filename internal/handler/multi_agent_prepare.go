@@ -110,7 +110,7 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 	finalMessage := req.Message
 	var roleTools []string
 	if webshellID != "" {
-		conn, errConn := h.db.GetWebshellConnection(webshellID)
+		conn, errConn := h.webshells.Get(webshellID)
 		if errConn != nil || conn == nil {
 			h.logger.Warn("WebShell AI 助手：未找到连接", zap.String("id", req.WebShellConnectionID), zap.Error(errConn))
 			return nil, fmt.Errorf("未找到该 WebShell 连接")

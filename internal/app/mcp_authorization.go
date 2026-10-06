@@ -11,9 +11,10 @@ import (
 // are data lookups only: every authorization decision goes through
 // internal/capability, so no second decision path can drift.
 func mcpResourceProjectID(db *database.DB, resourceType, resourceID string) (string, bool, error) {
+	webshells := database.NewWebshell(db)
 	switch resourceType {
 	case "webshell":
-		conn, err := db.GetWebshellConnection(resourceID)
+		conn, err := webshells.Get(resourceID)
 		if err != nil {
 			return "", true, err
 		}

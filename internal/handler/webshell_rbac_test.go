@@ -11,6 +11,7 @@ import (
 
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/security"
+	"cyberstrike-ai/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -100,7 +101,7 @@ func TestWebshellFileOpRequiresConnectionAccessWhenConnectionIDProvided(t *testi
 	}
 }
 
-func setupWebshellRBACTest(t *testing.T) (*database.DB, *database.RBACUser, *database.WebShellConnection, *database.WebShellConnection) {
+func setupWebshellRBACTest(t *testing.T) (*database.DB, *database.RBACUser, *store.WebShellConnection, *store.WebShellConnection) {
 	t.Helper()
 	db, err := database.NewDB(filepath.Join(t.TempDir(), "webshell-rbac.db"), zap.NewNop())
 	if err != nil {
@@ -111,7 +112,7 @@ func setupWebshellRBACTest(t *testing.T) (*database.DB, *database.RBACUser, *dat
 	if err != nil {
 		t.Fatalf("CreateRBACUser: %v", err)
 	}
-	allowed := &database.WebShellConnection{
+	allowed := &store.WebShellConnection{
 		ID:        "ws_allowed",
 		URL:       "http://127.0.0.1/allowed.php",
 		Type:      "php",
@@ -119,7 +120,7 @@ func setupWebshellRBACTest(t *testing.T) (*database.DB, *database.RBACUser, *dat
 		CmdParam:  "cmd",
 		CreatedAt: time.Now(),
 	}
-	hidden := &database.WebShellConnection{
+	hidden := &store.WebShellConnection{
 		ID:        "ws_hidden",
 		URL:       "http://127.0.0.1/hidden.php",
 		Type:      "php",
@@ -127,10 +128,10 @@ func setupWebshellRBACTest(t *testing.T) (*database.DB, *database.RBACUser, *dat
 		CmdParam:  "cmd",
 		CreatedAt: time.Now(),
 	}
-	if err := db.CreateWebshellConnection(allowed); err != nil {
+	if err := database.NewWebshell(db).Create(allowed); err != nil {
 		t.Fatalf("CreateWebshellConnection allowed: %v", err)
 	}
-	if err := db.CreateWebshellConnection(hidden); err != nil {
+	if err := database.NewWebshell(db).Create(hidden); err != nil {
 		t.Fatalf("CreateWebshellConnection hidden: %v", err)
 	}
 	if err := db.AssignResourceToUser(user.ID, "webshell", allowed.ID); err != nil {

@@ -16,6 +16,7 @@ func TestEnrichHitlApprovalPayload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("db: %v", err)
 	}
+	defer db.Close() // 临时目录里的 WAL 文件要能先落下，否则 TempDir 回收会撞见"目录非空"
 	defer os.RemoveAll(tmp)
 
 	conv, err := db.CreateConversation("hitl ctx", database.ConversationCreateMeta{})

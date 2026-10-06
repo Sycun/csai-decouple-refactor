@@ -65,7 +65,7 @@ import (
 // delegations behind. 259 -> 241: those delegations are gone too - the ledger half of the old
 // ProjectFactStore became its own interface, answered by *store.Facts, and every consumer that needed
 // it now holds that store as a field. Nothing on the connection wrapper can change these tables.
-const dbMethodCeiling = 240
+const dbMethodCeiling = 232
 
 func TestDatabaseSurfaceOnlyShrinks(t *testing.T) {
 	root := moduleRoot(t)

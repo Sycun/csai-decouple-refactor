@@ -26,10 +26,13 @@ import (
 // Claiming it half-way (a second writer still reading it from the data layer) would have been a leak
 // reported as ownership.
 //
-// project_facts and project_fact_edges are deliberately NOT on this list even though store.Facts now
-// owns both: the project dashboard and the project statistics aggregate read across them, and this
-// scan bans reads as well as writes. They are claimed by writer instead - see writeLedger and
-// TestProjectFactsHasOneWriter, the same treatment the findings table gets.
+// project_facts, project_fact_edges, webshell_connections and webshell_connection_states are
+// deliberately NOT on this list even though a store owns each: the project dashboard and the project
+// statistics aggregate read across the facts, and the RBAC resource picker reads the webshell
+// connections to name them in the assignment UI. This scan bans reads as well as writes, so listing
+// them there would either be wrong or force the claim to be widened until it means nothing. All four
+// are claimed by writer instead - TestWriteLedgerTablesHaveOneWriterEach below, with
+// TestProjectFactsHasOneWriter pinning the blackboard pair's statement counts as well.
 func TestOwnedTablesAreOnlyWrittenFromThisPackage(t *testing.T) {
 	root := moduleRoot(t)
 	owned := []string{"hitl_interrupts", "hitl_conversation_configs", "notification_reads_by_user", "skill_stats", "chat_upload_artifacts", "audit_logs",
@@ -202,6 +205,8 @@ var writeLedger = map[string][]string{
 	"process_details":                   {"session.go"},
 	"project_facts":                     {"facts_ledger.go"},
 	"project_fact_edges":                {"facts_edges.go"},
+	"webshell_connections":              {"webshell.go"},
+	"webshell_connection_states":        {"webshell.go"},
 	"robot_binding_codes":               {"robot_identity.go"},
 	"robot_user_bindings":               {"robot_identity.go"},
 	"robot_user_sessions":               {"robot_sessions.go"},
@@ -279,16 +284,124 @@ func TestStoreWritesOnlyTablesItOwns(t *testing.T) {
 	// The ledger size is exact while the scan's coverage is a floor: this package grows as domains are
 	// extracted, but every added table has to be an intentional edit with a file behind it. A floor on
 	// the ledger would let a failing offender be silenced by listing the table it names.
-	if len(writeLedger) != 29 {
-		t.Fatalf("the write ledger lists %d tables, want exactly 29 - measured 2026-10-06 when the blackboard "+
+	if len(writeLedger) != 31 {
+		t.Fatalf("the write ledger lists %d tables, want exactly 31 - measured 2026-10-06 when the blackboard "+
 			"arrived: %d statements over %d tables from %d files", len(writeLedger), statements, distinct, len(writes))
 	}
 	if len(writes) < 20 {
 		t.Fatalf("write ledger covers %d files, want at least 20 - the scan has gone blind", len(writes))
 	}
-	if distinct < 29 {
-		t.Fatalf("write ledger covers %d tables, want at least 29 - the scan has gone blind", distinct)
+	if distinct < 31 {
+		t.Fatalf("write ledger covers %d tables, want at least 31 - the scan has gone blind", distinct)
 	}
+}
+
+// writeDebt records the store-owned tables that are still written from the data layer as well, by
+// file and by statement count measured when this gate was written (2026-10-06). It is a ceiling, not
+// an approval: `messages` and `process_details` belong to store.Session while the conversation
+// domain still writes them, and the session/event-sourcing slice has to take those statements with it
+// and delete the line here. A new file, or a higher count for a listed one, fails the gate.
+var writeDebt = map[string]map[string]int{
+	"messages":        {"internal/database/conversation.go": 3, "internal/database/database.go": 1},
+	"process_details": {"internal/database/conversation.go": 3},
+}
+
+// TestWriteLedgerTablesHaveOneWriterEach is the repo-wide half of the write ledger: a table listed
+// there may be changed by the files named for it and by nobody else. Reads stay free - see the note
+// above TestOwnedTablesAreOnlyWrittenFromThisPackage for why the claim is cut by writer.
+//
+// This is what keeps an extracted domain from quietly gaining a second writer later. That is how
+// project_facts ended up with one: a cascade that belonged to the other table's owner was written
+// inline because the statement was already at hand.
+func TestWriteLedgerTablesHaveOneWriterEach(t *testing.T) {
+	root := moduleRoot(t)
+	tables := createdTables(t, root)
+
+	type hit struct{ file, table, statement string }
+	// writes maps production file -> table -> how many statements change it there.
+	writes := map[string]map[string]int{}
+	statements := 0
+	for _, dir := range []string{"internal", "cmd"} {
+		for path := range productionGoFiles(t, filepath.Join(root, dir)) {
+			rel := mustRel(t, root, path)
+			for _, w := range writeTargets(t, path, tables) {
+				if _, tracked := writeLedger[w.table]; !tracked {
+					continue
+				}
+				if writes[rel] == nil {
+					writes[rel] = map[string]int{}
+				}
+				writes[rel][w.table]++
+				statements++
+			}
+		}
+	}
+	t.Logf("store-owned tables are changed by %d statements across %d files", statements, len(writes))
+	// An empty scan is not an ownership claim: this is the assertion that catches a broken walk,
+	// which is how a first version of the sweep reported "no debt" for a scan that read no files.
+	if statements < 90 {
+		t.Fatalf("the scan found %d write statements against store-owned tables across the module (floor 90; measured 106 on 2026-10-06) - the walk is not reading the tree", statements)
+	}
+
+	ownerOf := func(table, file string) bool {
+		for _, f := range writeLedger[table] {
+			if strings.HasSuffix(file, "internal/store/"+f) {
+				return true
+			}
+		}
+		return false
+	}
+
+	var offenders []hit
+	for file, byTable := range writes {
+		for table, count := range byTable {
+			if ownerOf(table, file) {
+				continue
+			}
+			if ceiling, owed := writeDebt[table][file]; owed {
+				if count > ceiling {
+					offenders = append(offenders, hit{file, table,
+						strconv.Itoa(count) + " writes, debt ceiling " + strconv.Itoa(ceiling)})
+				}
+				continue
+			}
+			offenders = append(offenders, hit{file, table, strconv.Itoa(count) + " writes, none allowed"})
+		}
+	}
+	for table := range writeLedger {
+		if _, owned := writes[tableOwnerPath(table)]; !owned {
+			offenders = append(offenders, hit{tableOwnerPath(table), table, "no write statement found - the ledger line is stale"})
+		}
+	}
+	for table, byFile := range writeDebt {
+		for file, ceiling := range byFile {
+			if writes[file] == nil || writes[file][table] == 0 {
+				offenders = append(offenders, hit{file, table,
+					"debt line with " + strconv.Itoa(ceiling) + " writes left nothing behind - delete the entry and give the statements to the store"})
+			}
+		}
+	}
+
+	if len(offenders) > 0 {
+		sort.Slice(offenders, func(i, j int) bool {
+			if offenders[i].table == offenders[j].table {
+				return offenders[i].file < offenders[j].file
+			}
+			return offenders[i].table < offenders[j].table
+		})
+		var out []string
+		for _, o := range offenders {
+			out = append(out, o.table+" <- "+o.file+": "+o.statement)
+		}
+		t.Fatalf("tables owned by a store are written from elsewhere, or a ledger line is stale: %v. "+
+			"Ask the owning store for a method; a cascade that needs another table changed belongs to that table's owner.", out)
+	}
+}
+
+// tableOwnerPath is where the ledger says a table is written from; several files can be listed, and
+// the first is the one that carries the create.
+func tableOwnerPath(table string) string {
+	return "internal/store/" + writeLedger[table][0]
 }
 
 // TestProjectFactsHasOneWriter pins both blackboard tables to the store that owns them.
@@ -455,12 +568,22 @@ func distinctTables(byFile map[string]map[string]int) int {
 // than about anything a sentence happens to mention.
 func writeTargets(t *testing.T, path string, tables map[string]bool) []writeHit {
 	t.Helper()
-	writer := regexp.MustCompile(`(?i)\b(INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+([a-z_][a-z0-9_]*)`)
+	// SQL-shaped rather than keyword-shaped: the RBAC permission catalogue in
+	// internal/security/rbac.go says "Create and update vulnerabilities" inside a string literal, and a
+	// bare keyword match reads that as a write. Requiring what follows the table name in a real
+	// statement is what keeps this about statements.
+	writer := regexp.MustCompile(`(?is)\b(?:INSERT\s+INTO\s+([a-z_][a-z0-9_]*)\s*\(|UPDATE\s+([a-z_][a-z0-9_]*)\s+SET|DELETE\s+FROM\s+([a-z_][a-z0-9_]*))`)
 	var out []writeHit
 	for _, lit := range stringLiterals(t, path) {
 		for _, m := range writer.FindAllStringSubmatch(lit, -1) {
-			table := strings.ToLower(m[2])
-			if !tables[table] {
+			table := ""
+			for _, group := range m[1:] {
+				if group != "" {
+					table = strings.ToLower(group)
+					break
+				}
+			}
+			if table == "" || !tables[table] {
 				continue
 			}
 			out = append(out, writeHit{table: table, statement: strings.Join(strings.Fields(m[0]), " ")})

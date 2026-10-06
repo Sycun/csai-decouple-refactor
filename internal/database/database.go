@@ -360,30 +360,7 @@ func (db *DB) initTables() error {
 		FOREIGN KEY (queue_id) REFERENCES batch_task_queues(id) ON DELETE CASCADE
 	);`
 
-	// 创建 WebShell 连接表
-	createWebshellConnectionsTable := `
-	CREATE TABLE IF NOT EXISTS webshell_connections (
-		id TEXT PRIMARY KEY,
-		project_id TEXT,
-		url TEXT NOT NULL,
-		password TEXT NOT NULL DEFAULT '',
-		type TEXT NOT NULL DEFAULT 'php',
-		method TEXT NOT NULL DEFAULT 'post',
-		cmd_param TEXT NOT NULL DEFAULT '',
-		remark TEXT NOT NULL DEFAULT '',
-		encoding TEXT NOT NULL DEFAULT '',
-		os TEXT NOT NULL DEFAULT '',
-		created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-	);`
-
-	// 创建 WebShell 连接扩展状态表（前端工作区/终端状态持久化）
-	createWebshellConnectionStatesTable := `
-	CREATE TABLE IF NOT EXISTS webshell_connection_states (
-		connection_id TEXT PRIMARY KEY,
-		state_json TEXT NOT NULL DEFAULT '{}',
-		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-		FOREIGN KEY (connection_id) REFERENCES webshell_connections(id) ON DELETE CASCADE
-	);`
+	// WebShell 两张表（连接配置与工作区状态）的 DDL 与三条索引在 store.Webshell 的 EnsureSchema 里。
 
 	// ========================================================================
 	// C2 模块（监听器 / 会话 / 任务 / 文件 / 事件 / Malleable Profile）
@@ -529,9 +506,6 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_batch_tasks_queue_id ON batch_tasks(queue_id);
 	CREATE INDEX IF NOT EXISTS idx_batch_task_queues_created_at ON batch_task_queues(created_at);
 	CREATE INDEX IF NOT EXISTS idx_batch_task_queues_title ON batch_task_queues(title);
-	CREATE INDEX IF NOT EXISTS idx_webshell_connections_created_at ON webshell_connections(created_at);
-	CREATE INDEX IF NOT EXISTS idx_webshell_connections_project_id ON webshell_connections(project_id);
-	CREATE INDEX IF NOT EXISTS idx_webshell_connection_states_updated_at ON webshell_connection_states(updated_at);
 	CREATE INDEX IF NOT EXISTS idx_c2_listeners_created_at ON c2_listeners(created_at);
 	CREATE INDEX IF NOT EXISTS idx_c2_listeners_project_id ON c2_listeners(project_id);
 	CREATE INDEX IF NOT EXISTS idx_c2_listeners_status ON c2_listeners(status);
@@ -603,12 +577,9 @@ func (db *DB) initTables() error {
 		return fmt.Errorf("创建batch_tasks表失败: %w", err)
 	}
 
-	if _, err := db.Exec(createWebshellConnectionsTable); err != nil {
-		return fmt.Errorf("创建webshell_connections表失败: %w", err)
-	}
-
-	if _, err := db.Exec(createWebshellConnectionStatesTable); err != nil {
-		return fmt.Errorf("创建webshell_connection_states表失败: %w", err)
+	// 状态表对连接表有外键，两张表在这一个 EnsureSchema 里按顺序建。
+	if err := store.NewWebshell(db.DB).EnsureSchema(); err != nil {
+		return fmt.Errorf("创建 WebShell 连接表失败: %w", err)
 	}
 
 	if err := db.initRBACTables(); err != nil {
@@ -669,7 +640,8 @@ func (db *DB) initTables() error {
 		db.logger.Warn("清理project_fact_versions表失败", zap.Error(err))
 	}
 
-	if err := db.migrateWebshellConnectionsTable(); err != nil {
+	// 列补写归表的拥有者；这里保持原来的"记一条 warn 就继续"。
+	if err := store.NewWebshell(db.DB).MigrateConnectionsTable(); err != nil {
 		db.logger.Warn("迁移webshell_connections表失败", zap.Error(err))
 		// 不返回错误，允许继续运行
 	}
@@ -1296,36 +1268,6 @@ func (db *DB) migrateVulnerabilitiesTable() error {
 }
 
 // migrateWebshellConnectionsTable 迁移 webshell_connections 表，补充新字段
-func (db *DB) migrateWebshellConnectionsTable() error {
-	columns := []struct {
-		name string
-		stmt string
-	}{
-		{name: "project_id", stmt: "ALTER TABLE webshell_connections ADD COLUMN project_id TEXT"},
-		{name: "encoding", stmt: "ALTER TABLE webshell_connections ADD COLUMN encoding TEXT NOT NULL DEFAULT ''"},
-		{name: "os", stmt: "ALTER TABLE webshell_connections ADD COLUMN os TEXT NOT NULL DEFAULT ''"},
-	}
-
-	for _, col := range columns {
-		var count int
-		err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('webshell_connections') WHERE name=?", col.name).Scan(&count)
-		if err != nil {
-			if _, addErr := db.Exec(col.stmt); addErr != nil {
-				errMsg := strings.ToLower(addErr.Error())
-				if !strings.Contains(errMsg, "duplicate column") && !strings.Contains(errMsg, "already exists") {
-					db.logger.Warn("添加webshell_connections字段失败", zap.String("field", col.name), zap.Error(addErr))
-				}
-			}
-			continue
-		}
-		if count == 0 {
-			if _, addErr := db.Exec(col.stmt); addErr != nil {
-				db.logger.Warn("添加webshell_connections字段失败", zap.String("field", col.name), zap.Error(addErr))
-			}
-		}
-	}
-	return nil
-}
 
 func (db *DB) migrateC2ListenersTable() error {
 	return db.addColumnIfMissing("c2_listeners", "project_id", "ALTER TABLE c2_listeners ADD COLUMN project_id TEXT")

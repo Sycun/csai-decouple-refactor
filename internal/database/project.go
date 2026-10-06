@@ -230,7 +230,7 @@ func (db *DB) DeleteProject(id string) error {
 	if _, err := db.Exec(`UPDATE assets SET project_id = NULL WHERE project_id = ?`, id); err != nil {
 		return fmt.Errorf("解除资产项目关联失败: %w", err)
 	}
-	if _, err := db.Exec(`UPDATE webshell_connections SET project_id = NULL WHERE project_id = ?`, id); err != nil {
+	if err := NewWebshell(db).UnlinkProject(id); err != nil {
 		return fmt.Errorf("解除 WebShell 项目关联失败: %w", err)
 	}
 	if _, err := db.Exec(`UPDATE c2_listeners SET project_id = NULL WHERE project_id = ?`, id); err != nil {
