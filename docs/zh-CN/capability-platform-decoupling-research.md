@@ -2625,7 +2625,7 @@ COALESCE 才是它活下来的原因）、`UnlinkProject` 只清该清的、无�
 
 `internal/database/asset.go`（**1340 行**）是数据层剩下的最后一个**单文件单域**。这一刀把它整份搬进
 `internal/store/assets.go`：**16 个导出方法**（去重写入、六条列表/读/改/删/合并、扫描记账、风险缓存刷新、
-项目解绑）连同它们的私有 helper、常量表达式与**这张表的全部 schema**——建表、**13 个后补列**、**7 条索引**。
+项目解绑）连同它们的私有 helper、常量表达式与**这张表的全部 schema**——建表、**13 个后补列**、**10 条索引**。
 `*database.DB` 侧留 **17 条一行转发**（可变量参数按 `name...` 转发），启动路径同一位置调
 `store.NewAssets(db.DB).EnsureSchema()`，`DeleteProject` 的级联改成 `NewAssets(db).UnlinkProject(id)`。
 
@@ -2642,7 +2642,7 @@ nil 连接会**panic**。现在 19 个导出方法一律先拒（唯一返回 `b
 比对**错误文本相等**而不是只比"非 nil"。探针：删掉 `GetAsset` 的守卫 → 测试以 panic 栈红；加回来绿。
 
 **新存储层测试** `internal/store/assets_test.go` **3 个用例**（真库、零 mock）：建表顺序 + 对象清单
-（1 表、13 列、7 索引逐一数）+ 二次调用幂等 + 上面那个对照；连接缺失时 19 个方法全拒；`UnlinkProject`
+（1 表、13 列、10 索引逐一数，再加一条 `idx_assets_%` 总数必须等于 10 的硬计数）+ 二次调用幂等 + 上面那个对照；连接缺失时 19 个方法全拒；`UnlinkProject`
 **只清钢印不删行**、别的项目的钢印不动、带空格的 id 照旧命中（`DeleteProject` 传的就是原值）、
 空 id 与陌生 id 都是空操作。**语句本身**的覆盖留在 `internal/database/asset_test.go` 的 **11 个真 schema 用例**里
 （它们走 `NewDB` 起全库，再经转发打到 store）——store 包**不该**为了测一条 JOIN 而自建 `batch_tasks`、
@@ -2664,10 +2664,27 @@ C2 三张列表都认的哨兵，而 `assetWhere` 只是把它当成一个匹配
 [assets <- internal/handler/probe_assets_writer.go: 1 writes, none allowed]`；④ 把启动那行 `EnsureSchema` 换成
 别的 Exec → `NewAssets: EnsureSchema is called 0 times on the boot path, want exactly 1`。
 
+**真机点验抓出第二个缺陷，而且正是"逐名核对"抓不出来的那种**：用测试树里那个新二进制对**一个空目录**
+（配置里把库路径改成绝对路径，否则库跟着进程 CWD 走）起一次全新安装，读回来的 `assets` 是
+**34 列、10 条 `idx_assets_*`**——列齐全、顺序缺陷确实修好了，但索引比 store 里那份多三条：
+`idx_assets_vulnerability_count / _risk_score / _risk_level` 仍在 `database.go` 的全局 `createIndexes` 里建。
+我按"原来紧跟在建表语句后面的那 7 行"搬，就漏掉了散在另一段里的 3 行；**逐名清单会替漏搬的那几条背书，
+总数不会**。三条一并搬进 `assetsIndexes`（这三列都在 CREATE TABLE 里，不涉及补列顺序），
+`createIndexes` 里删掉；新测试除了逐名还硬计数 `idx_assets_%` == 10。
+
+**并把它变成通用门禁** `TestStoreCreatedTablesAlsoOwnTheirIndexes`：**凡是本包建表的表，它的全部索引也必须由本包建**
+（表自己在别处的不在管辖范围——`vulnerabilities` 14 条、`process_details` 2 条、`messages` 1 条就是这么留在数据层的，
+它们的建表语句也还在那儿，属同一刀未搬）。两道地板是实测值：**29 张表 / 55 条索引**，扫不到就硬失败；
+违规清单双向都验过——往 `createIndexes` 塞回一行 `idx_assets_risk_level` →
+`tables created by this package are indexed from elsewhere (1): [internal/database/database.go creates idx_assets_risk_level on assets]`，
+撤掉复绿。这个判据**与名字无关、也不信任"我搬了哪几行"**，正是这类"半个主人"的漏网形状。
+
 **账（本会话实测）**：`*database.DB` 方法 **232 → 231**（`TestDatabaseSurfaceOnlyShrinks` 已收紧）；
-`internal/store` 生产文件 **26 → 27**、store 构造器 **19 → 20**、包内测试 **195 → 198**；
-全仓测试函数 **1563 → 1567**；`writeLedger` **31 → 32 张表**（`assets` 一行由两个测试双向核对）；
-两个自有层之外的裸 SQL 仍 **0**；`gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿。
+`internal/store` 生产文件 **26 → 27**、store 构造器 **19 → 20**、包内测试 **195 → 199**；
+全仓测试函数 **1563 → 1568**；`writeLedger` **31 → 32 张表**（`assets` 一行由两个测试双向核对）；
+两个自有层之外的裸 SQL 仍 **0**；`gofmt -l` 空、`go build ./...`、`go vet ./...`、`go test -count=1 ./...` 全绿；
+测试树 `make fmt-check vet layering-check wiring-check js-check test-race` + `generate` + golden 比对
+（`三套生成物与源码一致`，本刀没有行号漂移要重生成）+ 两个二进制构建全绿。
 
 ### 明确还没做（不假装完成）
 

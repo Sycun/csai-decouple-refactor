@@ -405,6 +405,72 @@ func tableOwnerPath(table string) string {
 	return "internal/store/" + writeLedger[table][0]
 }
 
+// TestStoreCreatedTablesAlsoOwnTheirIndexes closes the half-migrated hole a real fresh install
+// turned up: store.Assets built its table while three of that table's indexes were still created by
+// the connection wrapper's global sweep. A per-name list would have listed the seven it moved and
+// called that complete, so the judgement here is a count over the whole traversal.
+//
+// A table whose CREATE TABLE still lives outside this package is outside's business: only tables
+// created here have to have every one of their indexes created here too.
+func TestStoreCreatedTablesAlsoOwnTheirIndexes(t *testing.T) {
+	root := moduleRoot(t)
+	created := regexp.MustCompile(`(?i)\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)`)
+	indexed := regexp.MustCompile(`(?i)\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_][a-z0-9_]*)\s+ON\s+([a-z_][a-z0-9_]*)`)
+	createdAnywhere := createdTables(t, root)
+
+	here := map[string]bool{}
+	var storeLits []string
+	for path := range productionGoFiles(t, filepath.Join(root, "internal", "store")) {
+		storeLits = append(storeLits, stringLiterals(t, path)...)
+		for _, lit := range stringLiterals(t, path) {
+			for _, m := range created.FindAllStringSubmatch(lit, -1) {
+				here[strings.ToLower(m[1])] = true
+			}
+		}
+	}
+	// Two passes on purpose: an index whose table is created further down the traversal would be
+	// missed by a single one, and a miss here reads as a clean sweep.
+	builtHere := 0
+	for _, lit := range storeLits {
+		for _, m := range indexed.FindAllStringSubmatch(lit, -1) {
+			if here[strings.ToLower(m[2])] {
+				builtHere++
+			}
+		}
+	}
+	// Both floors are the measured state; without them an empty traversal would look like a pass.
+	t.Logf("this package creates %d tables and %d indexes on them", len(here), builtHere)
+	if len(here) < 29 {
+		t.Fatalf("only %d tables are created in internal/store, want at least 29 - the scan has gone blind", len(here))
+	}
+	if builtHere < 55 {
+		t.Fatalf("only %d indexes on this package's tables are created here, want at least 55 - the scan has gone blind", builtHere)
+	}
+
+	var strays []string
+	for _, dir := range []string{"internal", "cmd"} {
+		for path := range productionGoFiles(t, filepath.Join(root, dir)) {
+			rel := mustRel(t, root, path)
+			if strings.HasPrefix(rel, filepath.Join("internal", "store")) {
+				continue
+			}
+			for _, lit := range stringLiterals(t, path) {
+				for _, m := range indexed.FindAllStringSubmatch(lit, -1) {
+					table := strings.ToLower(m[2])
+					if here[table] && createdAnywhere[table] {
+						strays = append(strays, rel+" creates "+strings.ToLower(m[1])+" on "+table)
+					}
+				}
+			}
+		}
+	}
+	if len(strays) > 0 {
+		sort.Strings(strays)
+		t.Fatalf("tables created by this package are indexed from elsewhere (%d): %v. Ask the owning store "+
+			"to build the index in its own EnsureSchema, after any column the index needs.", len(strays), strays)
+	}
+}
+
 // TestProjectFactsHasOneWriter pins both blackboard tables to the store that owns them.
 //
 // Two steps of drift are in this table's history, and the test guards both. Deleting a finding used to

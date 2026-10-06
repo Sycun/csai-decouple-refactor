@@ -40,7 +40,7 @@ func (s *Assets) requireDB() error {
 }
 
 // EnsureSchema builds the table, then the columns the first asset-management release lacked, then
-// the seven indexes — in that order, because idx_assets_last_scan is on last_scan_at and that column
+// the ten indexes — in that order, because idx_assets_last_scan is on last_scan_at and that column
 // only exists after the backfill. database.go ran the same three steps in the same order.
 func (s *Assets) EnsureSchema() error {
 	if err := s.requireDB(); err != nil {
@@ -118,7 +118,10 @@ const assetsIndexes = `
 	CREATE INDEX IF NOT EXISTS idx_assets_domain ON assets(domain);
 	CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);
 	CREATE INDEX IF NOT EXISTS idx_assets_owner ON assets(owner_user_id);
-	CREATE INDEX IF NOT EXISTS idx_assets_project ON assets(project_id);`
+	CREATE INDEX IF NOT EXISTS idx_assets_project ON assets(project_id);
+	CREATE INDEX IF NOT EXISTS idx_assets_vulnerability_count ON assets(vulnerability_count);
+	CREATE INDEX IF NOT EXISTS idx_assets_risk_score ON assets(risk_score);
+	CREATE INDEX IF NOT EXISTS idx_assets_risk_level ON assets(risk_level);`
 
 // UnlinkProject clears the project stamp of every asset in a project being deleted. The table's own
 // owner writes it, so the project domain hands over a value rather than a statement.

@@ -305,7 +305,9 @@ func (db *DB) initTables() error {
 		FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE SET NULL
 	);`
 
-	// assets 表的 DDL 与七条索引在 store.Assets 的 EnsureSchema 里。
+	// assets 表的 DDL、十三个后补列与十条索引都在 store.Assets 的 EnsureSchema 里，按那个顺序自建。
+	// 这一段索引不再留在这里：全局建索引的那一步跑在所有补列之后，看起来更晚更安全，
+	// 但表的拥有者因此只剩半个，真实安装里有三条索引仍由连接包装创建。
 
 	// 创建批量任务队列表
 	createBatchTaskQueuesTable := `
@@ -475,9 +477,6 @@ func (db *DB) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_severity ON vulnerabilities(severity);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_status ON vulnerabilities(status);
 	CREATE INDEX IF NOT EXISTS idx_vulnerabilities_created_at ON vulnerabilities(created_at);
-	CREATE INDEX IF NOT EXISTS idx_assets_vulnerability_count ON assets(vulnerability_count);
-	CREATE INDEX IF NOT EXISTS idx_assets_risk_score ON assets(risk_score);
-	CREATE INDEX IF NOT EXISTS idx_assets_risk_level ON assets(risk_level);
 	CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
 	CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at);
 	CREATE INDEX IF NOT EXISTS idx_conversations_project_id ON conversations(project_id);

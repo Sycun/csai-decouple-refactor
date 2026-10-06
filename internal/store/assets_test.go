@@ -69,10 +69,23 @@ func TestAssetsEnsureSchemaBuildsColumnsBeforeTheIndexThatNeedsThem(t *testing.T
 		}
 	}
 	for _, index := range []string{"idx_assets_last_seen", "idx_assets_last_scan", "idx_assets_ip", "idx_assets_domain",
-		"idx_assets_status", "idx_assets_owner", "idx_assets_project"} {
+		"idx_assets_status", "idx_assets_owner", "idx_assets_project",
+		"idx_assets_vulnerability_count", "idx_assets_risk_score", "idx_assets_risk_level"} {
 		if got := objectCount(t, db, "index", index); got != 1 {
 			t.Fatalf("index %s present %d times, want 1", index, got)
 		}
+	}
+	// The count is the point: a fresh install once turned up three more assets indexes that the
+	// connection wrapper's global sweep was still creating, which no per-name check would notice.
+	var owned int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_assets%'`).Scan(&owned); err != nil {
+		t.Fatalf("count assets indexes: %v", err)
+	}
+	if owned != 10 {
+		t.Fatalf("assets carries %d idx_assets_* indexes, want 10 - the owner of the table builds them all", owned)
+	}
+	if got := strings.Count(assetsIndexes, "CREATE INDEX"); got != 10 {
+		t.Fatalf("assetsIndexes holds %d statements, want 10", got)
 	}
 
 	// Positive control: the same two statements in the other order must fail, otherwise the case
