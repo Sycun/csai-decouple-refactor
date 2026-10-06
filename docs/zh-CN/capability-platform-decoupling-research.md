@@ -2812,7 +2812,19 @@ SQLite 因为 `idx_batch_task_queues_title` 占用而**拒绝** DROP `title` 这
 而不是"这个资源没了"。`database.ResourceExistence` 同步减掉这一条。
 
 **顺带暴露的一条旧注释错误**：`SetDB` 上面写着「`m.db` 现在是接口，存 nil *DB 会让十处
-`if m.db != nil` 走错分支」，而实际数下来是 **12 处**（`m.db` 的判空点 13 个）。搬的时候把这些守卫
+`if m.db != nil` 走错分支」，而实际数下来是 **12 处**（`m.db` 的判空点 13 个）。**真机点验与一条没被点验覆盖的分支（说清楚）**：空目录起新进程后走真的 HTTP 面——
+`POST /api/batch-tasks` 200 建队（`{queue:{id,title:三十四刀点验,agentMode:eino_single,…}}`）、
+`GET /api/batch-tasks` 200 列出来、`GET /api/batch-tasks/:queueId` 200 读回单队，
+这三条**全部经过 `BatchTaskManager.batch`（`*store.BatchTasks`）**，即"删掉 22 条转发之后运行路径不变"是跑出来的。
+但 `GET /api/audit/logs` 在一个新库里 **0 行**——建队列这件事不产审计行，所以新切的
+`BatchQueueLookup` **没被真机路径摸到**。补上 `internal/audit/resource_availability_test.go`
+覆盖那三个分支（队列在 → `true`；查询答"不存在" → `false`；**没挂 lookup → 字段留空 = "availability unknown"**），
+外加两条现状钉：任何别的错误今天也一律算"资源没了"（把这条规则钉住，改动它必须是一次决定而不是漂移）、
+没有 resource id 的日志不产结论。探针：把"nil lookup"改回 `false, true` →
+`lookup not wired: ResourceAvailable=false, want <nil> (stays "availability unknown" rather than claiming the queue is gone)`，
+撤回复绿。**这条分支此前在全仓一个字节的测试里都没有。**
+
+搬的时候把这些守卫
 一起改名为 `m.batch`，并把注释改成它真正依赖的事实：`database.NewBatchTasks` 对 nil 连接**返回 nil store**
 （与 `database.Narrow` 的 nil→nil 同一条规矩），所以判空仍然成立。
 探针验过这条不是摆设：把构造函数改成"nil 连接返回非 nil 的空壳 store" →
