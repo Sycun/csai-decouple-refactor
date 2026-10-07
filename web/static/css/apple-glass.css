@@ -1,0 +1,722 @@
+/* ============================================================================
+   apple-glass.css — 桌面控制台的「苹果风」材质层（加载于 style.css 之后）
+   ----------------------------------------------------------------------------
+   设计口径（与手机端玻璃语言同源，按桌面重调）：
+   - 环境光画布：窗口底板铺一层极克的渐变光晕，顶栏/侧栏/页面头以真玻璃透出它；
+   - 三档表面：
+       真玻璃（挂 blur）  = 顶栏 / 侧栏 / 页面头 / 下拉 / 弹窗 / 登录卡（固定或瞬时件，
+                            背后不滚动 → 模糊不掉帧）
+       半透卡片（不挂 blur）= 常驻滚动区里的大面积卡片：半透明 + 发丝边 + 顶缘高光 +
+                            分层软阴影，靠层次而非模糊表达材质
+   - 颜色尽量从既有主题令牌 color-mix 派生，浅/暗自动跟随；确实需要逐主题微调的
+     （玻璃底色、发丝线、高光）收进 --ag-* 令牌，浅/暗各一份；
+   - 不改任何 padding / 高度等几何量，只动圆角、材质、阴影与过渡 —— 不破坏密集工具栏。
+   ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+   1. 令牌
+   --------------------------------------------------------------------------- */
+:root {
+    --ag-r-xs: 8px;
+    --ag-r-sm: 10px;
+    --ag-r-md: 14px;
+    --ag-r-lg: 18px;
+    --ag-r-xl: 24px;
+
+    --ag-blur-chrome: 24px;
+    --ag-blur-panel: 28px;
+    --ag-sat: 180%;
+
+    /* 真玻璃（顶栏 / 侧栏 / 页面头） */
+    --ag-glass-chrome: rgba(255, 255, 255, 0.70);
+    /* 面板玻璃（下拉 / 弹窗 / 登录卡） */
+    --ag-glass-panel: rgba(255, 255, 255, 0.82);
+    /* 常驻卡片（半透明，不挂 blur） */
+    --ag-surface-card: rgba(255, 255, 255, 0.90);
+
+    --ag-hairline: rgba(15, 23, 42, 0.075);
+    --ag-hairline-strong: rgba(15, 23, 42, 0.11);
+    --ag-edge-hi: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+
+    --ag-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05), 0 10px 30px -12px rgba(15, 23, 42, 0.12);
+    --ag-shadow-card-hover: 0 2px 6px rgba(15, 23, 42, 0.06), 0 18px 44px -16px rgba(15, 23, 42, 0.20);
+    --ag-shadow-pop: 0 24px 64px -24px rgba(15, 23, 42, 0.30), 0 8px 24px -12px rgba(15, 23, 42, 0.14);
+
+    --ag-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --ag-fast: 0.18s;
+    --ag-med: 0.26s;
+}
+
+html[data-theme="dark"] {
+    --ag-glass-chrome: rgba(13, 19, 33, 0.62);
+    --ag-glass-panel: rgba(17, 24, 39, 0.84);
+    --ag-surface-card: rgba(17, 24, 39, 0.92);
+
+    --ag-hairline: rgba(148, 163, 184, 0.16);
+    --ag-hairline-strong: rgba(148, 163, 184, 0.24);
+    --ag-edge-hi: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+
+    --ag-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.40), 0 14px 36px -18px rgba(0, 0, 0, 0.55);
+    --ag-shadow-card-hover: 0 2px 8px rgba(0, 0, 0, 0.45), 0 20px 52px -20px rgba(0, 0, 0, 0.70);
+    --ag-shadow-pop: 0 32px 80px -28px rgba(0, 0, 0, 0.75), 0 10px 30px -18px rgba(0, 0, 0, 0.50);
+}
+
+/* ---------------------------------------------------------------------------
+   2. 环境光画布（窗口底板）——玻璃层透色的来源
+   --------------------------------------------------------------------------- */
+body {
+    background:
+        radial-gradient(1200px 600px at 8% -12%, rgba(0, 102, 255, 0.075), transparent 60%),
+        radial-gradient(1000px 560px at 92% -14%, rgba(124, 58, 237, 0.070), transparent 62%),
+        radial-gradient(1100px 720px at 85% 112%, rgba(20, 184, 166, 0.060), transparent 64%),
+        linear-gradient(180deg, #f6f8fb 0%, #edf1f7 100%);
+}
+
+html[data-theme="dark"] body {
+    background:
+        radial-gradient(1200px 600px at 8% -12%, rgba(59, 130, 246, 0.13), transparent 60%),
+        radial-gradient(1000px 560px at 92% -14%, rgba(139, 92, 246, 0.11), transparent 62%),
+        radial-gradient(1100px 720px at 85% 112%, rgba(16, 185, 129, 0.07), transparent 64%),
+        linear-gradient(180deg, #0a101d 0%, #0b1120 100%);
+}
+
+/* 窗口壳与内容区不再自铺不透明底，让环境光透上来；页面自身有画布的（仪表盘等）
+   照旧盖在上面，不受影响。 */
+.container {
+    background: transparent;
+    box-shadow: none;
+}
+
+.content-area {
+    background: transparent;
+}
+
+html[data-theme="dark"] .container,
+html[data-theme="dark"] .content-area,
+html[data-theme="dark"] .page,
+html[data-theme="dark"] .page-content {
+    background: transparent;
+}
+
+/* 暗色下深色玻璃表面在原深色层（35433 一段）里被统一钉成不透明 --bg-primary，
+   这里把需要给环境光让位的几类放回透明/玻璃。 */
+html[data-theme="dark"] .lang-dropdown,
+html[data-theme="dark"] .notification-dropdown,
+html[data-theme="dark"] .user-menu-dropdown {
+    background: var(--ag-glass-panel);
+}
+
+html[data-theme="dark"] .modal-content,
+html[data-theme="dark"] .settings-modal-content,
+html[data-theme="dark"] .monitor-modal-content,
+html[data-theme="dark"] .attack-chain-modal-content,
+html[data-theme="dark"] .batch-manage-modal-content,
+html[data-theme="dark"] .projects-modal-dialog,
+html[data-theme="dark"] .chat-files-form-modal-content,
+html[data-theme="dark"] .info-collect-cell-modal-content {
+    background: var(--ag-glass-panel);
+}
+
+/* ---------------------------------------------------------------------------
+   3. 窗口外壳：顶栏 / 侧栏 / 页面头（真玻璃）
+   --------------------------------------------------------------------------- */
+header,
+html[data-theme="dark"] header {
+    background: var(--ag-glass-chrome);
+    -webkit-backdrop-filter: blur(var(--ag-blur-chrome)) saturate(var(--ag-sat));
+    backdrop-filter: blur(var(--ag-blur-chrome)) saturate(var(--ag-sat));
+    border-bottom: 1px solid var(--ag-hairline);
+    box-shadow: none;
+}
+
+.main-sidebar,
+html[data-theme="dark"] .main-sidebar {
+    background: var(--ag-glass-chrome);
+    -webkit-backdrop-filter: blur(var(--ag-blur-chrome)) saturate(var(--ag-sat));
+    backdrop-filter: blur(var(--ag-blur-chrome)) saturate(var(--ag-sat));
+    border-right: 1px solid var(--ag-hairline);
+    box-shadow: none;
+}
+
+/* 默认页面头（仪表盘等有专属页面头的页面在小节 11 排除） */
+.page-header {
+    background: color-mix(in srgb, var(--bg-primary) 68%, transparent);
+    -webkit-backdrop-filter: blur(20px) saturate(var(--ag-sat));
+    backdrop-filter: blur(20px) saturate(var(--ag-sat));
+    border-bottom: 1px solid var(--ag-hairline);
+    box-shadow: none;
+}
+
+html[data-theme="dark"] .page-header {
+    background: color-mix(in srgb, #0b1120 62%, transparent);
+}
+
+/* 关键：backdrop-filter 会给元素新建层叠上下文。顶栏/侧栏/页面头一旦成为层叠
+   上下文，其中的绝对定位弹出件（语言/通知/用户菜单、设置类下拉、折叠侧栏的悬浮
+   提示）就会被后画的 .content-area 盖住 —— 必须给这些层显式 z-index，让它们的
+   上下文整体压在内容区之上（弹窗/登录遮罩是 fixed 且 z-index 更高，仍在其上）。 */
+header {
+    position: relative;
+    z-index: 120;
+}
+
+.main-sidebar {
+    z-index: 110;
+}
+
+.page-header {
+    position: relative;
+    z-index: 60;
+}
+
+/* 顶栏按钮：苹果工具栏风格 —— 默认无边框、悬停才浮出浅填充 */
+.header-actions button,
+.openapi-doc-btn,
+html[data-theme="dark"] .header-actions button,
+html[data-theme="dark"] .lang-switcher-btn,
+html[data-theme="dark"] .openapi-doc-btn {
+    background: transparent;
+    border-color: transparent;
+    border-radius: var(--ag-r-sm);
+    transition: background var(--ag-fast) var(--ag-ease), color var(--ag-fast) var(--ag-ease),
+        border-color var(--ag-fast) var(--ag-ease), transform var(--ag-fast) var(--ag-ease);
+}
+
+.header-actions button:hover,
+.openapi-doc-btn:hover,
+html[data-theme="dark"] .header-actions button:hover,
+html[data-theme="dark"] .lang-switcher-btn:hover,
+html[data-theme="dark"] .openapi-doc-btn:hover {
+    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+    border-color: transparent;
+    color: var(--text-primary);
+    transform: none;
+}
+
+html[data-theme="dark"] .header-actions button:hover,
+html[data-theme="dark"] .lang-switcher-btn:hover,
+html[data-theme="dark"] .openapi-doc-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.notification-btn,
+.user-avatar-btn {
+    background: transparent;
+    border-color: transparent;
+}
+
+.notification-btn:hover,
+.notification-btn.active {
+    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+    border-color: transparent;
+    color: var(--text-primary);
+}
+
+.user-avatar-btn:hover,
+.user-avatar-btn.active {
+    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+    border-color: var(--ag-hairline-strong);
+    color: var(--text-primary);
+}
+
+html[data-theme="dark"] .notification-btn:hover,
+html[data-theme="dark"] .notification-btn.active,
+html[data-theme="dark"] .user-avatar-btn:hover,
+html[data-theme="dark"] .user-avatar-btn.active {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: transparent;
+    color: var(--text-primary);
+}
+
+/* 品牌区小修：logo 圆角与光晕更收敛 */
+.brand-logo {
+    border-radius: 11px;
+    box-shadow: 0 2px 10px rgba(0, 102, 255, 0.14);
+}
+
+/* ---------------------------------------------------------------------------
+   4. 侧栏导航：圆角药丸（替代左侧色条）
+   --------------------------------------------------------------------------- */
+.nav-item-content {
+    margin: 2px 10px;
+    border-radius: var(--ag-r-sm);
+    border-left-color: transparent;
+    padding-left: 13px;
+    transition: background var(--ag-fast) var(--ag-ease), color var(--ag-fast) var(--ag-ease);
+}
+
+.main-sidebar.collapsed .nav-item-content {
+    margin: 2px 8px;
+    padding-left: 4px;
+}
+
+.nav-item-content:hover {
+    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.nav-item.active > .nav-item-content {
+    background: color-mix(in srgb, var(--accent-color) 13%, transparent);
+    border-left-color: transparent;
+}
+
+html[data-theme="dark"] .nav-item-content:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme="dark"] .nav-item.active > .nav-item-content {
+    background: color-mix(in srgb, var(--accent-color) 16%, transparent);
+}
+
+/* 二级菜单同样药丸化 */
+.nav-submenu .nav-item-content {
+    border-radius: var(--ag-r-xs);
+    margin: 1px 10px;
+}
+
+.nav-submenu .nav-item.active > .nav-item-content {
+    border-left-color: transparent;
+}
+
+/* 设置页左侧导航：与主侧栏同一套药丸语言 */
+.settings-nav-item {
+    margin: 2px 10px;
+    padding: 11px 13px;
+    border-radius: var(--ag-r-sm);
+    border-left-color: transparent;
+    transition: background var(--ag-fast) var(--ag-ease), color var(--ag-fast) var(--ag-ease);
+}
+
+.settings-nav-item:hover {
+    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.settings-nav-item.active {
+    background: color-mix(in srgb, var(--accent-color) 13%, transparent);
+    border-left-color: transparent;
+}
+
+html[data-theme="dark"] .settings-nav-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme="dark"] .settings-nav-item.active {
+    background: color-mix(in srgb, var(--accent-color) 16%, transparent);
+}
+
+/* 设置页两栏面板半透，给环境光留气息 */
+.settings-sidebar {
+    background: color-mix(in srgb, var(--bg-primary) 55%, transparent);
+    border-right: 1px solid var(--ag-hairline);
+}
+
+.settings-content {
+    background: color-mix(in srgb, var(--bg-primary) 62%, transparent);
+}
+
+html[data-theme="dark"] .settings-sidebar,
+html[data-theme="dark"] .settings-content {
+    background: color-mix(in srgb, #0b1120 50%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+   5. 常驻卡片：半透明 + 发丝边 + 顶缘高光 + 分层软阴影（不挂 blur）
+   --------------------------------------------------------------------------- */
+.dashboard-kpi-card,
+.stat-card,
+.robot-card,
+.tool-guard-card,
+.storage-overview-card,
+.skills-overview-card,
+.detail-code-card,
+.c2-payload-card,
+.dashboard-section {
+    border-radius: var(--ag-r-md);
+    border: 1px solid var(--ag-hairline);
+    background: var(--ag-surface-card);
+    box-shadow: var(--ag-edge-hi), var(--ag-shadow-card);
+    transition: transform var(--ag-med) var(--ag-ease), box-shadow var(--ag-med) var(--ag-ease),
+        border-color var(--ag-med) var(--ag-ease);
+}
+
+/* 仪表盘 KPI：保留原淡彩渐变，换成玻璃边与更柔的层次 */
+.dashboard-kpi-card {
+    border-radius: var(--ag-r-lg);
+    border-color: var(--ag-hairline);
+    box-shadow: var(--ag-edge-hi), var(--ag-shadow-card);
+}
+
+.dashboard-kpi-card:hover {
+    transform: translateY(-2px);
+    border-color: color-mix(in srgb, var(--accent-color) 24%, var(--ag-hairline));
+    box-shadow: var(--ag-edge-hi), var(--ag-shadow-card-hover);
+}
+
+.dashboard-kpi-icon {
+    border-radius: 10px;
+}
+
+/* 仪表盘大面板块（浅色下让它透出底层点阵画布的一点点气息） */
+.dashboard-section {
+    background: color-mix(in srgb, #ffffff 86%, transparent);
+}
+
+/* 统计卡片 */
+.stat-card {
+    border-radius: var(--ag-r-md);
+}
+
+/* 严重度色条卡：同为色条补一层同色渐洗，去掉"纯白+硬色条"的割裂感 */
+.stat-card.stat-critical {
+    background-image: linear-gradient(90deg, rgba(220, 53, 69, 0.07), transparent 46%);
+}
+
+.stat-card.stat-high {
+    background-image: linear-gradient(90deg, rgba(253, 126, 20, 0.07), transparent 46%);
+}
+
+.stat-card.stat-medium {
+    background-image: linear-gradient(90deg, rgba(255, 193, 7, 0.09), transparent 46%);
+}
+
+.stat-card.stat-low {
+    background-image: linear-gradient(90deg, rgba(32, 201, 151, 0.07), transparent 46%);
+}
+
+.stat-card.stat-info {
+    background-image: linear-gradient(90deg, rgba(108, 117, 125, 0.07), transparent 46%);
+}
+
+.stat-value,
+.dashboard-kpi-value {
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------------
+   6. 按钮：苹果式按压缩放 + 顶缘高光
+   --------------------------------------------------------------------------- */
+.btn-primary {
+    border-radius: var(--ag-r-sm);
+    background: linear-gradient(180deg,
+            color-mix(in srgb, var(--accent-color) 86%, #ffffff) 0%,
+            var(--accent-color) 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 1px 2px rgba(15, 23, 42, 0.08);
+    transition: background var(--ag-fast) var(--ag-ease), box-shadow var(--ag-fast) var(--ag-ease),
+        transform var(--ag-fast) var(--ag-ease);
+}
+
+.btn-primary:hover {
+    background: linear-gradient(180deg,
+            color-mix(in srgb, var(--accent-hover) 86%, #ffffff) 0%,
+            var(--accent-hover) 100%);
+    transform: translateY(-1px);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25),
+        0 6px 18px -6px color-mix(in srgb, var(--accent-color) 55%, transparent);
+}
+
+.btn-primary:active {
+    transform: scale(0.98);
+    box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.18);
+}
+
+.btn-secondary,
+html[data-theme="dark"] .btn-secondary {
+    border-radius: var(--ag-r-sm);
+    background: color-mix(in srgb, var(--bg-primary) 68%, transparent);
+    border: 1px solid var(--ag-hairline-strong);
+    box-shadow: var(--ag-edge-hi);
+    transition: background var(--ag-fast) var(--ag-ease), border-color var(--ag-fast) var(--ag-ease),
+        box-shadow var(--ag-fast) var(--ag-ease), transform var(--ag-fast) var(--ag-ease);
+}
+
+.btn-secondary:hover,
+html[data-theme="dark"] .btn-secondary:hover {
+    background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
+    border-color: color-mix(in srgb, var(--accent-color) 38%, var(--ag-hairline-strong));
+    color: var(--text-primary);
+}
+
+html[data-theme="dark"] .btn-secondary {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+html[data-theme="dark"] .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.09);
+}
+
+.btn-secondary:active,
+.btn-primary.btn-small:active,
+.btn-secondary.btn-small:active {
+    transform: scale(0.98);
+}
+
+.btn-small,
+.btn-sm {
+    border-radius: var(--ag-r-xs);
+}
+
+.btn-ghost {
+    border-radius: var(--ag-r-xs);
+    transition: background var(--ag-fast) var(--ag-ease), color var(--ag-fast) var(--ag-ease);
+}
+
+.btn-danger {
+    border-radius: var(--ag-r-sm);
+}
+
+/* 键盘可达性：统一焦点环 */
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.btn-small:focus-visible,
+.btn-ghost:focus-visible,
+.openapi-doc-btn:focus-visible,
+.header-actions button:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bg-primary), 0 0 0 4px color-mix(in srgb, var(--accent-color) 55%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+   7. 输入控件：玻璃底 + 发丝边 + 聚焦光晕
+   --------------------------------------------------------------------------- */
+.form-group input:not([type="checkbox"]):not([type="radio"]),
+.form-group select,
+.form-group textarea {
+    border-radius: var(--ag-r-sm);
+    border-color: var(--ag-hairline-strong);
+    background: color-mix(in srgb, var(--input-bg) 84%, transparent);
+    box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.03);
+    transition: border-color var(--ag-fast) var(--ag-ease), box-shadow var(--ag-fast) var(--ag-ease),
+        background var(--ag-fast) var(--ag-ease);
+}
+
+.form-group input:not([type="checkbox"]):not([type="radio"]):hover,
+.form-group select:hover {
+    border-color: color-mix(in srgb, var(--accent-color) 40%, var(--ag-hairline-strong));
+}
+
+.form-group input:not([type="checkbox"]):not([type="radio"]):focus,
+.form-group select:focus,
+.form-group textarea:focus {
+    outline: none;
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--accent-color) 16%, transparent);
+}
+
+.search-box input {
+    border-radius: var(--ag-r-sm);
+    border-color: var(--ag-hairline-strong);
+    background: color-mix(in srgb, var(--input-bg) 84%, transparent);
+    transition: border-color var(--ag-fast) var(--ag-ease), box-shadow var(--ag-fast) var(--ag-ease);
+}
+
+.search-box input:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3.5px color-mix(in srgb, var(--accent-color) 16%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+   8. 下拉面板（语言 / 通知 / 用户菜单 / 会话排序）：真玻璃 + 弹出动效
+   --------------------------------------------------------------------------- */
+.lang-dropdown,
+.notification-dropdown,
+.user-menu-dropdown,
+.conversation-sort-menu {
+    background: var(--ag-glass-panel);
+    -webkit-backdrop-filter: blur(var(--ag-blur-panel)) saturate(var(--ag-sat));
+    backdrop-filter: blur(var(--ag-blur-panel)) saturate(var(--ag-sat));
+    border: 1px solid var(--ag-hairline);
+    border-radius: var(--ag-r-md);
+    box-shadow: var(--ag-edge-hi), var(--ag-shadow-pop);
+    animation: ag-pop var(--ag-fast) var(--ag-ease);
+    overflow: hidden;
+}
+
+.user-menu-dropdown,
+html[data-theme="dark"] .user-menu-dropdown {
+    box-shadow: var(--ag-edge-hi), var(--ag-shadow-pop);
+}
+
+@keyframes ag-pop {
+    from {
+        opacity: 0;
+        transform: translateY(-5px) scale(0.985);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.lang-option {
+    margin: 2px 6px;
+    border-radius: var(--ag-r-xs);
+    transition: background var(--ag-fast) var(--ag-ease), color var(--ag-fast) var(--ag-ease);
+}
+
+.lang-option:hover {
+    background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+
+.user-menu-item {
+    width: auto;
+    margin: 2px 6px;
+    border-radius: var(--ag-r-xs);
+    transition: background var(--ag-fast) var(--ag-ease), color var(--ag-fast) var(--ag-ease);
+}
+
+.user-menu-item:hover {
+    background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+    color: var(--text-primary);
+}
+
+.notification-item {
+    transition: background var(--ag-fast) var(--ag-ease);
+}
+
+.notification-item:hover {
+    background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+
+/* ---------------------------------------------------------------------------
+   9. 弹窗：玻璃面板
+   --------------------------------------------------------------------------- */
+.modal-content,
+html[data-theme="dark"] .modal-content {
+    border-radius: var(--ag-r-lg);
+    background: var(--ag-glass-panel);
+    -webkit-backdrop-filter: blur(var(--ag-blur-panel)) saturate(var(--ag-sat));
+    backdrop-filter: blur(var(--ag-blur-panel)) saturate(var(--ag-sat));
+    border: 1px solid var(--ag-hairline);
+    box-shadow: var(--ag-edge-hi), var(--ag-shadow-pop);
+}
+
+.modal-header {
+    background: transparent;
+    border-bottom: 1px solid var(--ag-hairline);
+    box-shadow: none;
+    border-top-left-radius: var(--ag-r-lg);
+    border-top-right-radius: var(--ag-r-lg);
+}
+
+html[data-theme="dark"] .modal-header {
+    background: transparent;
+}
+
+/* ---------------------------------------------------------------------------
+   10. 登录页：环境光画布 + 玻璃卡
+   --------------------------------------------------------------------------- */
+.login-overlay,
+html[data-theme="dark"] .login-overlay,
+html[data-theme="dark"] #login-overlay {
+    background:
+        radial-gradient(900px 520px at 18% 8%, rgba(0, 102, 255, 0.10), transparent 62%),
+        radial-gradient(820px 500px at 84% 12%, rgba(124, 58, 237, 0.09), transparent 62%),
+        radial-gradient(900px 620px at 68% 104%, rgba(20, 184, 166, 0.08), transparent 64%),
+        linear-gradient(180deg, rgba(244, 247, 252, 0.92), rgba(233, 238, 246, 0.94));
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    backdrop-filter: blur(14px) saturate(160%);
+}
+
+html[data-theme="dark"] .login-overlay,
+html[data-theme="dark"] #login-overlay {
+    background:
+        radial-gradient(900px 520px at 18% 8%, rgba(59, 130, 246, 0.16), transparent 62%),
+        radial-gradient(820px 500px at 84% 12%, rgba(139, 92, 246, 0.13), transparent 62%),
+        radial-gradient(900px 620px at 68% 104%, rgba(16, 185, 129, 0.09), transparent 64%),
+        linear-gradient(180deg, rgba(7, 11, 21, 0.92), rgba(10, 15, 27, 0.94));
+}
+
+.login-card {
+    background: var(--ag-glass-panel);
+    -webkit-backdrop-filter: blur(var(--ag-blur-panel)) saturate(var(--ag-sat));
+    backdrop-filter: blur(var(--ag-blur-panel)) saturate(var(--ag-sat));
+    border: 1px solid var(--ag-hairline);
+    border-radius: var(--ag-r-xl);
+    box-shadow: var(--ag-edge-hi), var(--ag-shadow-pop);
+}
+
+.login-brand {
+    border-bottom: 1px solid var(--ag-hairline);
+    background: linear-gradient(180deg,
+            color-mix(in srgb, var(--brand-ai-start) 8%, transparent) 0%,
+            color-mix(in srgb, var(--brand-ai-end) 4%, transparent) 50%,
+            transparent 100%);
+}
+
+.login-card .login-submit,
+html[data-theme="dark"] .login-card .login-submit {
+    border-radius: 12px;
+    background: linear-gradient(180deg,
+            color-mix(in srgb, var(--accent-color) 86%, #ffffff) 0%,
+            var(--accent-color) 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 6px 18px -8px color-mix(in srgb, var(--accent-color) 60%, transparent);
+    transition: transform var(--ag-fast) var(--ag-ease), box-shadow var(--ag-fast) var(--ag-ease),
+        background var(--ag-fast) var(--ag-ease);
+}
+
+.login-card .login-submit:hover {
+    transform: translateY(-1px);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.26),
+        0 10px 26px -10px color-mix(in srgb, var(--accent-color) 65%, transparent);
+}
+
+.login-card .login-submit:active {
+    transform: scale(0.98);
+}
+
+/* ---------------------------------------------------------------------------
+   11. 例外与收口
+   --------------------------------------------------------------------------- */
+/* 仪表盘有专属画布与专属页面头（点阵底 + 自铺渐变），材质层不与其打架 */
+.dashboard-page .page-header,
+html[data-theme="dark"] .dashboard-page .page-header {
+    position: relative;
+    z-index: 10;
+    background: color-mix(in srgb, var(--bg-primary) 74%, transparent);
+    -webkit-backdrop-filter: blur(20px) saturate(var(--ag-sat));
+    backdrop-filter: blur(20px) saturate(var(--ag-sat));
+    border-bottom: 1px solid var(--ag-hairline);
+    box-shadow: none;
+}
+
+/* 对话页：对话区 / 会话列表 / 输入区不铺不透明白底，让环境光以低强度透出 */
+.chat-container,
+.chat-messages,
+.conversation-sidebar {
+    background: color-mix(in srgb, #f5f7fa 42%, transparent);
+}
+
+html[data-theme="dark"] .chat-container,
+html[data-theme="dark"] .chat-messages,
+html[data-theme="dark"] .conversation-sidebar {
+    background: color-mix(in srgb, #0b1120 42%, transparent);
+}
+
+/* 字体渲染（macOS 上更接近原生观感） */
+body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* 动效偏好 */
+@media (prefers-reduced-motion: reduce) {
+    .lang-dropdown,
+    .notification-dropdown,
+    .user-menu-dropdown,
+    .conversation-sort-menu {
+        animation: none;
+    }
+
+    .btn-primary,
+    .btn-primary:hover,
+    .btn-primary:active,
+    .btn-secondary,
+    .btn-secondary:active,
+    .login-card .login-submit,
+    .login-card .login-submit:hover,
+    .login-card .login-submit:active,
+    .dashboard-kpi-card,
+    .dashboard-kpi-card:hover {
+        transform: none;
+        transition: none;
+    }
+}
