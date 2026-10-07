@@ -1,6 +1,7 @@
 # 能力平台：身份、清单与策略管线
 
 适用版本：能力注册表引入之后。调研背景见 `capability-platform-decoupling-research.md`，
+分发与发现层（市场）的研究与路线见 `capability-market-research.md`。
 完整能力清单是生成物 `docs/zh-CN/capability-catalog.md`（`make generate` 产出，禁止手工编辑）。
 
 ## 一、一条不变式
@@ -184,12 +185,13 @@ rerank 的 provider 名字是**另一个命名空间**，不要塞进模型方�
   （一次装、一次摘的一组单元）。读侧是**原子指针换出的不可变快照**（无锁读），写侧一把锁串行化。
 - 冲突一律"拒绝并指名道姓"（`*ErrConflict`），不覆盖：包不能顶掉内置能力，目录扫描也不能顶掉
   已安装的包；同 id 再装是升级（只回收自己上一版声明的单元）；卸载只摘表、**不删文件**。
-- `bundles/<id>/bundle.yaml` 是**按角色打包**的形状（角色 + 子代理 + 技能 + 工具），路径被
+- `bundles/<id>/bundle.yaml` 是**按域打包**的形状（角色 + 子代理 + 技能 + 工具），路径被
   `skillpackage.SafeRelPath` 关在包目录内，`version` 强制（没有版本就没有升级与回滚）。
-  格式与冲突规则见 `bundles/README.md`；随仓库提供四个按角色打包的示例包 ——
-  `mobile-app-security`（移动端）、`ai-app-redteam`（AI 应用红队）、
-  `source-code-audit`（源码与供应链审计，含一份 semgrep 配方）、`wireless-hardware`（无线与硬件）。
-  每个包的每一项交付都由 `TestExampleBundlesInstallAlongsideShippedCapabilities` 拿**既有加载器**验一遍
+  格式与冲突规则见 `bundles/README.md`；随仓库提供 **16 个市场货架包**（Web 渗透、API 安全、
+  内网与域渗透、云与容器、取证与逆向、CTF、初始访问、0day、区块链、多代理编排、通用战术方法，
+  外加移动端 / AI 红队 / 源码审计 / 无线硬件四个原有包），出厂**一个都不装**——
+  点过安装的才存在。每个包的每一项交付都由
+  `TestExampleBundlesInstallAlongsideShippedCapabilities` 拿**既有加载器**验一遍
   （角色 yaml、markdown agent、配方的能力清单），而不是只跟能力表自比。
 - `plugin` 是**唯一携带可执行代码**的单元类型：声明文件里的 `capabilities` 是人审过的入口清单，
   启用时宿主启动二进制并调 `capabilities/list` **双向核对**，一致才把能力登记进 `LayerPlugin`；
@@ -199,7 +201,9 @@ rerank 的 provider 名字是**另一个命名空间**，不要塞进模型方�
   「已声明、未启用」，持久化开关只重放「停用」方向——`internal/app/boot_plugins_test.go` 与
   `make wiring-check` 的 AST 断言钉住这两半。
 - **内置能力也走同一张表**：`roles/ agents/ skills/ tools/ 由 ScanDir 扫成单元，身份与既有加载器
-  逐项一致（实测 142 个：roles 13 / agents 16 / skills 23 / tools 90），由
+  逐项一致（出厂实测 96 个：roles 1 / agents 0 / skills 5 / tools 90——出厂极简是产品形态，
+  专业角色/智能体/技能都在货架上；"回到出厂目录"由
+  `TestFactoryTreeShipsNoProfessionalCapabilities` 反向断住），由
   `internal/app/plugin_parity_test.go` 钉住——真相源是既有加载器本身，不是手写清单。
 - 热插拔的安全性是**证出来的**：把快照换成原地写之后 `TestConcurrentReadersNeverTear` 在 `-race`
   下当场报出写与迭代的竞争；这正是角色 API 过去做的事（GET 请求里也会原地 `make` 那张 map）。
@@ -214,9 +218,22 @@ rerank 的 provider 名字是**另一个命名空间**，不要塞进模型方�
   安装只允许从 `<configDir>/bundles` 里挑（`../`、绝对路径一律 400）；单元身份含斜杠，
   所以路由拆成 `:kind/:name` 两段（单段会被 gin 在匹配前解掉转义而命中不到）。
   每次变更都会顺带重发角色目录，装完下一个请求就生效。
-  装过的包会在**下次启动时重新装入能力表**（`installBundlesFromDisk`，先扫内置再装包，
-  所以冒充内置身份的包仍按身份被拒），带配方的包在启动尾段随工具层一起重建；
-  否则「安装」就只等于「本次进程内有效」。这条是重启一次实测出来的，不是推演出来的。
+  装过的包会在**下次启动时重新装入能力表**（`installBundlesFromDisk` 按 `installed_bundles`
+  记录重放，先扫内置再按记录装包，所以冒充内置身份的包仍按身份被拒），带配方的包在启动尾段随
+  工具层一起重建；没点过安装的目录只是货架，永远不自己进表。这条是重启一次实测出来的，
+  不是推演出来的。
+- **市场面只说盘上查得到的话**（本轮 P0）：可安装卡片先回答“装下去会注册什么”——预览把每份
+  配方的 `capability:` 与每个插件声明的已审入口聚合成 class 计数、可执行代码标记和两个警告计数
+  （没有能力清单的配方、元数据读不出来的单元），确认弹窗逐条重复；包元数据
+  （categories / author / homepage / license / compatibility / changelog，均可选）随清单进目录
+  并渲染，关键词 + 分类筛选只在前端做。目录版本 ≠ 已装版本时显示为**升级**并给出单元级差异
+  （按安装时摘要比对），确认后走同一条安装端点；每次安装成功把包目录快照进
+  `bundles/.previous/<id>/<version>/`（`plugin.SnapshotBundle`），**回滚** =
+  `POST /api/plugins/install {"from_version": ...}`——先核对快照（id、版本与目录名一致）再覆盖回
+  包目录，安装记录随回滚更新，下次启动重放的是回滚后的版本；快照写失败进 `snapshot_error`、
+  没有快照就不显示回滚按钮。已装单元行带安装时摘要、发布者与 `已撤销` 标记（与执行路径
+  `CheckProvenance` 同一判据），`GET /api/plugins` 另带 `revocations`（来源 + 条目计数）与每包的
+  `rollbacks`。这一层全部只读：它不改变任何"谁能跑什么"的规则。
 - MCP 一侧补的是**身份**而不是热增删（远端服务器的增删启停本来就是热的）：
   `ExternalMCPManager` 把每台服务器的真实工具清单交给 `internal/app/remote_capabilities.go`，
   后者在 `capability.LayerRemote` 里**按服务器成组**登记/替换/摘除

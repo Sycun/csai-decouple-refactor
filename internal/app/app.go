@@ -589,10 +589,18 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	// would let the pack win the identity and the built-in scan would then refuse to put the
 	// shipped capability back.
 	//
-	// Without this step an installed pack lasts until the next restart, which is not what
-	// "install" means to whoever clicked it: every run path reads the capability table, and the
-	// table is rebuilt from disk at start-up.
-	if installed, refused := installBundlesFromDisk(pluginTable, filepath.Join(configDir, "bundles"), log.Logger); installed > 0 || len(refused) > 0 {
+	// What comes back is what the operator installed, not what the directory happens to hold: the
+	// install store is the record of those clicks, and a pack under bundles/ with no row is the
+	// catalogue the console offers. Without the record in either direction an "install" would only
+	// last until the next restart, and a catalogue pack would install itself at boot.
+	installedBundles := store.NewInstalledBundles(db.DB)
+	if err := installedBundles.EnsureSchema(); err != nil {
+		// Failing closed on purpose: with no table the recorded decisions cannot be read, and
+		// installing "everything on disk" instead would resurrect exactly the self-installing
+		// catalogue this store exists to end.
+		log.Logger.Warn("初始化能力包安装记录表失败，本次启动不重装任何能力包（目录仅作货架）", zap.Error(err))
+	}
+	if installed, refused := installBundlesFromDisk(pluginTable, filepath.Join(configDir, "bundles"), installedBundles, log.Logger); installed > 0 || len(refused) > 0 {
 		// Republish so the packs' roles reach the served catalog in this same boot, rather than
 		// waiting for somebody to install or unplug something.
 		if published, err := roleHandler.Reload(); err != nil {
@@ -646,7 +654,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	if externalMCPMgr != nil {
 		mcpProvisioner = externalMCPMgr
 	}
-	pluginHandler := handler.NewPluginHandler(pluginTable, filepath.Join(configDir, "bundles"), roleHandler, configHandler.Tools, mcpProvisioner, newPackPluginProvisioner(log.Logger), unitSwitches, auditSvc, log.Logger)
+	pluginHandler := handler.NewPluginHandler(pluginTable, filepath.Join(configDir, "bundles"), roleHandler, configHandler.Tools, mcpProvisioner, newPackPluginProvisioner(log.Logger), unitSwitches, installedBundles, ConsoleTrustProvider{}, auditSvc, log.Logger)
 	skillsHandler := handler.NewSkillsHandler(cfg, configPath, log.Logger)
 	bindAudit(skillsHandler, auditSvc)
 	fofaHandler := handler.NewFofaHandler(cfg, log.Logger)

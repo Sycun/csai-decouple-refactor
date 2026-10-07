@@ -1,0 +1,7 @@
+id: zero-day
+name: 0day 发现与情报包
+version: 1.0.0
+description: 0day 自主发现技能：变体分析、补丁间隙、差分、Fuzzing、污点推理与 N-day 武器化。公开漏洞打不动时的下一步。装完即生效，卸载即回到原状。
+units:
+  - kind: skill
+    path: skills/zero-day-discovery

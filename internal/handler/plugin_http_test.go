@@ -31,6 +31,8 @@ type pluginTestEnv struct {
 	// own recording provisioner and rebuilds the handler with it.
 	pluginsProvisioner PluginProvisioner
 	switches           *recordingSwitches
+	installs           *recordingInstalls
+	trust              capabilityTrust
 	table              *plugin.Table
 	bundles            string
 	recorder           *httptest.ResponseRecorder
@@ -123,6 +125,36 @@ func (r *recordingSwitches) Forget(unitIDs ...string) error {
 	return nil
 }
 
+// recordingInstalls stands in for the install store so a test can see which packs the click
+// recorded (with which version) and which were taken back - the two facts start-up replays.
+type recordingInstalls struct {
+	recorded map[string]string
+	forgot   []string
+	err      error
+}
+
+func (r *recordingInstalls) Record(bundleID, version string) error {
+	if r.err != nil {
+		return r.err
+	}
+	if version == "" {
+		return errors.New("recordingInstalls: an install needs the version it installed")
+	}
+	if r.recorded == nil {
+		r.recorded = map[string]string{}
+	}
+	r.recorded[bundleID] = version
+	return nil
+}
+
+func (r *recordingInstalls) Forget(bundleID string) error {
+	if r.err != nil {
+		return r.err
+	}
+	r.forgot = append(r.forgot, bundleID)
+	return nil
+}
+
 func newPluginTestEnv(t *testing.T, withBuiltInBundle bool) *pluginTestEnv {
 	t.Helper()
 	roles, _, table, dir := newRoleTestEnv(t)
@@ -139,8 +171,9 @@ func newPluginTestEnv(t *testing.T, withBuiltInBundle bool) *pluginTestEnv {
 			owners:  map[string]string{},
 		},
 		switches: &recordingSwitches{},
+		installs: &recordingInstalls{},
 	}
-	env.plugins = NewPluginHandler(table, bundlesDir, roles, env.tools, env.mcp, env.pluginsProvisioner, env.switches, nil, zap.NewNop())
+	env.plugins = NewPluginHandler(table, bundlesDir, roles, env.tools, env.mcp, env.pluginsProvisioner, env.switches, env.installs, env.trust, nil, zap.NewNop())
 
 	if withBuiltInBundle {
 		// The real example pack, copied next to the test config so the install path is exercised
@@ -213,6 +246,14 @@ func TestPluginInstallServesTheBundleImmediately(t *testing.T) {
 	}
 	if roles, _ := installed["roles"].(float64); roles < 2 {
 		t.Fatalf("roles after install = %v, want the shipped role plus the bundled one", installed["roles"])
+	}
+	// The click is the decision the next start-up replays, so it has to be recorded with the pack
+	// - not left to a later scan of the directory.
+	if installed["install_recorded"] != true {
+		t.Fatalf("install did not report a recorded decision: %v", installed)
+	}
+	if got := env.installs.recorded["reporting-pack"]; got != "1.0.0" {
+		t.Fatalf("the install decision was not written with the pack's version: %q", got)
 	}
 
 	// The role is live for a run, not just recorded in the table.
@@ -287,8 +328,16 @@ func TestPluginInstallServesTheBundleImmediately(t *testing.T) {
 		t.Fatalf("tool-layer rebuild calls after uninstall = %d, want 2 (the pack's recipe must stop "+
 			"being executable, not just leave the table)", env.tools.calls)
 	}
-	if got := decodeState(t, rec)["tools_rebuilt"]; got != true {
+	uninstalled := decodeState(t, rec)
+	if got := uninstalled["tools_rebuilt"]; got != true {
 		t.Fatalf("uninstall did not report a tool-layer rebuild: %v", got)
+	}
+	// And the record goes with the pack: a row left behind would re-install it at the next boot.
+	if uninstalled["install_forgotten"] != true {
+		t.Fatalf("uninstall did not report the install record taken back: %v", uninstalled)
+	}
+	if len(env.installs.forgot) != 1 || env.installs.forgot[0] != "reporting-pack" {
+		t.Fatalf("the install record was not forgotten with the pack: %v", env.installs.forgot)
 	}
 	if _, ok := lookupRole(env.roles.config, "报告撰写"); ok {
 		t.Fatalf("unplugged role is still served")
@@ -452,7 +501,7 @@ func TestPluginUnitDetachRespectsOwnership(t *testing.T) {
 }
 
 func TestPluginHandlerWithoutATableIsUnavailableNotPanic(t *testing.T) {
-	h := NewPluginHandler(nil, "", nil, nil, nil, nil, nil, nil, zap.NewNop())
+	h := NewPluginHandler(nil, "", nil, nil, nil, nil, nil, nil, nil, nil, zap.NewNop())
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.GET("/api/plugins", h.GetState)
@@ -993,5 +1042,53 @@ func TestPluginSwitchReportsAMissingOrFailingSwitchStore(t *testing.T) {
 	}
 	if msg, _ := state["switch_message"].(string); !strings.Contains(msg, "database is locked") {
 		t.Fatalf("the write failure was swallowed: %q", msg)
+	}
+}
+
+// An install the store cannot record is a session install, and the response has to say so:
+// "能力包已安装并生效" is true in-process either way, and without the flag the pack's
+// disappearance at the next restart would look like a random uninstall.
+func TestPluginInstallReportsAMissingOrFailingInstallStore(t *testing.T) {
+	env := newPluginTestEnv(t, true)
+	env.plugins.installs = nil
+	rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"reporting-pack"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("install: %d %s", rec.Code, rec.Body.String())
+	}
+	state := decodeState(t, rec)
+	if state["install_recorded"] != false {
+		t.Fatalf("a missing store reported a recorded install: %v", state)
+	}
+	if msg, _ := state["install_message"].(string); !strings.Contains(msg, "未落库") {
+		t.Fatalf("the response does not say the install is session-only: %q", msg)
+	}
+	// The install itself still happened: the failure is durability, not the request.
+	if _, ok := env.table.Unit("role/报告撰写"); !ok {
+		t.Fatal("a failed record left the pack out of the table while the response said 安装并生效")
+	}
+
+	env2 := newPluginTestEnv(t, true)
+	env2.installs.err = errors.New("database is locked")
+	rec = env2.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"reporting-pack"}`)
+	state = decodeState(t, rec)
+	if state["install_recorded"] != false {
+		t.Fatalf("a failed write reported a recorded install: %v", state)
+	}
+	if msg, _ := state["install_message"].(string); !strings.Contains(msg, "database is locked") {
+		t.Fatalf("the write failure was swallowed: %q", msg)
+	}
+
+	// And the same store failing on the way out has to name what a stale row will do: re-install
+	// the pack at the next boot.
+	rec = env2.do(t, http.MethodDelete, "/api/plugins/bundles/reporting-pack", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("uninstall: %d %s", rec.Code, rec.Body.String())
+	}
+	state = decodeState(t, rec)
+	if state["install_forgotten"] != false {
+		t.Fatalf("a failed forget reported the record taken back: %v", state)
+	}
+	if msg, _ := state["install_message"].(string); !strings.Contains(msg, "重新装入") {
+		t.Fatalf("the response does not name the consequence of a stale row: %q", msg)
 	}
 }

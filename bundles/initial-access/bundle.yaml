@@ -1,0 +1,7 @@
+id: initial-access
+name: 初始访问与社工包
+version: 1.0.0
+description: 初始访问技能：凭据喷洒、AiTM、设备码与 OAuth 同意钓鱼、载荷制作与社会工程。装完即生效，卸载即回到原状。
+units:
+  - kind: skill
+    path: skills/initial-access-phishing

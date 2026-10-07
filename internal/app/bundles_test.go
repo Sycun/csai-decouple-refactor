@@ -66,8 +66,10 @@ func exampleBundleDirs(t *testing.T, root string) []string {
 }
 
 // TestExampleBundlesInstallAlongsideShippedCapabilities is the end-to-end shape of "one click to
-// extend": the shipped tree is in the table, a role pack installs on top of it without disturbing
-// anything, and unplugging returns the table to exactly the identity set it started from.
+// extend": the shipped tree is in the table, the catalogue under bundles/ installs on top of it
+// without disturbing anything, and unplugging returns the table to exactly the identity set it
+// started from. The catalogue is also where the professional content lives now, so this test is
+// what proves the factory tree still has a home for every role/agent/skill it no longer ships.
 func TestExampleBundlesInstallAlongsideShippedCapabilities(t *testing.T) {
 	root := pluginRepoRoot(t)
 	shipped := scanShippedUnits(t, root)
@@ -75,8 +77,8 @@ func TestExampleBundlesInstallAlongsideShippedCapabilities(t *testing.T) {
 	if len(before) != len(shipped) {
 		t.Fatalf("the built-in directories yield %d units but only %d distinct identities", len(shipped), len(before))
 	}
-	if len(before) < 140 {
-		t.Fatalf("only %d shipped units scanned (measured 142)", len(before))
+	if len(before) < 96 {
+		t.Fatalf("only %d shipped units scanned (measured 96: 1 role + 90 tools + 0 agents + 5 skills)", len(before))
 	}
 
 	table := plugin.NewTable()
@@ -113,8 +115,22 @@ func TestExampleBundlesInstallAlongsideShippedCapabilities(t *testing.T) {
 			t.Fatalf("InstallBundle %s: %v", b.ID, err)
 		}
 	}
-	if len(added) < 3 {
-		t.Fatalf("example bundles deliver only %d units; the sample pack has gone thin", len(added))
+	if len(added) < 55 {
+		t.Fatalf("the shipped catalogue delivers only %d units (measured 59 across 16 packs); the "+
+			"professional content has gone thin or lost a pack", len(added))
+	}
+	// The catalogue is where the professional content lives now: these identities left the factory
+	// tree on purpose, so a pack has to carry each of them.
+	for _, id := range []string{
+		"role/CTF", "role/渗透测试", "role/后渗透测试", "role/云安全审计",
+		"agent/recon", "agent/orchestrator", "agent/penetration", "agent/opsec-evasion",
+		"skill/web-attack-methods", "skill/active-directory-attack", "skill/cloud-attack-methods",
+		"skill/ai-llm-app-attack", "skill/source-code-hunting", "skill/wireless-hardware-attack",
+	} {
+		if !added[id] {
+			t.Errorf("no shipped pack delivers %s: it is no longer in the factory tree, so the "+
+				"catalogue must carry it", id)
+		}
 	}
 	if table.Generation() <= genAfterScan {
 		t.Fatalf("installing %d example units did not move the generation", len(added))
@@ -133,6 +149,10 @@ func TestExampleBundlesInstallAlongsideShippedCapabilities(t *testing.T) {
 	}
 	if len(roleUnits) == 0 {
 		t.Fatalf("no example bundle delivered a role")
+	}
+	if len(roleUnits) < 16 {
+		t.Fatalf("the catalogue delivers %d roles (measured 16: the 12 factory roles that moved into "+
+			"packages plus the 4 pack-only roles)", len(roleUnits))
 	}
 	for _, u := range roleUnits {
 		role, err := config.LoadRoleFromFile(u.Path)
@@ -169,9 +189,9 @@ func TestExampleBundlesInstallAlongsideShippedCapabilities(t *testing.T) {
 			t.Errorf("loaded %d agent definitions from %d delivered agent files", got, len(agentPaths))
 		}
 	}
-	if len(agentPaths) < 4 {
-		t.Fatalf("example packs deliver only %d agents: the sample content has gone thin, and the "+
-			"agent assertions below would be running on an empty set", len(agentPaths))
+	if len(agentPaths) < 20 {
+		t.Fatalf("the catalogue delivers only %d agents (measured 20: the 16 that moved out of the "+
+			"factory agents/ directory plus the 4 pack-only specialists)", len(agentPaths))
 	}
 	if len(toolPaths) < 1 {
 		t.Fatalf("no example pack ships a tool recipe, so the table-driven recipe path has no shipped " +

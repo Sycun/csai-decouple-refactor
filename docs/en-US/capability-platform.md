@@ -1,6 +1,7 @@
 # Capability platform: identity, manifest, policy pipeline
 
 This describes what is **implemented** (research background: `capability-platform-decoupling-research.md`).
+The distribution/discovery layer (market) is scoped in `capability-market-research.md`.
 The full inventory is generated — `docs/zh-CN/capability-catalog.md`, produced by `make generate`, never edited by hand.
 
 ## 1. The invariant
@@ -240,19 +241,23 @@ one identity scheme and one live table:
   host holds no trust domain until the operator switches it on, and a persisted switch is replayed only
   in the "off" direction. `internal/app/boot_plugins_test.go` and a `make wiring-check` AST assertion
   pin both halves.
-- `bundles/<id>/bundle.yaml` is the shape of **packaging by role** (role + sub-agent + skills +
+- `bundles/<id>/bundle.yaml` is the shape of **packaging by domain** (role + sub-agent + skills +
   tools); paths are confined to the bundle directory by `skillpackage.SafeRelPath` and `version` is
   mandatory, because a pack without one cannot be upgraded or rolled back. Format and ownership
-  rules: `bundles/README.md`. Four role-shaped packs ship with the repository -
-  `mobile-app-security`, `ai-app-redteam`, `source-code-audit` (which carries a semgrep recipe, so the
-  tool path has shipped content proving it) and `wireless-hardware`. Every unit of every pack is read
-  back through the **existing loader** (role YAML, markdown agent, recipe capability manifest) by
-  `TestExampleBundlesInstallAlongsideShippedCapabilities`, rather than compared against the table that
-  derived it.
+  rules: `bundles/README.md`. **Sixteen catalogue packs** ship with the repository (web penetration,
+  API security, AD/internal, cloud/container, forensics/reversing, CTF, initial access, 0day,
+  blockchain, multi-agent orchestration, tradecraft, plus the original mobile / AI red-team /
+  source-audit / wireless packs), and **none of them is installed at the factory** - a pack exists
+  only after somebody clicked install. Every unit of every pack is read back through the
+  **existing loader** (role YAML, markdown agent, recipe capability manifest) by
+  `TestExampleBundlesInstallAlongsideShippedCapabilities`, rather than compared against the table
+  that derived it.
 - **Shipped capabilities go through the same table**: `roles/ agents/ skills/ tools/` are scanned
-  into units whose identities match the existing loaders entry for entry (measured 142: 13 roles /
-  16 agents / 23 skills / 90 tools), pinned by `internal/app/plugin_parity_test.go` - the truth
-  source is those loaders, not a hand-written list.
+  into units whose identities match the existing loaders entry for entry (factory measured 96:
+  1 role / 0 agents / 5 skills / 90 tools - the minimal factory is the product shape, and the
+  professional content waits in the catalogue; that shape is pinned from the other side by
+  `TestFactoryTreeShipsNoProfessionalCapabilities`), pinned by
+  `internal/app/plugin_parity_test.go` - the truth source is those loaders, not a hand-written list.
 - The safety of hot-swap is **demonstrated, not argued**: replacing the copy-on-write clone with an
   in-place write makes `TestConcurrentReadersNeverTear` report the write-vs-iterate race under
   `-race`. That in-place pattern is precisely what the role API used to do, including allocating
@@ -276,10 +281,29 @@ one identity scheme and one live table:
   be unescaped by gin before matching and would never hit. Every mutation republishes the role
   catalog, so the next request already sees the change.
   A pack that was installed is re-installed into the capability table on the next start-up
-  (`installBundlesFromDisk`, built-ins scanned first so a pack that shadows a shipped identity is
-  still refused by identity), and a pack carrying a recipe rebuilds the tool layer at the end of
-  boot - without that, "install" would only mean "until the next restart". Verified by killing the
+  (`installBundlesFromDisk` replays the `installed_bundles` record, built-ins scanned first so a
+  pack that shadows a shipped identity is still refused by identity), and a pack carrying a recipe
+  rebuilds the tool layer at the end of boot. The other direction is the same rule: a directory
+  nobody installed is the catalogue and never enters the table on its own. Verified by killing the
   process once and re-reading the served counts, not by reasoning.
+- **The market surface only says what is readable on disk** (this round's P0). A catalogue card
+  answers "what would installing register" before the click: the preview aggregates each recipe's
+  `capability:` block and each plugin declaration's reviewed entries into class counts, a live-code
+  flag and two warning counts (recipes with no capability manifest, units whose metadata could not
+  be read), and the confirm dialog repeats it. Optional catalogue metadata (categories / author /
+  homepage / license / compatibility / changelog) travels in the manifest and renders on the card;
+  the keyword + category filter runs entirely client-side. An on-disk version that moved past the
+  installed one is offered as an **upgrade** with a unit-level diff (compared by install-time
+  digests) and accepts through the same install endpoint. Every successful install snapshots the
+  pack directory to `bundles/.previous/<id>/<version>/` (`plugin.SnapshotBundle`); **rollback** is
+  `POST /api/plugins/install {"from_version": ...}` - the snapshot is re-checked (id and version
+  must agree with its directory) and copied back over the pack directory, the install record
+  follows so the next boot replays the restored version, a failed snapshot is reported as
+  `snapshot_error`, and no snapshot means no rollback button. Installed unit rows carry the
+  install-time digest, the publisher and a `revoked` mark that uses the execution path's own
+  `CheckProvenance` match; `GET /api/plugins` also carries the `revocations` view (source plus
+  entry counts) and each bundle's `rollbacks`. All of it is read-only: none of it changes what may
+  run.
 - For MCP the missing piece was **identity**, not liveness (adding, removing, starting and
   stopping an external server was already hot). `ExternalMCPManager` now reports each server's
   real tool inventory to `internal/app/remote_capabilities.go`, which registers, replaces and

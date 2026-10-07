@@ -106,48 +106,93 @@ func resolveUnderConfig(dir, configDir, fallback string) string {
 	return filepath.Join(configDir, name)
 }
 
-// installBundlesFromDisk re-installs the packs that live under <configDir>/bundles.
+// installRecords is the part of the install store the boot path uses: which packs the operator
+// actually installed, and the version refresh when the directory's content moved forward. A nil
+// reader is legal Go and means "the recorded decisions are unknown", in which case nothing is
+// re-installed - a directory is the catalogue, and only a record makes it part of the installation.
+type installRecords interface {
+	All() ([]store.InstalledBundle, error)
+	Record(bundleID, version string) error
+}
+
+// installBundlesFromDisk re-installs exactly the packs the operator installed - the rows in the
+// install store - not everything that happens to sit under <configDir>/bundles.
 //
 // Without this an installed capability lasts until the next restart, which is not what
 // "install" means to the person who clicked it: every run path reads the table, and the table is
-// rebuilt from disk at start-up. A pack on disk is therefore part of the installation, not a
-// session.
+// rebuilt from disk at start-up. The other direction matters just as much: a directory nobody
+// installed must NOT become live at boot, or "shipped next to the app" and "part of this
+// installation" would be the same set and the catalogue would install itself.
 //
 // The built-in scan runs first on purpose. Identity is what makes the merge safe, so a pack that
 // shadows a shipped capability must be refused here exactly as the install endpoint refuses it,
 // rather than winning because it happened to load before the built-in scan could object.
 //
-// A pack that cannot be read is reported and skipped: one half-written bundle.yaml must not stop
-// the server from booting, and must not be able to take the *other* packs' capabilities away.
-func installBundlesFromDisk(table *plugin.Table, root string, logger *zap.Logger) (int, []string) {
+// A recorded pack that cannot be read, or whose directory is gone, is reported and skipped: one
+// half-written bundle.yaml must not stop the server from booting, must not be able to take the
+// *other* packs' capabilities away, and must not silently drop the operator's decision - the row
+// stays, so restoring the directory restores the pack.
+func installBundlesFromDisk(table *plugin.Table, root string, records installRecords, logger *zap.Logger) (int, []string) {
 	if table == nil || strings.TrimSpace(root) == "" {
 		return 0, nil
 	}
-	entries, err := os.ReadDir(root)
+	if records == nil {
+		if logger != nil {
+			logger.Warn("未装配能力包安装记录存储，本次启动不重装任何能力包（bundles 目录仅作可安装货架）")
+		}
+		return 0, nil
+	}
+	rows, err := records.All()
 	if err != nil {
-		return 0, nil // no bundles directory is a normal state, not a failure
+		if logger != nil {
+			logger.Warn("读取能力包安装记录失败，本次启动不重装任何能力包", zap.Error(err))
+		}
+		return 0, nil
 	}
 	var installed int
 	var refused []string
-	for _, entry := range entries {
-		name := entry.Name()
-		if !entry.IsDir() || strings.HasPrefix(name, ".") {
+	for _, row := range rows {
+		// The id names a directory under root before any manifest has been read; a hand-edited row
+		// must not be able to point the join outside the bundles root.
+		if !store.ValidBundleID(row.ID) {
+			refused = append(refused, fmt.Sprintf("%q: 安装记录里的包名不可用", row.ID))
 			continue
 		}
-		dir := filepath.Join(root, name)
+		dir := filepath.Join(root, row.ID)
+		if _, err := os.Stat(dir); err != nil {
+			refused = append(refused, fmt.Sprintf("%s: 目录不存在（安装记录保留，放回目录即恢复）", row.ID))
+			continue
+		}
 		bundle, err := loadBundleForScan(dir)
 		if err != nil {
-			refused = append(refused, fmt.Sprintf("%s: %v", name, err))
+			refused = append(refused, fmt.Sprintf("%s: %v", row.ID, err))
+			continue
+		}
+		if bundle.ID != row.ID {
+			refused = append(refused, fmt.Sprintf("%s: 目录里的包声明为 %q，与安装记录不一致", row.ID, bundle.ID))
 			continue
 		}
 		if err := table.InstallBundle(bundle); err != nil {
-			refused = append(refused, fmt.Sprintf("%s: %v", name, err))
+			refused = append(refused, fmt.Sprintf("%s: %v", row.ID, err))
 			continue
 		}
 		installed++
+		// The shipped tree moving a pack forward (new release in the same directory) is a content
+		// update of a decision the operator already made; the recorded version follows so the
+		// console can compare installed vs on-disk. A downgrade is recorded the same way - the
+		// row describes what is installed, and what is installed is what the directory holds.
+		if bundle.Version != row.Version {
+			if err := records.Record(row.ID, bundle.Version); err != nil && logger != nil {
+				logger.Warn("能力包版本变更未能写回安装记录",
+					zap.String("bundle", row.ID), zap.String("from", row.Version), zap.String("to", bundle.Version), zap.Error(err))
+			} else if logger != nil {
+				logger.Info("能力包内容已随目录更新",
+					zap.String("bundle", row.ID), zap.String("from", row.Version), zap.String("to", bundle.Version))
+			}
+		}
 	}
 	if logger != nil && (installed > 0 || len(refused) > 0) {
-		logger.Info("能力包已从磁盘重新装入能力表",
+		logger.Info("能力包已按安装记录重新装入能力表",
 			zap.String("root", root), zap.Int("installed", installed), zap.Int("refused", len(refused)))
 		for _, r := range refused {
 			logger.Warn("能力包未能装入，其余包与内置能力不受影响", zap.String("bundle", r))

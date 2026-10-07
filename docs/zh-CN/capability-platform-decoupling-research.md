@@ -269,7 +269,7 @@ manifest 与已批准版本相同 → 只做自动重扫；任何**新增**能�
 
 1. **`agent:local-execute` 的现状是否作为 P1 阻断项立即处理**——它决定了社区制品的可用攻击面，也决定平台能不能安全上线。
 2. **是否授权修改已发布约定**：`developer-guide.md:11` 把 "app wiring, routes, MCP tool registration" 写成 `internal/app` 的职责，`zh:38` 要求路由集中注册；P2/P6 与这两条冲突（`zh:60` 又说要"在合适模块注册"——文档自身矛盾，需要裁决）。
-3. **默认只有一个角色**时，仓库自带的 14 roles / 26 skills / 16 agents 是否转为"默认可卸载包"，以及内核三处硬编码编排槽位（`agents/markdown.go:18,21,24`）先改成配置。
+3. ✅ **已决（2026-10-07）：转为"默认可卸载包"**——出厂树只留默认角色 / 5 个技能（总纲 + 内核纪律 + 格式演示）/ 90 个工具配方；12 个专业角色、18 个专业技能、16 个智能体按域并入 16 个货架包（`bundles/README.md`）。安装是运维者的决定：记录落 `installed_bundles`，**不点不存在、点了跨重启保留**，目录只是货架（`installBundlesFromDisk` 按记录重放）。内核三处编排文件名的硬编码**未改成配置、也不需要**：单元身份 `agent/<name>` 全局唯一本就保证 `orchestrator.md` 只有一个提供方（多代理编排包），缺包时 plan_execute / supervisor 用内置提示、deep 回落 Eino 默认，多代理照常可跑。实施记录见 §11 的「出厂极简与安装记录」。
 4. **社区知识文本是否接受"结构性降级"（只进引用通道、不进决策路径）**——这会让知识库对 agent 的直接帮助变弱，是产品体验与安全之间的真实取舍。
 5. **registry 服务与主仓库的组织方式**：registry 作为独立 repo（PR 即提交、CI 即审核）还是你们已有的服务端；以及气隙交付时的离线包格式与刷新流程。
 6. **AGPL 边界确认**：可以照 yakit 的机制设计，不可复用其代码；若你们计划引入任何 yaklang 生态件，需法务确认。
@@ -3425,7 +3425,7 @@ conversations`）。
 | P3 契约与前端 | **部分：三套事件名契约已完成并双侧比对**；逐文件 ES 模块未做 | `go test -count=1 -run 'TestSSEPage|TestPersistedDetail|TestGeneratedSSEEnum|TestPageLoads' ./internal/handler/`；手拼帧基线 0 |
 | P4 进程外插件宿主 | **部分：进程外 ABI + 软出网已落**；netns/seccomp 硬边界与内嵌 CPython **未做** | `ls internal/pluginhost`；`grep -rl 'seccomp\|CLONE_NEWNET' internal/` → **无匹配**（这就是"未做"的证据） |
 | P5 审核流水线/商店 | **部分：客户端强制 + 制品签名/撤销已落**；registry 服务端、气隙离线包、沙箱引爆自动化 **未做** | `ls internal/artifact`；`ls internal/registry` → **不存在** |
-| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、**数据层按域切出 28 个 store / `internal/store` 44 个生产文件、包内 242 条测试**（`*database.DB` 361 → **4**，只降门禁，且 `internal/database` 的读写 SQL 归零；C2、监控、RBAC、会话、项目五域整片交回各自 store、开机骨架连同 DDL 与检查点循环一并收口，见 §11 第四十至四十五刀；漏洞域两片 + 攻击链一片 + workflow 一片已交，`internal/database/vulnerability.go`、`vulnerability_alert.go`、`attackchain.go`、`workflow.go` + `workflow_package.go`、`project_fact_edges.go`、`project.go`、`project_stats.go`、`project_dashboard.go`、`plantask.go`、`storage_activity.go` 十一个文件删除）、**分层裸 SQL 归零**（两个自有层之外 0 条）、DATETIME 读法 24 处 → 1 处、应用回调不再挂在连接包装上、**handler 层不持有任何数据库句柄**、`vulnerabilities` 表按"唯一写入者"认领（`TestFindingsTableHasOneWriter`），告警两张表、`robot_user_bindings` 与攻击链两张表进归属清单；**黑板两张表（`project_facts` / `project_fact_edges`）的 SQL 与 DDL 整体进 `store.Facts`**，`TestProjectFactsHasOneWriter` 按写入者认领（事实 6 条写、边 9 条写，各自只有一个主人文件），store 的写面由 `TestStoreWritesOnlyTablesItOwns` 双向核对（账本 51 张表）+ `TestWriteLedgerTablesHaveOneWriterEach` 全仓反第二写者（含只降的债务台账）；黑板账本已彻底离开连接包装（`ProjectFactStore` 劈成 `ProjectRowStore` + `BlackboardLedger`，18 个转发删掉）；搬走的 DDL 由 `TestSchemaEnsuresAreWiredAtBoot` 逐条盯开机接线、外键顺序与"老家不许再提这张表"、Eino 6 包（适配外 3 包）、`AgentHandler` 六刀至 **88 方法 / 20 文件**、审计注入门禁、手写 OpenAPI 文档按域拆成 5 个分组文件 + golden（157 操作逐字节等值） | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `transport layer: 0 structs hold *database.DB, 18 fields hold a narrowed database interface, 28 hold their own table store, 1160 struct fields scanned (started 19/0)`；`go test -count=1 -v -run TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt ./internal/layering/` 报 `0 statements in 0 files, over 511 production files scanned`；`go test -count=1 -run 'TestFindingContract' ./internal/handler/` 9 条契约用例；`go test -count=1 -run 'TestOpenAPI' ./internal/handler/` |
+| P6 常规解耦 | **部分**：`setupRoutes` 分域、Provider 方言 + 目录代码生成、**数据层按域切出 28 个 store / `internal/store` 44 个生产文件、包内 242 条测试**（`*database.DB` 361 → **4**，只降门禁，且 `internal/database` 的读写 SQL 归零；C2、监控、RBAC、会话、项目五域整片交回各自 store、开机骨架连同 DDL 与检查点循环一并收口，见 §11 第四十至四十五刀；漏洞域两片 + 攻击链一片 + workflow 一片已交，`internal/database/vulnerability.go`、`vulnerability_alert.go`、`attackchain.go`、`workflow.go` + `workflow_package.go`、`project_fact_edges.go`、`project.go`、`project_stats.go`、`project_dashboard.go`、`plantask.go`、`storage_activity.go` 十一个文件删除）、**分层裸 SQL 归零**（两个自有层之外 0 条）、DATETIME 读法 24 处 → 1 处、应用回调不再挂在连接包装上、**handler 层不持有任何数据库句柄**、`vulnerabilities` 表按"唯一写入者"认领（`TestFindingsTableHasOneWriter`），告警两张表、`robot_user_bindings` 与攻击链两张表进归属清单；**黑板两张表（`project_facts` / `project_fact_edges`）的 SQL 与 DDL 整体进 `store.Facts`**，`TestProjectFactsHasOneWriter` 按写入者认领（事实 6 条写、边 9 条写，各自只有一个主人文件），store 的写面由 `TestStoreWritesOnlyTablesItOwns` 双向核对（账本 52 张表）+ `TestWriteLedgerTablesHaveOneWriterEach` 全仓反第二写者（含只降的债务台账）；黑板账本已彻底离开连接包装（`ProjectFactStore` 劈成 `ProjectRowStore` + `BlackboardLedger`，18 个转发删掉）；搬走的 DDL 由 `TestSchemaEnsuresAreWiredAtBoot` 逐条盯开机接线、外键顺序与"老家不许再提这张表"、Eino 6 包（适配外 3 包）、`AgentHandler` 六刀至 **88 方法 / 20 文件**、审计注入门禁、手写 OpenAPI 文档按域拆成 5 个分组文件 + golden（157 操作逐字节等值） | `make layering-check` + `make wiring-check`；`go test -count=1 -v -run TestHandlerLayerHoldsNoGodObject ./internal/layering/` 报 `transport layer: 0 structs hold *database.DB, 18 fields hold a narrowed database interface, 28 hold their own table store, 1160 struct fields scanned (started 19/0)`；`go test -count=1 -v -run TestRawSQLIsOnlyWrittenByTheLayersThatOwnIt ./internal/layering/` 报 `0 statements in 0 files, over 511 production files scanned`；`go test -count=1 -run 'TestFindingContract' ./internal/handler/` 9 条契约用例；`go test -count=1 -run 'TestOpenAPI' ./internal/handler/` |
 | §6.1 社区知识控制 | **代码层已落**（围栏 + 入库拒绝 + 装配点守卫）；是否按运行期不可信处理仍待裁决（决策项 4） | `go test -count=1 ./internal/contentpolicy/` |
 
 **没有做成的事**（不假装完成）：`AgentHandler` 分解本体（88 方法 / 20 文件，仍是全仓最大的类型；
@@ -3536,8 +3536,8 @@ origin    https://github.com/AIPentest/CyberStrikeAI.git       # 上游父仓库
    `internal/knowledge` 是 `internal/handler` 之后最后一个在两个自有层之外写 SQL 的包，见 §11「P6 数据层
    第十一片」；现在连 `internal/database` 自己都为零——复现：
    `for d in internal/database internal/store; do echo -n "$d "; ls $d/*.go | grep -v _test | wc -l | tr -d ' '; grep -rhoE '\b(SELECT|INSERT INTO|UPDATE|DELETE FROM)\b' $(ls $d/*.go | grep -v _test) | wc -l | tr -d ' '; done`
-   → 实测 **database 0 处 / 21 文件、store 620 处 / 44 文件**；store 那一侧的 215 条**写**语句
-   全部落在 `writeLedger` 登记的 51 张表上，`go test -count=1 -v -run TestStoreWritesOnlyTablesItOwns ./internal/store/`
+   → 实测 **database 0 处 / 21 文件、store 624 处 / 45 文件**；store 那一侧的 217 条**写**语句
+   全部落在 `writeLedger` 登记的 52 张表上，`go test -count=1 -v -run TestStoreWritesOnlyTablesItOwns ./internal/store/`
    会把三个数打印出来）：按 `*DB` 接收者当场数的**大水面（第四十五刀后复测）**只剩
    **`database.go 4`**，复现命令：`for f in internal/database/*.go; do case "$f" in *_test.go) continue;; esac; n=$(grep -cE '^func \([a-zA-Z_]+ \*DB\)' "$f"); [ "$n" -gt 0 ] && printf "%4d %s\n" "$n" "$f"; done | sort -rn`，
    **合计 4**（`TestDatabaseSurfaceOnlyShrinks` 的上限就是它，只降不升）。**按域切的领域刀与开机骨架刀
@@ -3547,6 +3547,38 @@ origin    https://github.com/AIPentest/CyberStrikeAI.git       # 上游父仓库
    Eino 收到 ≤1 包、session 事件溯源。
 3. 需要你插队的只有一件：**§10 决策项 1**（`agent:local-execute` 是否作为阻断项立即处理），
    它决定社区制品的攻击面；其余决策项可以在 P4/P5 动工前再定。
+
+### 出厂极简与安装记录 —— 完成（2026-10-07）
+
+**做什么**：出厂树从"全量内置"改为"极简出厂 + 市场货架"。出厂只剩 `roles/默认.yaml`（1）、
+`skills/` 5 个（pentest-agent-os 总纲 / pentest-blackboard / pentest-output-standards /
+pentest-verification 四个内核纪律 + cyberstrike-eino-demo 格式演示）、`tools/` 90 个配方、
+`agents/` 为空（放 README 说明新模型）；其余 12 个角色 / 18 个专业域技能 / 16 个智能体按域并入
+**16 个货架包**（实测 59 单元：roles 16 / agents 20 / skills 22 / tools 1），控制台
+「平台管理 → 能力包」是安装的唯一入口。
+
+**安装语义（"不点不存在"的机制）**：新增 `internal/store/installed_bundles.go`
+（表 `installed_bundles`，落 `bundle_id + version`，进 `writeLedger` 第 52 张表）。
+`installBundlesFromDisk` 由"装入目录里的全部包"改为**按记录重放**：
+
+- 目录有、记录无 → 不装（货架语义；改动前正是"目录里的包出厂即在"的来路）；
+- 记录有、目录无 → 点名告警、记录保留（放回目录即恢复）；
+- 目录版本变化 → 按目录重装并刷新记录；
+- 存储读不出来（含未装配的 nil）→ **一个都不装**（fail-closed，而不是回退成"把目录全装上"）。
+
+`POST /api/plugins/install` 成功后写记录、卸载删记录，响应带 `install_recorded` /
+`install_forgotten`（失败时给出后果说明——"重启后本包需要重新安装"）；
+`NewPluginHandler` 新增必填参数，装配漏传由 `make wiring-check` 的 AST 断言抓住。
+
+**门禁**：`plugin_parity_test.go` 从"数量下限"改为**精确集合断言**（出厂 roles={默认}、
+agents=∅、skills=5 个点名、tools≥90、总数下限 96），并新增反向断言
+`TestFactoryTreeShipsNoProfessionalCapabilities`（role/CTF、agent/recon 等不得回到出厂目录）；
+货架侧由 `TestExampleBundlesInstallAlongsideShippedCapabilities` 逐包逐单元按既有加载器验读
+（14 个关键身份点名、59 单元下限、跨包身份唯一、与内置零重叠、卸载回环）；
+启动语义由 `TestBundlesOnDiskAreReinstalledAtBoot`（有记录才装 / 无记录不装 / 冒充被拒 /
+缺目录点名 / 版本刷新）与 `TestBootInstallsNothingWithoutAReadableInstallRecord` 钉住；
+`store` 侧 `TestInstalledBundlesRoundTrip` 与坏 id 拒绝（`../evil` 不得被 join）。
+真机点验记录见 `bundles/README.md`「生效时机」。
 
 ## 附录 A：如何复现本报告的关键数字
 

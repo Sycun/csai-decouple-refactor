@@ -267,3 +267,50 @@ func TestManifestFromARelativeDirectoryYieldsAbsolutePaths(t *testing.T) {
 		}
 	}
 }
+
+// TestCatalogueMetadataIsOptionalAndNormalized: the descriptive fields are rendered by the
+// console and read by no install-time rule, so an old manifest must resolve byte-for-byte as
+// before, and a new one must arrive trimmed, de-duplicated and in the author's order.
+func TestCatalogueMetadataIsOptionalAndNormalized(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "plain-pack", "roles", "r.yaml"), "name: r\n")
+	writeFile(t, filepath.Join(root, "rich-pack", "roles", "r.yaml"), "name: r\n")
+
+	// The minimal form the four shipped example packs use today: no metadata keys at all.
+	minimal := writeManifest(t, filepath.Join(root, "plain-pack"),
+		"id: plain-pack\nversion: 1.0.0\nunits:\n  - kind: role\n    path: roles/r.yaml\n")
+	m, err := LoadManifest(minimal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := m.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Categories) != 0 || bundle.Author != "" || bundle.Homepage != "" ||
+		bundle.License != "" || bundle.Compatibility != "" || bundle.Changelog != "" {
+		t.Fatalf("a manifest without metadata must resolve with empty fields, got %+v", bundle)
+	}
+
+	rich := writeManifest(t, filepath.Join(root, "rich-pack"),
+		"id: rich-pack\nversion: 2.0.0\ndescription: 说明\n"+
+			"categories:\n  - 移动安全\n  - \" 移动安全 \"\n  - \"\"\n  - 红队\n"+
+			"author: 发布者\nhomepage: https://example.invalid/pack\n"+
+			"license: Apache-2.0\ncompatibility: \">=0.9\"\nchangelog: 首版\n"+
+			"units:\n  - kind: role\n    path: roles/r.yaml\n")
+	m, err = LoadManifest(rich)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err = m.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(bundle.Categories, "|"); got != "移动安全|红队" {
+		t.Fatalf("categories must be trimmed and de-duplicated in author order, got %q", got)
+	}
+	if bundle.Author != "发布者" || bundle.Homepage != "https://example.invalid/pack" ||
+		bundle.License != "Apache-2.0" || bundle.Compatibility != ">=0.9" || bundle.Changelog != "首版" {
+		t.Fatalf("metadata fields lost or mangled: %+v", bundle)
+	}
+}

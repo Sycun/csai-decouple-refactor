@@ -330,10 +330,11 @@ CyberStrikeAI/
 ├── cmd/                 # Web 服务、MCP stdio 入口及辅助工具
 ├── internal/            # Agent、MCP 核心、路由、C2（`internal/c2`）与执行器
 ├── web/                 # 前端静态资源与模板
-├── tools/               # YAML 工具目录（含 100+ 示例）
-├── roles/               # 角色配置文件目录（含 12+ 预设安全测试角色）
-├── skills/              # Agent Skills 目录（SKILL.md + 可选文件；示例 cyberstrike-eino-demo）
-├── agents/              # 多代理 Markdown（orchestrator.md + 子代理 *.md）
+├── tools/               # YAML 工具目录（含 90 个配方）
+├── roles/               # 角色配置目录（出厂仅「默认」；其余角色来自能力包）
+├── skills/              # Agent Skills 目录（出厂为总纲与内核纪律技能 + 示例 cyberstrike-eino-demo）
+├── agents/              # 多代理 Markdown 目录（出厂为空；智能体由能力包提供）
+├── bundles/             # 能力包市场货架（16 个按域打包的角色/技能/智能体，点安装才生效）
 ├── docs/                # 专题文档（部署、配置、安全、API、知识库、C2、WebShell 等）
 ├── images/              # 文档配图
 ├── config.yaml          # 运行配置

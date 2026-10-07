@@ -1,0 +1,7 @@
+id: ctf
+name: CTF 竞赛包
+version: 1.0.0
+description: CTF 竞赛角色：以解题思维快速定位并利用漏洞，解决各类比赛题目。装完即生效，卸载即回到原状。
+units:
+  - kind: role
+    path: roles/CTF.yaml

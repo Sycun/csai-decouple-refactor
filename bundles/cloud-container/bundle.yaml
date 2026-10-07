@@ -1,0 +1,11 @@
+id: cloud-container
+name: 云与容器安全包
+version: 1.0.0
+description: 云安全审计与容器安全两个角色，以及云攻击方法技能（元数据 API、IAM 提权、K8s、S3/MinIO 与云服务后渗透）。装完即生效，卸载即回到原状。
+units:
+  - kind: role
+    path: roles/云安全审计.yaml
+  - kind: role
+    path: roles/容器安全.yaml
+  - kind: skill
+    path: skills/cloud-attack-methods

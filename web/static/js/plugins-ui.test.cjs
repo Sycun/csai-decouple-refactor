@@ -44,6 +44,7 @@ function harness(state, catalog, options = {}) {
     const nodes = new Map();
     const calls = [];
     const toasts = [];
+    const confirms = [];
     function makeEl(id) {
         return {
             id,
@@ -77,6 +78,7 @@ function harness(state, catalog, options = {}) {
         Promise,
         JSON,
         Set,
+        Map,
         Date,
         escapeHtml(text) {
             const div = sandbox.document.createElement('div');
@@ -101,7 +103,7 @@ function harness(state, catalog, options = {}) {
                 return typeof node === 'string' ? node : key;
             },
             showNotification(msg, type) { toasts.push({ msg, type }); },
-            confirm() { return options.confirm !== false; },
+            confirm(msg) { confirms.push(msg); return options.confirm !== false; },
             applyRBACToUI() {},
         },
         apiFetch(url, opts = {}) {
@@ -125,26 +127,45 @@ function harness(state, catalog, options = {}) {
     vm.createContext(sandbox);
     vm.runInContext(source, sandbox);
     vm.runInContext(`
-        this.api = { loadPluginConsole, installPluginBundle, unplugPluginBundle, setPluginUnitEnabled };
+        this.api = { loadPluginConsole, installPluginBundle, unplugPluginBundle, setPluginUnitEnabled,
+                     rollbackPluginBundle, applyPluginFilter };
         this.pluginConsoleBusyReset = () => { pluginConsoleBusy = false; };
     `, sandbox);
-    return { sandbox, nodes, calls, toasts };
+    return { sandbox, nodes, calls, toasts, confirms };
 }
 
 const sampleState = {
     bundlesRoot: '/srv/csai/bundles',
     generation: 12,
-    servedKinds: ['role', 'agent', 'skill', 'tool'],
+    servedKinds: ['role', 'agent', 'skill', 'tool', 'plugin'],
     drift: [],
+    revocations: {
+        loaded: true,
+        source: '/etc/csai/revocations.json',
+        digests: ['deadbeef'],
+        publishers: ['bad-pub'],
+    },
+    pluginHost: [],
     bundles: [{
         id: 'mobile-app-security',
         name: '移动端安全测试角色包',
         version: '1.0.0',
         description: '示例包',
-        dir: '/srv/csai/bundles/mobile-app-security',
+        rollbacks: ['0.9.0', '1.0.0'],
         units: [
-            { id: 'role/移动端安全测试', kind: 'role', name: '移动端安全测试', bundle: 'mobile-app-security', enabled: true, served: true, reason: '' },
-            { id: 'mcp/示例', kind: 'mcp', name: '示例', bundle: 'mobile-app-security', enabled: false, served: false, reason: '外部 MCP 管理器已不再持有本包对该名称的声明（"lab-server" 由配置文件提供）' },
+            { id: 'role/移动端安全测试', kind: 'role', name: '移动端安全测试', bundle: 'mobile-app-security', enabled: true, served: true, reason: '', digest: '1111222233334444' },
+            { id: 'mcp/示例', kind: 'mcp', name: '示例', bundle: 'mobile-app-security', enabled: false, served: false, reason: '外部 MCP 管理器已不再持有本包对该名称的声明（"lab-server" 由配置文件提供）', digest: '5555666677778888' },
+            { id: 'plugin/acme', kind: 'plugin', name: 'acme', bundle: 'mobile-app-security', enabled: false, served: false, reason: '已声明、未启用：插件二进制只在能力包里，运行它是运维者的决定', digest: 'aaaa000011112222', publisher: 'acme', artifactDigest: 'abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789', revoked: true },
+        ],
+    }, {
+        id: 'reporting-pack',
+        name: '报告角色包',
+        version: '1.0.0',
+        description: 'v1',
+        rollbacks: ['0.9.0', '1.0.0'],
+        units: [
+            { id: 'role/报告撰写', kind: 'role', name: '报告撰写', bundle: 'reporting-pack', enabled: true, served: true, reason: '', digest: 'oldoldoldold' },
+            { id: 'tool/pandoc', kind: 'tool', name: 'pandoc', bundle: 'reporting-pack', enabled: true, served: true, reason: '', digest: 'tooltooltool' },
         ],
     }],
     standalone: [
@@ -156,7 +177,38 @@ const sampleCatalog = {
     bundlesRoot: '/srv/csai/bundles',
     bundles: [
         { id: 'mobile-app-security', name: '移动端安全测试角色包', version: '1.0.0', installed: true, units: [{ kind: 'role', name: '移动端安全测试' }] },
-        { id: 'ai-app-redteam', name: 'AI 应用红队角色包', version: '1.0.0', installed: false, description: '按角色打包', units: [{ kind: 'role', name: 'AI应用红队测试' }, { kind: 'skill', name: 'llm-output-boundaries' }] },
+        {
+            id: 'ai-app-redteam',
+            name: 'AI 应用红队角色包',
+            version: '1.0.0',
+            installed: false,
+            description: '按角色打包',
+            author: 'acme',
+            homepage: 'https://example.invalid/ai',
+            license: 'Apache-2.0',
+            compatibility: '>=0.9',
+            categories: ['红队', 'AI'],
+            preview: { classes: { readonly: 1, destructive: 1 }, liveCodeUnits: 1, undeclaredUnits: 1, problemUnits: 0, units: [] },
+            units: [
+                { id: 'role/AI应用红队测试', kind: 'role', name: 'AI应用红队测试', digest: 'aaa' },
+                { id: 'skill/llm-output-boundaries', kind: 'skill', name: 'llm-output-boundaries', digest: 'bbb' },
+                { id: 'tool/loose', kind: 'tool', name: 'loose', digest: 'ccc' },
+            ],
+        },
+        {
+            id: 'reporting-pack',
+            name: '报告角色包',
+            version: '2.0.0',
+            installed: true,
+            description: 'v2 目录',
+            categories: ['报告'],
+            preview: { classes: { mutating: 1 }, liveCodeUnits: 0, undeclaredUnits: 0, problemUnits: 0, units: [] },
+            units: [
+                { id: 'role/报告撰写', kind: 'role', name: '报告撰写', digest: 'newnewnewnew' },
+                { id: 'tool/pandoc', kind: 'tool', name: 'pandoc', digest: 'tooltooltool' },
+                { id: 'agent/report-analyst', kind: 'agent', name: 'report-analyst', digest: 'agentagentagent' },
+            ],
+        },
         { id: 'broken-pack', name: 'broken-pack', version: '', installed: false, error: '解析配置文件失败', units: [] },
     ],
 };
@@ -173,7 +225,7 @@ test('the console renders served state honestly and keeps the reason visible', a
     assert.match(html, /可安装的能力包/);
     assert.match(html, /AI 应用红队角色包/);
     assert.ok(!/onclick="installPluginBundle\(&quot;mobile-app-security/.test(html),
-        'an installed pack must not be offered for install again');
+        'an installed pack at the same version must not be offered for install again');
     assert.match(html, /installPluginBundle\(&quot;ai-app-redteam&quot;\)/);
     assert.match(html, /清单不可用/);
     assert.ok(!/installPluginBundle\(&quot;broken-pack&quot;\)/.test(html),
@@ -270,6 +322,22 @@ test('the toast repeats what the server said about a mutation that only half too
             expect: /注册失败/,
         },
         {
+            name: 'install that could not be recorded',
+            key: '/api/plugins/install',
+            url: '/api/plugins/install',
+            body: { bundle: { id: 'ai-app-redteam' }, install_recorded: false, install_message: '安装记录存储不可用：本次安装只在本次进程内有效' },
+            run: api => api.installPluginBundle('ai-app-redteam'),
+            expect: /安装记录存储不可用/,
+        },
+        {
+            name: 'install whose rollback snapshot could not be written',
+            key: '/api/plugins/install',
+            url: '/api/plugins/install',
+            body: { bundle: { id: 'ai-app-redteam' }, snapshot_version: '', snapshot_error: '创建快照目录失败' },
+            run: api => api.installPluginBundle('ai-app-redteam'),
+            expect: /创建快照目录失败/,
+        },
+        {
             name: 'declaration with no manager wired',
             key: 'bundles/mobile-app-security',
             url: '/api/plugins/bundles/mobile-app-security',
@@ -309,6 +377,113 @@ test('a plugin row says what the live host holds, and no other kind does', async
     // A non-plugin kind gets no runtime chip: it has no process of its own.
     const toolRow = sandbox.unitCells({ kind: 'tool', name: 'semgrep', served: true });
     assert.doesNotMatch(toolRow, /进程运行中|未运行/, 'only a plugin unit may claim a process state');
+});
+
+// P0-1: the click is preceded by what the pack would register. The counts come from the
+// server-read preview, and cancelling the dialog must not touch the endpoint.
+test('install asks first, in terms of classes, live code and undeclared recipes', async () => {
+    const decided = harness(sampleState, sampleCatalog);
+    // The real flow always has the catalogue loaded before a button exists; load it here so the
+    // confirm text is built from the preview the way the page builds it.
+    await decided.sandbox.api.loadPluginConsole();
+    await decided.sandbox.api.installPluginBundle('ai-app-redteam');
+    assert.equal(decided.confirms.length, 1, 'install must go through a confirm dialog');
+    const text = decided.confirms[0];
+    assert.match(text, /确认安装能力包「AI 应用红队角色包」/, text);
+    assert.match(text, /声明能力：破坏性 × 1 · 只读 × 1/, text);
+    assert.match(text, /包含可执行代码或进程/, text);
+    assert.match(text, /无声明的工具配方 1 个/, text);
+    assert.equal(decided.calls.filter(c => c.method === 'POST').length, 1);
+
+    const cancelled = harness(sampleState, sampleCatalog, { confirm: false });
+    await cancelled.sandbox.api.loadPluginConsole();
+    await cancelled.sandbox.api.installPluginBundle('ai-app-redteam');
+    const posts = cancelled.calls.filter(c => c.method === 'POST');
+    assert.equal(posts.length, 0, 'a cancelled install must not reach the endpoint');
+});
+
+// P0-2: a directory version that moved forward is an upgrade, said out loud and diffed by unit
+// before it is accepted; the install record and the toast name it as an upgrade, not a fresh
+// install.
+test('an installed pack with a newer directory version offers the upgrade, with its diff', async () => {
+    const { sandbox, calls, toasts, confirms } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+    const html = sandbox.document.getElementById('plugin-console').innerHTML;
+    assert.match(html, /已装 v1\.0\.0/, 'the card must name the installed version next to the on-disk one');
+    assert.match(html, /目录已是 v2\.0\.0（可升级）/);
+    assert.match(html, /单元变化：新增 1 个 · 变更 1 个/, 'the diff must count added and changed units by digest');
+    assert.match(html, /onclick="installPluginBundle\(&quot;reporting-pack&quot;\)"/, 'the upgrade button must emit the same endpoint');
+
+    await sandbox.api.installPluginBundle('reporting-pack');
+    assert.match(confirms[0], /确认升级能力包「报告角色包」/);
+    assert.match(confirms[0], /将升级：v1\.0\.0 → v2\.0\.0/);
+    const body = JSON.parse(calls.find(c => c.method === 'POST' && c.url === '/api/plugins/install').body);
+    assert.deepEqual(body, { bundle: 'reporting-pack' }, 'an upgrade is a re-install; no from_version is implied');
+    assert.match(toasts[toasts.length - 1].msg, /能力包已升级/);
+});
+
+// P0-2: rollback buttons are the snapshots that actually exist (the installed version itself is
+// not a target), and the click names both the pack and the version it will restore.
+test('rollback offers real snapshot versions and posts the version it will restore', async () => {
+    const { sandbox, calls, toasts, confirms } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+    const html = sandbox.document.getElementById('plugin-console').innerHTML;
+    assert.match(html, /可回滚版本/);
+    assert.match(html, /onclick="rollbackPluginBundle\(&quot;reporting-pack&quot;,&quot;0\.9\.0&quot;\)"/);
+    assert.ok(!/rollbackPluginBundle\(&quot;reporting-pack&quot;,&quot;1\.0\.0&quot;\)/.test(html),
+        'the installed version must not be offered as a rollback target');
+
+    await sandbox.api.rollbackPluginBundle('reporting-pack', '0.9.0');
+    assert.match(confirms[0], /确认把能力包「reporting-pack」回滚到 v0\.9\.0/, confirms[0]);
+    const body = JSON.parse(calls.find(c => c.method === 'POST' && c.url === '/api/plugins/install').body);
+    assert.deepEqual(body, { bundle: 'reporting-pack', from_version: '0.9.0' });
+    assert.match(toasts[toasts.length - 1].msg, /能力包已回滚/);
+
+    const cancelled = harness(sampleState, sampleCatalog, { confirm: false });
+    await cancelled.sandbox.api.rollbackPluginBundle('reporting-pack', '0.9.0');
+    assert.equal(cancelled.calls.length, 0, 'a cancelled rollback must not reach the endpoint');
+});
+
+// P0-3: provenance, digest and the revocation list are read off the state and rendered where an
+// operator can act on them, instead of being invisible facts about what is running.
+test('rows carry digest, publisher and revoked state, and the revocation panel names its source', async () => {
+    const { sandbox } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+    const html = sandbox.document.getElementById('plugin-console').innerHTML;
+
+    assert.match(html, /发布者 acme/);
+    assert.match(html, /已撤销/);
+    assert.match(html, /aaaa00001111/, 'the digest chip must show a short form of the install-time digest');
+    assert.match(html, /title="命中撤销列表（按发布者或构建摘要）：调用会被执行路径拒绝"/);
+    assert.match(html, /信任与撤销/);
+    assert.match(html, /\/etc\/csai\/revocations\.json/);
+    assert.match(html, /bad-pub/);
+    assert.match(html, /按构建撤销/);
+});
+
+// P0-4: the catalogue metadata renders, and the filter narrows both lists without losing the
+// query.
+test('catalogue metadata renders and the filter narrows the lists', async () => {
+    const { sandbox } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+    let html = sandbox.document.getElementById('plugin-console').innerHTML;
+    assert.match(html, /作者 acme/);
+    assert.match(html, /许可 Apache-2\.0/);
+    assert.match(html, /兼容 &gt;=0\.9/);
+    assert.match(html, /主页 https:\/\/example\.invalid\/ai/);
+    assert.match(html, /placeholder="搜索能力包（名称、描述、分类）"/);
+
+    sandbox.api.applyPluginFilter('ai-app');
+    const avail = sandbox.document.getElementById('plugin-section-available').innerHTML;
+    const inst = sandbox.document.getElementById('plugin-section-installed').innerHTML;
+    assert.match(avail, /ai-app-redteam/);
+    assert.ok(!/reporting-pack/.test(avail), 'a non-matching pack must leave the filtered list');
+    assert.ok(!/mobile-app-security/.test(inst));
+    assert.match(inst, /没有匹配的能力包/);
+
+    sandbox.api.applyPluginFilter('');
+    const restored = sandbox.document.getElementById('plugin-section-installed').innerHTML;
+    assert.match(restored, /mobile-app-security/);
 });
 
 test('every pluginsT key the console asks for exists in both locales', () => {

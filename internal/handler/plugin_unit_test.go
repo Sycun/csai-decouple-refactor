@@ -195,7 +195,7 @@ func envWithPlugins(t *testing.T, recorder PluginProvisioner) *pluginTestEnv {
 	t.Helper()
 	env := newPluginTestEnv(t, false)
 	env.pluginsProvisioner = recorder
-	env.plugins = NewPluginHandler(env.table, env.bundles, env.roles, env.tools, env.mcp, recorder, env.switches, nil, zap.NewNop())
+	env.plugins = NewPluginHandler(env.table, env.bundles, env.roles, env.tools, env.mcp, recorder, env.switches, nil, nil, nil, zap.NewNop())
 	return env
 }
 

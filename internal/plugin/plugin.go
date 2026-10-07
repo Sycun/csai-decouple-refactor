@@ -118,14 +118,24 @@ func (u *Unit) Validate() error {
 //
 // Dir is the absolute directory the manifest lives in; every unit path is resolved inside
 // it, so a bundle cannot deliver a file by pointing at someone else's config.
+//
+// The descriptive fields (categories, author, homepage, license, compatibility, changelog)
+// exist for the console and any future catalogue: they are display metadata, never consulted
+// by install, conflict or execution rules, so a missing one degrades a card and nothing else.
 type Bundle struct {
-	ID           string `yaml:"id" json:"id"`
-	Name         string `yaml:"name" json:"name"`
-	Version      string `yaml:"version" json:"version"`
-	Description  string `yaml:"description,omitempty" json:"description"`
-	Dir          string `yaml:"-" json:"dir"`
-	ManifestPath string `yaml:"-" json:"manifestPath"`
-	Units        []Unit `yaml:"units" json:"units"`
+	ID            string   `yaml:"id" json:"id"`
+	Name          string   `yaml:"name" json:"name"`
+	Version       string   `yaml:"version" json:"version"`
+	Description   string   `yaml:"description,omitempty" json:"description"`
+	Categories    []string `yaml:"categories,omitempty" json:"categories,omitempty"`
+	Author        string   `yaml:"author,omitempty" json:"author,omitempty"`
+	Homepage      string   `yaml:"homepage,omitempty" json:"homepage,omitempty"`
+	License       string   `yaml:"license,omitempty" json:"license,omitempty"`
+	Compatibility string   `yaml:"compatibility,omitempty" json:"compatibility,omitempty"`
+	Changelog     string   `yaml:"changelog,omitempty" json:"changelog,omitempty"`
+	Dir           string   `yaml:"-" json:"dir"`
+	ManifestPath  string   `yaml:"-" json:"manifestPath"`
+	Units         []Unit   `yaml:"units" json:"units"`
 }
 
 func (b *Bundle) Validate() error {

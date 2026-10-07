@@ -26,12 +26,22 @@ type ManifestUnit struct {
 }
 
 // Manifest is the on-disk form of a bundle.
+//
+// Everything below Description is optional catalogue metadata: the console renders it, and no
+// install-time rule reads it. Keeping it optional is what lets the four shipped example packs
+// stay valid without touching them.
 type Manifest struct {
-	ID          string         `yaml:"id"`
-	Name        string         `yaml:"name,omitempty"`
-	Version     string         `yaml:"version"`
-	Description string         `yaml:"description,omitempty"`
-	Units       []ManifestUnit `yaml:"units"`
+	ID            string         `yaml:"id"`
+	Name          string         `yaml:"name,omitempty"`
+	Version       string         `yaml:"version"`
+	Description   string         `yaml:"description,omitempty"`
+	Categories    []string       `yaml:"categories,omitempty"`
+	Author        string         `yaml:"author,omitempty"`
+	Homepage      string         `yaml:"homepage,omitempty"`
+	License       string         `yaml:"license,omitempty"`
+	Compatibility string         `yaml:"compatibility,omitempty"`
+	Changelog     string         `yaml:"changelog,omitempty"`
+	Units         []ManifestUnit `yaml:"units"`
 
 	dir          string
 	manifestPath string
@@ -93,12 +103,18 @@ func (m *Manifest) Resolve() (*Bundle, error) {
 		return nil, err
 	}
 	b := &Bundle{
-		ID:           strings.TrimSpace(m.ID),
-		Name:         strings.TrimSpace(m.Name),
-		Version:      strings.TrimSpace(m.Version),
-		Description:  strings.TrimSpace(m.Description),
-		Dir:          m.dir,
-		ManifestPath: m.manifestPath,
+		ID:            strings.TrimSpace(m.ID),
+		Name:          strings.TrimSpace(m.Name),
+		Version:       strings.TrimSpace(m.Version),
+		Description:   strings.TrimSpace(m.Description),
+		Categories:    normalizeCategories(m.Categories),
+		Author:        strings.TrimSpace(m.Author),
+		Homepage:      strings.TrimSpace(m.Homepage),
+		License:       strings.TrimSpace(m.License),
+		Compatibility: strings.TrimSpace(m.Compatibility),
+		Changelog:     strings.TrimSpace(m.Changelog),
+		Dir:           m.dir,
+		ManifestPath:  m.manifestPath,
 	}
 	if b.Name == "" {
 		b.Name = b.ID
@@ -161,4 +177,26 @@ func (m *Manifest) Resolve() (*Bundle, error) {
 // "Web应用扫描"), the directory base for a skill.
 func nameFromPath(abs string, kind Kind) string {
 	return baseName(abs)
+}
+
+// normalizeCategories trims, drops empties and de-duplicates while keeping the author's order:
+// the list is rendered, so "security,  security" must not become two chips.
+func normalizeCategories(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, raw := range in {
+		c := strings.TrimSpace(raw)
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

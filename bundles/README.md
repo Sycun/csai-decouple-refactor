@@ -28,29 +28,54 @@ units:
   - kind: role                   # role | agent | skill | tool | mcp | plugin，仅此六类
     path: roles/移动端安全测试.yaml   # 相对本目录；不允许 `..`，不允许绝对路径
     name: 移动端安全测试            # 可省略：role/tool/agent 取去扩展名的文件名，skill 取目录名
+
+# 以下均可选：只用于控制台展示（卡片信息 + 分类筛选），不参与任何安装、冲突或执行规则
+categories: ["Web", "红队"]
+author: 发布方
+homepage: https://example.invalid/pack
+license: Apache-2.0
+compatibility: ">=0.9"           # 面向使用方的版本要求，仅展示
+changelog: |
+  首版
 ```
 
 清单里没有、也不允许有 `dest` 之类的目标路径：能力落在哪儿由 `kind` 决定，
 所以一个包不可能通过写清单去覆盖它管不着的文件。
 
-## 随仓库提供的角色包
+## 随仓库提供的市场货架（bundles/ 下 16 个包）
 
-四个包对应四个内置角色目录里**没有**的角色。装任何一个都只加东西，不改内置文件：
+出厂树只带**默认角色 + 5 个技能 + 90 个工具配方**；其余专业内容按域装进下面这些包。
+它们**在控制台里点「安装」之前什么都不是**：目录存在不等于已安装——安装是运维者的决定，
+记在 `installed_bundles` 表里，启动时只重装记录里的包（见「生效时机」）。
 
-| 包 | 角色 | 交付的单元 |
+| 包 | 交付 | 单元 |
 |---|---|---|
-| `mobile-app-security` | 移动端安全测试 | role + agent `mobile-app-analyst` + skill `mobile-package-triage` |
-| `ai-app-redteam` | AI 应用红队测试 | role + agent `llm-tool-surface` + skill `llm-output-boundaries` |
-| `source-code-audit` | 源码与供应链审计 | role + agent `sast-finding-triage` + skill `sink-driven-audit` + tool `semgrep` |
-| `wireless-hardware` | 无线与硬件安全测试 | role + agent `firmware-triage` + skill `rf-protocol-recon` |
+| `web-pentest` | Web 渗透与漏洞扫描 | role ×4（渗透测试 / Web应用扫描 / Web框架测试 / 综合漏洞扫描）+ agent ×2（penetration、vulnerability-triage）+ skill ×2（web-attack-methods、specialized-attack-playbooks） |
+| `api-security` | API 安全测试 | role ×1 |
+| `recon-intel` | 信息收集与情报 | role ×1 + agent ×3（recon、intel-collection、attack-surface-enumeration）+ skill ×2 |
+| `ad-internal` | 内网与域渗透 | role ×1 + agent ×3（lateral-movement、privilege-escalation、persistence-maintenance）+ skill ×2 |
+| `cloud-container` | 云与容器安全 | role ×2 + skill ×1 |
+| `forensics-reversing` | 数字取证与逆向 | role ×2 + skill ×1 |
+| `ctf` | CTF 竞赛 | role ×1 |
+| `initial-access` | 初始访问与社工 | skill ×1 |
+| `zero-day` | 0day 发现与情报 | skill ×1 |
+| `blockchain` | 区块链与智能合约 | skill ×1 |
+| `multi-agent-orchestration` | 多代理编排 | agent ×7（orchestrator / plan-execute / supervisor + 规划 / 影响证明 / 清理回滚 / 报告修复） |
+| `tradecraft` | 通用战术方法 | skill ×4（能力原语 / 代理自举 / OPSEC / 不设限）+ agent ×1（opsec-evasion） |
+| `mobile-app-security` | 移动端安全测试 | role ×1 + agent ×1 + skill ×1 |
+| `ai-app-redteam` | AI 应用红队 | role ×1 + agent ×1 + skill ×2 |
+| `source-code-audit` | 源码与供应链审计 | role ×1 + agent ×1 + skill ×2 + tool ×1（semgrep） |
+| `wireless-hardware` | 无线与硬件安全测试 | role ×1 + agent ×1 + skill ×2 |
+
+合计 16 包 59 单元（roles 16 / agents 20 / skills 22 / tools 1），与内置树零身份重叠——
+逐包逐单元对照既有加载器验一遍（角色走 `config.LoadRoleFromFile`、agent 走
+`agents.LoadMarkdownAgentPaths`、配方走 `RecipeSpecs`，缺能力清单就是内容 bug，不该等到
+执行时才 fail-closed），关键身份由 `TestExampleBundlesInstallAlongsideShippedCapabilities`
+点名断住。见 `internal/app/bundles_test.go`。
 
 `source-code-audit` 带一份真配方，是为了让"表驱动的工具面"这条路径有**随仓库发布的内容**在跑，
 而不只在测试夹具里成立。它的 `capability.id` 用的是 `community.semgrep` 而不是保留的
 `core.*` 命名空间 —— 包不能声称自己是内置能力。
-
-每个包里的每一项都会被既有加载器读回来验一遍：角色走 `config.LoadRoleFromFile`、
-agent 走 `agents.LoadMarkdownAgentPaths`、配方走 `RecipeSpecs`（缺能力清单就是内容 bug，
-不该等到执行时才 fail-closed）。见 `internal/app/bundles_test.go`。
 
 ## 身份与冲突
 
@@ -59,10 +84,35 @@ agent 走 `agents.LoadMarkdownAgentPaths`、配方走 `RecipeSpecs`（缺能力�
 - 包 A 要装 `role/CTF`，而 `roles/CTF.yaml`（内置目录扫出来的）已经在表里 → 拒绝。
   先卸载/停用内置那条，包才能顶上；反方向（目录扫描覆盖已安装的包）同样拒绝。
 - 同一个 `id` 再装一次是**升级**：这个包自己上一版声明、这一版没声明的单元会消失，
-  别的包的单元一个都不动。
+  别的包的单元一个都不动。目录版本与已装版本不一致时，控制台把它显示成升级并给出单元差异
+  （见「升级、回滚与快照」）。
 - 卸载只把单元从表里摘掉，**不删任何文件**（源文件本来就在 `bundles/<id>/` 里）。
 
 每条规则都有测试，`internal/plugin/table_test.go`。
+
+## 升级、回滚与快照（`bundles/.previous/`）
+
+- **升级是可见的**：目录版本 ≠ 已装版本时，卡片给出「已装 vX → 目录 vY」与单元级差异
+  （新增 / 移除 / 摘要变化，按安装时摘要比对，见 `unitDiff`），确认后走的还是同一条安装；
+  升级落地后能力表与安装记录一起指向新版本。
+- **每次安装成功后**，安装路径把包目录按版本快照到 `bundles/.previous/<id>/<version>/`
+  （`plugin.SnapshotBundle`：文件逐字节、可执行位与软链都保留；同版本重装替换旧快照，
+  不累积）。这是回滚唯一读取的源头，也是"升级前的靶心"。
+- **回滚** = `POST /api/plugins/install {"bundle":"<id>","from_version":"<v>"}`：先加载快照并核对
+  （快照声明的 id 与包一致、快照版本与目录名一致），再把快照内容覆盖回包目录——快照里没有的
+  文件保持不动，与"卸载不删文件"同一条规则——然后走标准安装。安装记录随回滚更新，
+  所以下次启动重放的是回滚后的版本，而不是被回滚掉的那份。
+- **`.previous` 以点开头**：货架扫描、启动按记录重装、安装接口全部跳过它，快照不会被误当成
+  可安装的包。
+- **不装作存在**：快照写失败不阻断已生效的安装，响应里带 `snapshot_error`；没有快照版本的包
+  不显示回滚按钮。两件事各自有一半是谎言时，"回滚可用"就不再是信息。
+- 卸载**不删快照**：这条路径从不删文件。
+
+门禁：`internal/plugin/snapshot_test.go`（保真复制含可执行位与软链 / 坏版本名拒绝 /
+同版本替换 / 拒绝自我快照 / 恢复不删额外文件）、`TestPluginInstallSnapshotsUpgradesAndRollsBack`
+（装 → 升级 → 回滚 → 记录与表同步跟随 → 坏版本与遍历版本拒绝）、
+`TestPluginInstallReportsASnapshotFailure`（失败进响应、安装不失败、不出现回滚按钮）；前端由
+`plugins-ui.test.cjs` 的升级/回滚两节钉住确认文案与 `from_version` 请求体。
 
 ## 生效时机
 
@@ -70,20 +120,34 @@ agent 走 `agents.LoadMarkdownAgentPaths`、配方走 `RecipeSpecs`（缺能力�
 写侧只有一把串行化的锁。并发的读与换不会互相撕开——这条性质不是论证出来的，
 是把快照改成原地写之后 `TestConcurrentReadersNeverTear` 在 `-race` 下当场报出来的。
 
-"不需要重启"还得不等于"活不到下次重启"。能力表是在启动时从磁盘重建的，所以
-`<configDir>/bundles` 里的包必须在启动过程中被**重新装入**（`installBundlesFromDisk`），
-否则一个人装过的东西会在下一次重启后凭空消失——那已经不是"安装"而是"本次会话"。
-装入顺序是有条件的：**先把内置能力扫进表，再装包**，这样一个想冒充内置角色的包会被按身份
+"不需要重启"还得不等于"活不到下次重启"，也不等于"目录一躺下就自己生效"。能力表是在启动时
+从磁盘重建的，启动只重装**运维者点过安装的那些包**（`installBundlesFromDisk` 按
+`installed_bundles` 记录重放），两边都要说清楚，缺哪边都不是"安装"：
+
+- **目录存在、记录没有 → 不装。** 出厂树把 16 个包放在 `bundles/` 里等着被选，它们在控制台
+  的「可安装」列表里，重启多少次也不会自己进表——这正是"货架"与"已安装"的区别。
+- **记录有、目录没了 → 点名告警、记录保留**：把目录放回去即恢复，不会悄悄吞掉一次决定。
+- **目录内容往前走了（版本变化）→ 按目录重装并刷新记录**：包随应用升级而更新，记录描述的
+  始终是"装着的这份是什么"。
+
+装入顺序是有条件的：**先把内置能力扫进表，再按记录装包**，这样一个想冒充内置角色的包会被按身份
 拒掉（与安装接口同样的拒绝规则），而不是因为它先加载就抢走了内置的身份。
 带配方的包还要多一步：所有 registrar 接好之后按表重建一次工具层，
 否则包里的配方在表里、却不在 MCP 工具面上，要等谁按一下"应用配置"才出现。
 
-真机验过（两次启动，中间只 kill 进程）：
-第一次冷启动 `roles/agents/skills/tools = 17/20/27/139`（四个包都在表里且被服务）→
-重启后不做任何安装调用仍是 `17/20/27/139`，`semgrep` 还在工具清单里，
-包提供的 agent 依然以 `read_only` 出现在管理台。
-门禁：`TestBundlesOnDiskAreReinstalledAtBoot`（含冒充包被拒、损坏包被报出、
-运行路径真的看得见）与 `make wiring-check` 里对 `installBundlesFromDisk` 的 AST 断言。
+门禁：`TestBundlesOnDiskAreReinstalledAtBoot`（记录制：有记录才装、无记录不装、冒充包被拒、
+损坏包与缺目录被点名、版本刷新）与 `TestBootInstallsNothingWithoutAReadableInstallRecord`
+（存储读不出来时一个都不装，而不是回退成"把目录全装上"）；安装/卸载端点的记录读写由
+`TestPluginInstallServesTheBundleImmediately` 与
+`TestPluginInstallReportsAMissingOrFailingInstallStore` 钉住；装配漏传安装记录存储会先被
+`make wiring-check` 的 AST 断言抓住（那是编译得过、运行才静默的漏接）。
+
+真机点验（测试版，全新数据库 = 用户刚下载的状态）：冷启动日志
+`skills 5 / agents 0 / tools 90`、`角色目录已发布 roles=1`，货架 16 包全部 `installed:false`；
+点装 `web-pentest` 与 `source-code-audit` → 角色 6、技能 9、`tool/semgrep served:true`、
+启动尾段 `bundled_recipes:1`；重启 → `能力包已按安装记录重新装入 installed:2`，角色仍 6；
+卸载 `web-pentest` → 角色回 2、记录只剩 `source-code-audit`、包文件仍在盘上；
+再重启 → `installed:1`，卸载过的包不回来。
 
 各 kind 离"装完就被服务"还差多远，逐个说清（不写"已全部插件化"这种话）：
 
@@ -302,9 +366,9 @@ skill 一行的"读表"含两层：运行路径（`internal/einoskill` 换掉了
 写路径遇到包拥有的 skill 返回 409 并指名是哪个包，**不会**在内置 skills 目录里悄悄落一份同名副本。
 
 agent 一行的两层同样一起改了：`agents.LoadMarkdownAgentPaths` 与目录扫描共用同一个解析器
-（对内置 16 个 `.md` 逐个比对，路径驱动与目录驱动**逐字节相同**），运行路径与管理台都从表里的
-路径读；表里一个 agent 单元都没有时**回到目录扫描**，因为漏跑启动扫描是可修的装配问题，
-而"每次运行都没有子代理"是不可修的。
+（对货架上 20 个 `.md` 逐个比对，路径驱动与目录驱动**逐字节相同**——出厂 `agents/` 目录里
+已没有智能体定义），运行路径与管理台都从表里的路径读；表里一个 agent 单元都没有时**回到目录扫描**，
+因为漏跑启动扫描是可修的装配问题，而"每次运行都没有子代理"是不可修的。
 这一行是**真实跑起来的服务**指出来的：`GET /api/plugins` 报
 `[('role', True), ('agent', False), ('skill', True)]`——运行路径已经搬到表上了，
 `served` 字段还留着搬迁时的说明。测试当时抓不到它，因为夹具包里没有 agent 单元；
@@ -313,5 +377,6 @@ agent 一行的两层同样一起改了：`agents.LoadMarkdownAgentPaths` 与目
 
 内置的 `roles/`、`agents/`、`skills/`、`tools/` 四个目录同样被扫成单元进表，
 所以"内置能力"和"后装能力"走的是同一套身份与同一张表；两侧身份一致性由
-`internal/app/plugin_parity_test.go` 钉住（实测 142 个内置单元：roles 13 / agents 16 /
-skills 23 / tools 90）。
+`internal/app/plugin_parity_test.go` 钉住（实测 96 个出厂单元：roles 1 / agents 0 /
+skills 5 / tools 90），"出厂不得出现专业能力"另有反向断言
+（`TestFactoryTreeShipsNoProfessionalCapabilities`）。

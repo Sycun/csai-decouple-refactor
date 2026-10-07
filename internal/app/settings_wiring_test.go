@@ -56,6 +56,8 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	vulnHandlerCalls := 0
 	vulnHandlerWithoutNotifier := 0
 	pluginWithoutSwitchStore := 0
+	pluginWithoutInstallStore := 0
+	pluginWithoutTrustProvider := 0
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -175,25 +177,35 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 					tableInstalled++
 				}
 			case "NewPluginHandler":
-				// Argument 4 is the tool-layer rebuilder and argument 5 the external-MCP
-				// provisioner. Both nil are legal Go: a recipe would be recorded in the table but
-				// never executable, a server declaration recorded but never written, and either
+				// Argument 4 is the tool-layer rebuilder, argument 5 the external-MCP provisioner,
+				// argument 7 the switch store and argument 8 the install store. All nil are legal Go:
+				// a recipe would be recorded in the table but never executable, a server declaration
+				// recorded but never written, a switch or an install persisted nowhere - and every
 				// response would still say "installed".
 				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "handler" {
 					pluginCalls++
-					if len(call.Args) < 8 {
-						t.Errorf("handler.NewPluginHandler takes %d arguments, want the tool layer, the MCP provisioner and the switch store among them", len(call.Args))
+					if len(call.Args) < 11 {
+						t.Errorf("handler.NewPluginHandler takes %d arguments, want the tool layer, the MCP provisioner, the switch store and the install store among them", len(call.Args))
 					} else if sel, ok := call.Args[3].(*ast.SelectorExpr); !ok || sel.Sel.Name != "Tools" {
 						pluginWithoutToolLayer++
 					} else if id, ok := sel.X.(*ast.Ident); !ok || id.Name != "configHandler" {
 						pluginWithoutToolLayer++
 					}
-					if len(call.Args) >= 8 {
+					if len(call.Args) >= 11 {
 						if id, ok := call.Args[4].(*ast.Ident); ok && id.Name == "nil" {
 							pluginWithoutMCPProvisioner++
 						}
-						if id, ok := call.Args[5].(*ast.Ident); ok && id.Name == "nil" {
+						if id, ok := call.Args[6].(*ast.Ident); ok && id.Name == "nil" {
 							pluginWithoutSwitchStore++
+						}
+						if id, ok := call.Args[7].(*ast.Ident); ok && id.Name == "nil" {
+							pluginWithoutInstallStore++
+						}
+						// Argument 8 is the trust provider. A nil here compiles and serves: the
+						// console simply never shows the revocation list or a unit's provenance, and
+						// a revoked build keeps running with nothing on screen to explain it.
+						if id, ok := call.Args[8].(*ast.Ident); ok && id.Name == "nil" {
+							pluginWithoutTrustProvider++
 						}
 					}
 				}
@@ -318,6 +330,16 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 		t.Fatalf("the plug-in handler was assembled with a nil switch store: the console's switches " +
 			"would only last until the next restart, which is what the switch store exists to prevent")
 	}
+	if pluginWithoutInstallStore != 0 {
+		t.Fatalf("the plug-in handler was assembled with a nil install store: a clicked install would " +
+			"only last until the next restart, and the pack's disappearance would read as a random " +
+			"uninstall - the record is what start-up replays")
+	}
+	if pluginWithoutTrustProvider != 0 {
+		t.Fatalf("the plug-in handler was assembled without the trust provider: the console would " +
+			"never show the revocation list or a unit's provenance, and a revoked build would keep " +
+			"running with nothing on screen to explain why it should not")
+	}
 	if published < 1 {
 		t.Fatalf("no role catalog publish in assembly: the store would be installed but empty, so "+
 			"the roles API and every run path would serve nothing (files scanned: %d)", scanned)
@@ -338,8 +360,8 @@ func TestAssemblyInstallsTheLiveConfigStoreAndPublishesRoles(t *testing.T) {
 	t.Logf("assembly wiring: %d files scanned, 1 live-store install, 1 table install, "+
 		"1 remote inventory observer, %d capability scan call(s), %d bundle re-install call(s), "+
 		"%d MCP declaration call(s), %d plugin declaration call(s), %d switch overlay call(s), "+
-		"%d catalog publish call(s), 1 plug-in handler with its tool layer, MCP provisioner "+
-		"and switch store",
+		"%d catalog publish call(s), 1 plug-in handler with its tool layer, MCP provisioner, "+
+		"switch store and install store",
 		scanned, scannedCalled, bundlesInstalled, mcpProvisioned, pluginUnitsDeclared, switchesApplied, published)
 }
 
