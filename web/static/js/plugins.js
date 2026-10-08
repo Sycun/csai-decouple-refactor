@@ -366,9 +366,12 @@ function pluginRuntimeNote(unit) {
 // published it (executable kinds), and whether the block list currently refuses it. Rendered only
 // for pack-owned units - the built-in tables are ours and a digest chip on all 142 rows would bury
 // the third-party ones this exists for.
-function unitTrustNote(unit) {
+function unitTrustNote(unit, opts) {
     const chips = [];
-    if (unit.bundle && unit.digest) {
+    // 货架卡上未装的单元不显示摘要：那是"装进来的那份内容"的指纹，在装之前它不指向任何东西，
+    // 却会在每一行上占一格。已装卡与已装单元照旧（那里正是要对照审阅的地方）。
+    const showDigest = !opts || opts.digest !== false;
+    if (showDigest && unit.bundle && unit.digest) {
         chips.push('<code class="plugin-chip plugin-chip-digest" title="' + escapeAttr(pluginsT('digestTitle')) +
             '">' + escapeHtml(String(unit.digest).slice(0, 12)) + '…</code>');
     }
@@ -562,7 +565,7 @@ function renderUnitChoiceTable(pack, visible, chosen) {
             '<td class="plugin-unit-check-cell">' + box + '</td>' +
             '<td><span class="plugin-kind">' + escapeHtml(unitKindLabel(u.kind)) + '</span>' +
             pluginRuntimeNote(u) + '</td>' +
-            '<td><code>' + escapeHtml(u.name) + '</code>' + unitTrustNote(u) + unitConflictNote(u) + '</td>' +
+            '<td><code>' + escapeHtml(u.name) + '</code>' + unitTrustNote(u, { digest: !!u.installed }) + unitConflictNote(u) + '</td>' +
             '<td>' + (u.installed
                 ? '<span class="plugin-chip plugin-chip-served">' + escapeHtml(pluginsT('unitInstalled')) + '</span>'
                 : '<span class="plugin-chip">' + escapeHtml(pluginsT('unitNotInstalled')) + '</span>') + '</td>' +
