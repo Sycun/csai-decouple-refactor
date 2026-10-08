@@ -108,12 +108,51 @@ func resolveUnderConfig(dir, configDir, fallback string) string {
 }
 
 // installRecords is the part of the install store the boot path uses: which packs the operator
-// actually installed, and the version refresh when the directory's content moved forward. A nil
-// reader is legal Go and means "the recorded decisions are unknown", in which case nothing is
-// re-installed - a directory is the catalogue, and only a record makes it part of the installation.
+// actually installed - and which units of them - plus the version refresh when the directory's
+// content moved forward. A nil reader is legal Go and means "the recorded decisions are unknown",
+// in which case nothing is re-installed - a directory is the catalogue, and only a record makes it
+// part of the installation.
 type installRecords interface {
 	All() ([]store.InstalledBundle, error)
-	Record(bundleID, version string) error
+	Record(bundleID, version string, units []string) error
+	Forget(bundleID string) error
+}
+
+// selectRecordedUnits resolves a recorded selection against the bundle now on disk. It returns the
+// units to install and the recorded ids the bundle no longer declares, so the caller can narrow the
+// row instead of warning about the same missing unit at every boot.
+func selectRecordedUnits(bundle *plugin.Bundle, recorded []string) ([]plugin.Unit, []string) {
+	if len(recorded) == 0 {
+		return bundle.Units, nil
+	}
+	byID := make(map[string]plugin.Unit, len(bundle.Units))
+	for _, u := range bundle.Units {
+		byID[u.ID] = u
+	}
+	selected := make([]plugin.Unit, 0, len(recorded))
+	var missing []string
+	seen := map[string]bool{}
+	for _, id := range recorded {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		u, ok := byID[id]
+		if !ok {
+			missing = append(missing, id)
+			continue
+		}
+		selected = append(selected, u)
+	}
+	return selected, missing
+}
+
+func unitIDsOf(units []plugin.Unit) []string {
+	out := make([]string, 0, len(units))
+	for _, u := range units {
+		out = append(out, u.ID)
+	}
+	return out
 }
 
 // installBundlesFromDisk re-installs exactly the packs the operator installed - the rows in the
@@ -173,17 +212,49 @@ func installBundlesFromDisk(table *plugin.Table, root string, records installRec
 			refused = append(refused, fmt.Sprintf("%s: 目录里的包声明为 %q，与安装记录不一致", row.ID, bundle.ID))
 			continue
 		}
-		if err := table.InstallBundle(bundle); err != nil {
+		// A recorded selection is replayed unit by unit, so "I only took the skill out of this pack"
+		// survives a restart exactly like a whole-pack install does. Whole-pack rows (no selection)
+		// keep following the directory: a version bump that adds a unit brings it in, which is what
+		// clicking "install the pack" means.
+		selected, missing := selectRecordedUnits(bundle, row.Units)
+		if len(row.Units) > 0 && len(selected) == 0 {
+			// The directory no longer holds any of the units the row names. Installing nothing while
+			// the row stays would read at the next boot as "installed and empty", which is not a
+			// state this model has; the honest end of a pack whose units are all gone is forgetting
+			// the decision, with the units named.
+			refused = append(refused, fmt.Sprintf("%s: 安装记录里的单元在包内都不存在（%s），已清掉该安装记录", row.ID, strings.Join(missing, "、")))
+			if err := records.Forget(row.ID); err != nil && logger != nil {
+				logger.Warn("失效的安装记录未能清理", zap.String("bundle", row.ID), zap.Error(err))
+			}
+			continue
+		}
+		if len(row.Units) > 0 {
+			if err := table.InstallBundleSelection(bundle, unitIDsOf(selected)); err != nil {
+				refused = append(refused, fmt.Sprintf("%s: %v", row.ID, err))
+				continue
+			}
+		} else if err := table.InstallBundle(bundle); err != nil {
 			refused = append(refused, fmt.Sprintf("%s: %v", row.ID, err))
 			continue
 		}
 		installed++
+		if len(missing) > 0 {
+			// The directory moved on and dropped units the row named. Narrow the row to what was
+			// actually installed: a selection that keeps naming a unit nobody can supply would be
+			// re-checked and re-warned at every boot with nothing to restore.
+			if err := records.Record(row.ID, bundle.Version, unitIDsOf(selected)); err != nil && logger != nil {
+				logger.Warn("安装记录未能按现有单元收窄", zap.String("bundle", row.ID), zap.Strings("missing", missing), zap.Error(err))
+			} else if logger != nil {
+				logger.Warn("安装记录里的部分单元已不在包内，已按现有单元收窄",
+					zap.String("bundle", row.ID), zap.Strings("missing", missing))
+			}
+		}
 		// The shipped tree moving a pack forward (new release in the same directory) is a content
 		// update of a decision the operator already made; the recorded version follows so the
 		// console can compare installed vs on-disk. A downgrade is recorded the same way - the
 		// row describes what is installed, and what is installed is what the directory holds.
 		if bundle.Version != row.Version {
-			if err := records.Record(row.ID, bundle.Version); err != nil && logger != nil {
+			if err := records.Record(row.ID, bundle.Version, row.Units); err != nil && logger != nil {
 				logger.Warn("能力包版本变更未能写回安装记录",
 					zap.String("bundle", row.ID), zap.String("from", row.Version), zap.String("to", bundle.Version), zap.Error(err))
 			} else if logger != nil {

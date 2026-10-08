@@ -126,14 +126,18 @@ func (r *recordingSwitches) Forget(unitIDs ...string) error {
 }
 
 // recordingInstalls stands in for the install store so a test can see which packs the click
-// recorded (with which version) and which were taken back - the two facts start-up replays.
+// recorded (with which version and which unit selection) and which were taken back - the facts
+// start-up replays.
 type recordingInstalls struct {
 	recorded map[string]string
-	forgot   []string
-	err      error
+	// selections holds the unit selection of the last record per pack; nil means "the whole pack"
+	// and a missing key means nothing was recorded at all.
+	selections map[string][]string
+	forgot     []string
+	err        error
 }
 
-func (r *recordingInstalls) Record(bundleID, version string) error {
+func (r *recordingInstalls) Record(bundleID, version string, units []string) error {
 	if r.err != nil {
 		return r.err
 	}
@@ -143,7 +147,11 @@ func (r *recordingInstalls) Record(bundleID, version string) error {
 	if r.recorded == nil {
 		r.recorded = map[string]string{}
 	}
+	if r.selections == nil {
+		r.selections = map[string][]string{}
+	}
 	r.recorded[bundleID] = version
+	r.selections[bundleID] = units
 	return nil
 }
 
@@ -471,7 +479,11 @@ func TestPluginEnableSwitchIsServedWithoutMovingFiles(t *testing.T) {
 	}
 }
 
-func TestPluginUnitDetachRespectsOwnership(t *testing.T) {
+// The unit-level DELETE used to refuse anything a pack owned. It now means "take this one unit out
+// of the pack's selection": the pack keeps delivering the rest, the install record narrows so a
+// restart does not bring it back, and removing the last unit is performed as the uninstall it is
+// rather than leaving a row that claims an installation with nothing in it.
+func TestPluginUnitDetachNarrowsAPackSelection(t *testing.T) {
 	env := newPluginTestEnv(t, true)
 	local, err := plugin.NewUnit(plugin.KindRole, "临时角色", filepath.Join(env.bundles, "loose.yaml"))
 	if err != nil {
@@ -484,10 +496,33 @@ func TestPluginUnitDetachRespectsOwnership(t *testing.T) {
 		t.Fatalf("install: %s", rec.Body.String())
 	}
 
+	// One unit out of the pack: the table loses it, the pack stays, the record narrows.
 	rec := env.do(t, http.MethodDelete, "/api/plugins/units/role/报告撰写", "")
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("detaching a bundle-owned unit returned %d, want 409: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("removing a bundle-owned unit returned %d, want 200: %s", rec.Code, rec.Body.String())
 	}
+	body := decodeState(t, rec)
+	if body["bundle"] != "reporting-pack" || body["bundle_uninstalled"] != false {
+		t.Fatalf("removal did not report a narrowed pack: %v", body)
+	}
+	if _, ok := env.table.Unit("role/报告撰写"); ok {
+		t.Fatalf("the removed unit is still in the table")
+	}
+	if _, ok := env.table.Bundle("reporting-pack"); !ok {
+		t.Fatalf("removing one unit uninstalled the whole pack")
+	}
+	want := []string{"agent/report-analyst", "skill/finding-writeup", "tool/pandoc"}
+	got := env.installs.selections["reporting-pack"]
+	if len(got) != len(want) {
+		t.Fatalf("recorded selection = %v, want the three remaining units %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("recorded selection = %v, want %v (sorted by identity)", got, want)
+		}
+	}
+
+	// The scanned-unit half is unchanged.
 	rec = env.do(t, http.MethodDelete, "/api/plugins/units/role/临时角色", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("detaching a scanned unit returned %d: %s", rec.Code, rec.Body.String())
@@ -495,8 +530,37 @@ func TestPluginUnitDetachRespectsOwnership(t *testing.T) {
 	if _, ok := env.table.Unit("role/临时角色"); ok {
 		t.Fatalf("the detached unit is still in the table")
 	}
-	if _, err := plugin.Digest(filepath.Join(env.bundles, "loose.yaml")); err == nil {
-		t.Logf("note: loose.yaml was created by PutLocal's caller, not by the endpoint")
+
+	// Taking the last units out one by one ends in the uninstall, record and all - a row that said
+	// "installed" over an empty table would come back as an install of nothing at the next boot.
+	for _, id := range []string{"agent/report-analyst", "skill/finding-writeup"} {
+		rec = env.do(t, http.MethodDelete, "/api/plugins/units/"+id, "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("removing %s returned %d: %s", id, rec.Code, rec.Body.String())
+		}
+		if decodeState(t, rec)["bundle_uninstalled"] != false {
+			t.Fatalf("removing %s uninstalled the pack while units remained", id)
+		}
+	}
+	rec = env.do(t, http.MethodDelete, "/api/plugins/units/tool/pandoc", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("removing the last unit returned %d: %s", rec.Code, rec.Body.String())
+	}
+	body = decodeState(t, rec)
+	if body["bundle_uninstalled"] != true || body["install_recorded"] == true {
+		t.Fatalf("the last unit did not end as an uninstall: %v", body)
+	}
+	if _, ok := env.table.Bundle("reporting-pack"); ok {
+		t.Fatalf("the pack is still installed after its last unit was removed")
+	}
+	found := false
+	for _, id := range env.installs.forgot {
+		if id == "reporting-pack" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the install record was not forgotten with the last unit: %v", env.installs.forgot)
 	}
 }
 
@@ -1090,5 +1154,289 @@ func TestPluginInstallReportsAMissingOrFailingInstallStore(t *testing.T) {
 	}
 	if msg, _ := state["install_message"].(string); !strings.Contains(msg, "重新装入") {
 		t.Fatalf("the response does not name the consequence of a stale row: %q", msg)
+	}
+}
+
+// The install endpoint's units field: pick what you want out of a pack. The pack stays installed
+// and keeps its full manifest, the table holds only the chosen units, and the click is recorded with
+// the selection so a restart replays the same subset.
+func TestPluginInstallInstallsAChosenSubsetOfAPack(t *testing.T) {
+	env := newPluginTestEnv(t, true)
+	rec := env.do(t, http.MethodPost, "/api/plugins/install",
+		`{"bundle":"reporting-pack","units":["skill/finding-writeup","role/报告撰写"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("install: %d %s", rec.Code, rec.Body.String())
+	}
+	state := decodeState(t, rec)
+	if state["units_installed"] != float64(2) || state["units_total"] != float64(4) {
+		t.Fatalf("the response does not state what went in of what is offered: %v", state)
+	}
+	for _, id := range []string{"skill/finding-writeup", "role/报告撰写"} {
+		if _, ok := env.table.Unit(id); !ok {
+			t.Fatalf("%s was selected and is not installed", id)
+		}
+	}
+	for _, id := range []string{"agent/report-analyst", "tool/pandoc"} {
+		if _, ok := env.table.Unit(id); ok {
+			t.Fatalf("%s was not selected and is installed", id)
+		}
+	}
+	if _, ok := env.table.Bundle("reporting-pack"); !ok {
+		t.Fatalf("the pack is not installed")
+	}
+	sel := env.installs.selections["reporting-pack"]
+	if len(sel) != 2 {
+		t.Fatalf("recorded selection = %v, want the two chosen units", sel)
+	}
+	for _, id := range sel {
+		if id != "skill/finding-writeup" && id != "role/报告撰写" {
+			t.Fatalf("recorded selection = %v", sel)
+		}
+	}
+	// The tool unit stayed out, so the tool surface must not have been rebuilt for this install.
+	if env.tools.calls != 0 {
+		t.Fatalf("a selection without tool units rebuilt the tool surface %d times", env.tools.calls)
+	}
+	// The catalogue marks the two states apart: chosen units are installed, the others are not.
+	catalog := availablePack(t, env, "reporting-pack")
+	units := catalog["units"].([]interface{})
+	byID := map[string]map[string]interface{}{}
+	for _, raw := range units {
+		u := raw.(map[string]interface{})
+		byID[u["id"].(string)] = u
+	}
+	for _, id := range []string{"skill/finding-writeup", "role/报告撰写"} {
+		if byID[id]["installed"] != true {
+			t.Fatalf("%s reads as not installed: %v", id, byID[id])
+		}
+	}
+	for _, id := range []string{"agent/report-analyst", "tool/pandoc"} {
+		if byID[id]["installed"] != false {
+			t.Fatalf("%s reads as installed although it was never chosen: %v", id, byID[id])
+		}
+	}
+}
+
+// availablePack reads the catalogue entry for one pack.
+func availablePack(t *testing.T, env *pluginTestEnv, id string) map[string]interface{} {
+	t.Helper()
+	rec := env.do(t, http.MethodGet, "/api/plugins/available", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("available: %d %s", rec.Code, rec.Body.String())
+	}
+	catalog := decodeState(t, rec)
+	for _, raw := range catalog["bundles"].([]interface{}) {
+		pack := raw.(map[string]interface{})
+		if pack["id"] == id {
+			return pack
+		}
+	}
+	t.Fatalf("pack %s is not in the catalogue: %v", id, catalog)
+	return nil
+}
+
+func TestPluginInstallRefusesUnitsThePackDoesNotDeclare(t *testing.T) {
+	env := newPluginTestEnv(t, true)
+	rec := env.do(t, http.MethodPost, "/api/plugins/install",
+		`{"bundle":"reporting-pack","units":["role/报告撰写","skill/不存在的技能"]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("an undeclared unit id returned %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "skill/不存在的技能") {
+		t.Fatalf("the refusal does not name the unit: %s", rec.Body.String())
+	}
+	// Nothing was installed, nothing was recorded: a partial install must not read as a full one.
+	if _, ok := env.table.Bundle("reporting-pack"); ok {
+		t.Fatalf("a refused selection installed the pack")
+	}
+	if _, ok := env.installs.recorded["reporting-pack"]; ok {
+		t.Fatalf("a refused selection was recorded for the next boot to replay")
+	}
+}
+
+func TestPluginInstallRejectsAnExplicitlyEmptySelection(t *testing.T) {
+	env := newPluginTestEnv(t, true)
+	rec := env.do(t, http.MethodPost, "/api/plugins/install",
+		`{"bundle":"reporting-pack","units":[]}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("an empty selection returned %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := env.table.Bundle("reporting-pack"); ok {
+		t.Fatalf("an empty selection installed something")
+	}
+}
+
+// Choosing every unit is the whole-pack decision spelled in full, and it is recorded that way on
+// purpose: a later version that adds a unit should install it, exactly as the install button does.
+func TestPluginInstallOfEveryUnitIsRecordedAsTheWholePack(t *testing.T) {
+	env := newPluginTestEnv(t, true)
+	rec := env.do(t, http.MethodPost, "/api/plugins/install",
+		`{"bundle":"reporting-pack","units":["role/报告撰写","agent/report-analyst","skill/finding-writeup","tool/pandoc"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("install: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := decodeState(t, rec)["units_installed"]; got != float64(4) {
+		t.Fatalf("units_installed = %v, want 4", got)
+	}
+	if sel, recorded := env.installs.selections["reporting-pack"]; !recorded || sel != nil {
+		t.Fatalf("a full selection was recorded as %v; it has to read as the whole pack", sel)
+	}
+}
+
+func TestPluginInstallNarrowsAnExistingInstallAndUnwindsWhatLeft(t *testing.T) {
+	env := newPluginTestEnv(t, false)
+	writeMCPPack2(t, env)
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"mcp-role-pack"}`); rec.Code != http.StatusOK {
+		t.Fatalf("install: %s", rec.Body.String())
+	}
+	if len(env.mcp.adds) != 1 {
+		t.Fatalf("the declaration was not written: %v", env.mcp.adds)
+	}
+	// The operator starts the server: that is their decision, and a later reconcile of the *same*
+	// pack must not take it back by re-declaring the unit disabled.
+	if rec := env.do(t, http.MethodPost, "/api/plugins/units/mcp/lab-server/enabled", `{"enabled":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("enable: %d %s", rec.Code, rec.Body.String())
+	}
+	rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"mcp-role-pack","units":["role/持有角色"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("narrowing install: %d %s", rec.Code, rec.Body.String())
+	}
+	state := decodeState(t, rec)
+	if removed, _ := state["units_removed"].([]interface{}); len(removed) != 1 || removed[0] != "mcp/lab-server" {
+		t.Fatalf("the response does not name the unit that left: %v", state)
+	}
+	if _, ok := env.table.Unit("mcp/lab-server"); ok {
+		t.Fatalf("the narrowed-out unit is still in the table")
+	}
+	if _, ok := env.mcp.configs["lab-server"]; ok {
+		t.Fatalf("the server declaration survived the unit leaving the selection")
+	}
+	if len(env.mcp.removes) != 1 || env.mcp.removes[0] != "lab-server" {
+		t.Fatalf("the leaving unit's declaration was not withdrawn: %v", env.mcp.removes)
+	}
+	if sel := env.installs.selections["mcp-role-pack"]; len(sel) != 1 || sel[0] != "role/持有角色" {
+		t.Fatalf("recorded selection = %v", sel)
+	}
+	// A role-only pack must not pay for a tool-surface rebuild, in either direction.
+	if env.tools.calls != 0 {
+		t.Fatalf("a role-only reconcile rebuilt the tool surface %d times", env.tools.calls)
+	}
+}
+
+// writeMCPPack2 is a pack that carries a declaration and content, so a reconcile can leave one
+// behind - the case where the old uninstall path would try to remove a server that was never in the
+// table.
+func writeMCPPack2(t *testing.T, env *pluginTestEnv) {
+	t.Helper()
+	writeTestFile(t, filepath.Join(env.bundles, "mcp-role-pack", "mcp", "lab-server.yaml"),
+		"type: stdio\ncommand: python3\nargs: [\"-c\", \"pass\"]\n")
+	writeTestFile(t, filepath.Join(env.bundles, "mcp-role-pack", "roles", "持有角色.yaml"),
+		"name: 持有角色\nuser_prompt: 只有角色\nenabled: true\n")
+	writeTestFile(t, filepath.Join(env.bundles, "mcp-role-pack", plugin.ManifestFileName),
+		"id: mcp-role-pack\nname: 声明包\nversion: 1.0.0\nunits:\n"+
+			"  - kind: mcp\n    path: mcp/lab-server.yaml\n"+
+			"  - kind: role\n    path: roles/持有角色.yaml\n")
+}
+
+// A partial install narrows what "uninstall" has to unwind: the units that were never installed
+// must not be reported (or attempted) as removals.
+func TestPluginUninstallAfterAPartialInstallOnlyUnwindsWhatWasInstalled(t *testing.T) {
+	env := newPluginTestEnv(t, false)
+	writeMCPPack2(t, env)
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"mcp-role-pack","units":["role/持有角色"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("install: %s", rec.Body.String())
+	}
+	if len(env.mcp.adds) != 0 {
+		t.Fatalf("an unselected MCP unit was declared: %v", env.mcp.adds)
+	}
+	rec := env.do(t, http.MethodDelete, "/api/plugins/bundles/mcp-role-pack", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("uninstall: %d %s", rec.Code, rec.Body.String())
+	}
+	state := decodeState(t, rec)
+	if state["mcp_removed"] != nil && state["mcp_removed"] != float64(0) {
+		t.Fatalf("uninstall removed a server that was never declared: %v", state)
+	}
+	if msg, _ := state["mcp_message"].(string); msg != "" {
+		t.Fatalf("uninstall reported a phantom removal: %v", state)
+	}
+	if len(env.mcp.removes) != 0 {
+		t.Fatalf("the manager was asked to remove %v", env.mcp.removes)
+	}
+	if _, ok := env.table.Unit("role/持有角色"); ok {
+		t.Fatalf("the role survived the uninstall")
+	}
+}
+
+// Two packs, one identity: the catalogue says who holds it, and the install of that unit is refused
+// by name instead of half-succeeding.
+func TestAvailableCatalogueNamesAConflictingHolder(t *testing.T) {
+	env := newPluginTestEnv(t, false)
+	writeMCPPack2(t, env)
+	squatter, err := plugin.NewUnit(plugin.KindRole, "持有角色", filepath.Join(env.bundles, "shipped.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := env.table.PutLocal(squatter); err != nil {
+		t.Fatalf("PutLocal: %v", err)
+	}
+	pack := availablePack(t, env, "mcp-role-pack")
+	units := pack["units"].([]interface{})
+	found := false
+	for _, raw := range units {
+		u := raw.(map[string]interface{})
+		if u["id"] != "role/持有角色" {
+			continue
+		}
+		found = true
+		if u["installed"] != false {
+			t.Fatalf("a unit held by the built-in scan reads as installed: %v", u)
+		}
+		if msg, _ := u["conflict"].(string); !strings.Contains(msg, "内置目录") {
+			t.Fatalf("the catalogue does not name the holder: %v", u)
+		}
+	}
+	if !found {
+		t.Fatalf("the conflicting unit is missing from the catalogue: %v", units)
+	}
+	rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"mcp-role-pack","units":["role/持有角色"]}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("installing over the built-in identity returned %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// Re-touching a pack must not stop a server the operator had started: the declare step covers only
+// the units arriving in this call, so an already-installed MCP unit keeps whatever state its switch
+// was left in.
+func TestPluginReconcileKeepsAnAlreadyInstalledServerDeclared(t *testing.T) {
+	env := newPluginTestEnv(t, false)
+	writeMCPPack2(t, env)
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"mcp-role-pack","units":["mcp/lab-server"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("install: %s", rec.Body.String())
+	}
+	if rec := env.do(t, http.MethodPost, "/api/plugins/units/mcp/lab-server/enabled", `{"enabled":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("enable: %d %s", rec.Code, rec.Body.String())
+	}
+	addsAfterEnable := len(env.mcp.adds)
+	if cfg := env.mcp.configs["lab-server"]; !cfg.ExternalMCPEnable {
+		t.Fatalf("the switch did not enable the server: %+v", cfg)
+	}
+
+	rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"mcp-role-pack","units":["mcp/lab-server","role/持有角色"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reconcile: %d %s", rec.Code, rec.Body.String())
+	}
+	state := decodeState(t, rec)
+	if state["mcp_declared"] != nil && state["mcp_declared"] != float64(0) {
+		t.Fatalf("the reconcile re-declared the server while adding a role: %v", state)
+	}
+	if len(env.mcp.adds) != addsAfterEnable {
+		t.Fatalf("a reconcile re-declared an already-installed server (adds=%v), which would stop it", env.mcp.adds)
+	}
+	if cfg := env.mcp.configs["lab-server"]; !cfg.ExternalMCPEnable || cfg.Disabled {
+		t.Fatalf("the running server was switched off by an unrelated selection change: %+v", cfg)
+	}
+	if _, ok := env.table.Unit("role/持有角色"); !ok {
+		t.Fatalf("the newly chosen role did not arrive")
 	}
 }

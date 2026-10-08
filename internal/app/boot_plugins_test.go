@@ -109,7 +109,7 @@ func TestPersistedOnSwitchDoesNotRestartAPackPlugin(t *testing.T) {
 	if err := installs.EnsureSchema(); err != nil {
 		t.Fatal(err)
 	}
-	if err := installs.Record("boot-plugin-pack", "1.0.0"); err != nil {
+	if err := installs.Record("boot-plugin-pack", "1.0.0", nil); err != nil {
 		t.Fatal(err)
 	}
 
