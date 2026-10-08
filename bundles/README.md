@@ -13,6 +13,7 @@ bundles/<id>/
   skills/<name>/SKILL.md         # kind: skill（目录，必须含 SKILL.md）
   tools/<name>.yaml              # kind: tool
   mcp/<name>.yaml                # kind: mcp
+  modes/<name>.yaml              # kind: mode（激活内核已知的对话模式；声明只带 id）
   plugins/<name>.yaml            # kind: plugin（唯一携带可执行代码的一类）
   bin/<name>                     # 插件二进制本体，必须留在包目录内
 ```
@@ -25,9 +26,9 @@ name: 移动端安全测试角色包
 version: 1.0.0                   # 必需：没有版本就无法升级或回滚
 description: ...
 units:
-  - kind: role                   # role | agent | skill | tool | mcp | plugin，仅此六类
+  - kind: role                   # role | agent | skill | tool | mcp | mode | plugin，仅此七类
     path: roles/移动端安全测试.yaml   # 相对本目录；不允许 `..`，不允许绝对路径
-    name: 移动端安全测试            # 可省略：role/tool/agent 取去扩展名的文件名，skill 取目录名
+    name: 移动端安全测试            # 可省略：role/tool/agent/mode 取去扩展名的文件名，skill 取目录名
 
 # 以下均可选：只用于控制台展示（卡片信息 + 分类筛选），不参与任何安装、冲突或执行规则
 categories: ["Web", "红队"]
@@ -158,11 +159,28 @@ changelog: |
 | agent | ✅ | ✅ 运行路径与管理台都走表（`agents.LoadMarkdownAgents`） | ✅ |
 | tool | ✅ | ✅ 配方清单由表驱动重建（`ToolLayer.Rebuild`，与 `POST /config/apply` 同一条序列） | ✅ 装完即重建 |
 | mcp | ✅ 包声明的服务器写进**活的** `ExternalMCPManager`（与 `/api/external-mcp/*` 同一个对象）；每个远端工具另有身份（`LayerRemote`，按服务器成组装卸） | ✅ 授权按工具身份判定，判定不到再回到命名空间策略 | ✅ 装完只写声明，**不启动进程** |
+| mode | ✅ `modes/<name>.yaml` 进表（初始只写 `id`，身份与执行绑定在内核 `internal/agentmode`） | ✅ `GET /api/agent-modes` 与执行入口（对话/机器人/批量/workflow）都按表合并出模式目录；未装即"不点不存在"，带旧模式的请求 fail-closed 报错 | ✅ 装完即生效，卸载即从目录消失 |
 | plugin | ✅ 声明 + 二进制进包；开关时把信任域写进**活的** `pluginhost.Service`，能力进 `LayerPlugin`（按单元成组装卸） | ✅ 能力身份 runtime 为 `plugin-host:abi`，执行经 `capabilities/invoke` 走进程外 | ✅ 装完**不声明、不启动**；开关才声明并核对，核对不过就回滚开关 |
+
+## 包声明的对话模式（mode）
+
+`mode` 单元激活内核**已经会跑**的对话模式（当前是 deep / plan_execute / supervisor）。
+声明文件只携带身份——`modes/<name>.yaml` 里写 `id: <模式名>`，且必须与文件名一致：
+
+```yaml
+# modes/deep.yaml
+id: deep
+```
+
+执行绑定（哪个 runner、哪条编排名）是内核知识（`internal/agentmode`），声明改不了它：
+一个包能做的只是让已知模式出现在目录里，既不能把 deep 指到别的执行器，也不能发明内核
+不会跑的模式（未知 id 安装即拒）。`eino_single` 是内核内置底线，恒在，不能被单元覆盖或停用。
+现成例子：`multi-agent-orchestration` 包（1.1.0）带三份声明——装上，三个模式进入对话选择器；
+卸载，三个模式从目录消失（"不点不存在"），带着旧模式的存量会话在执行时被 fail-closed 挡住并指名原因。
 
 ## 包声明的插件（可执行代码）
 
-`plugin` 是六类里唯一带二进制的一类，也是唯一"装完还需要核对"的一类。声明文件
+`plugin` 是七类里唯一带二进制的一类，也是唯一"装完还需要核对"的一类。声明文件
 `plugins/<name>.yaml` 里的 `capabilities` 是**已经被人审过的入口清单**：
 
 ```yaml

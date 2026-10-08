@@ -34,7 +34,7 @@ git 仓库、对象存储。账号体系、在线付费、遥测回传不在本�
 | 签名库 | Ed25519 签名覆盖全部安全字段；无 `ignoreUnverified`；密钥/制品/发布者三档撤销 | `internal/artifact/artifact.go`、`revocation.go` |
 | 增量门 | 新增 grants/级别上调/权限变更 → 双人复核、作者不得自审 | `internal/artifact/review.go:184` `Decide` |
 | 撤销强制执行 | 启动装载 + **每次调用前**复查 provenance | `internal/app/app.go:223`、`capability_policy.go:227-238` |
-| 六类 kind 热插拔 | role/agent/skill/tool/mcp/plugin 同表同生命周期，装/摘/启停即时生效 | `internal/plugin`，`internal/app/capability_scan.go` |
+| 七类 kind 热插拔 | role/agent/skill/tool/mcp/mode/plugin 同表同生命周期，装/摘/启停即时生效 | `internal/plugin`，`internal/app/capability_scan.go` |
 | 控制台 | 「平台管理 → 能力包」页：装/摘/启停 + `served`/`drift`/插件运行时行 | `web/static/js/plugins.js`、`web/templates/index.html:430` |
 | 随仓样例包 | 4 个按角色打包的示例，装即生效，重启重新装入 | `bundles/`、`internal/app/boot_bundles_test.go` |
 
@@ -115,7 +115,7 @@ git 仓库、对象存储。账号体系、在线付费、遥测回传不在本�
 
 | 维度 | DSH | Goby | Qoder | yakit（既有研究） | 本仓现状 |
 |---|---|---|---|---|---|
-| 打包形态 | npm 包 | 压缩归档（Exp 等） | 文件夹 + SKILL.md | 头部声明 `##type:poc` | `bundles/<id>/bundle.yaml`，六类单元 |
+| 打包形态 | npm 包 | 压缩归档（Exp 等） | 文件夹 + SKILL.md | 头部声明 `##type:poc` | `bundles/<id>/bundle.yaml`，七类单元 |
 | 分发渠道 | npm + GitHub topic | 官方商店 | 广场 / 对话 / GitHub / 上传 | 官方商店 | **本地目录（唯一来源）** |
 | 发现 | 社区聚合站分类 + 复核标签 | 商店分类 + 场景化推送 | 广场分类 + 对话检索 | 商店 | 无（列表 = 目录内容） |
 | 信任 | 人工审核 + pin commit，无签名 | 官方人工审核 | 企业内托管；平台审核细节未公开 | 加密插件（不可审） | Ed25519 签名 + 双向核对 + 增量门（**库在，链路未接**） |
