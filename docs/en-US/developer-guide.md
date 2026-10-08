@@ -81,7 +81,7 @@ cannot disagree about why an update was refused.
 
 | entry | how it is used |
 |---|---|
-| console | Platform management -> One-click update (`#system-update`). Opening the page reads the local tree only and does not go online; **Check** is what performs the fetch; **Update** starts a job the page polls; the page also carries the "exit after updating" option and a rollback button |
+| console | System settings -> One-click update (`#system-update`, the old deep link still works). Opening this section reads the local tree only and does not go online; **Check** is what performs the fetch; **Update** starts a job the page polls; the "exit after updating" tick is pre-ticked when a supervisor is detected (launchd/systemd startup markers), and while the process is down the page watches for its return and reloads itself (sessions live in memory, so a fresh login follows); a rollback button sits below |
 | REST | `GET /api/system/update` (state on disk, no network), `POST /api/system/update/check` (fetch, then report the gap), `POST /api/system/update/apply` (`202` with `job_id`, polled through `GET /api/system/update/job`), `POST /api/system/update/rollback` |
 | CLI | `./cyberstrike-ai -check-update`, `./cyberstrike-ai -update`, `./cyberstrike-ai -update-rollback`. The install root is the directory holding `--config`, or the current directory when `--config` was not given |
 
@@ -97,6 +97,35 @@ project is actually cloned: your own fork is `mine` and tracks your work, the up
 reference), and the branch defaults to what the current branch's `@{upstream}` names (the current
 branch itself when there is no upstream). `upgrade.sh` is now a thin shell over the same
 implementation: when this directory is a git work tree it just calls `./cyberstrike-ai -update`.
+
+### Choosing the source (the update section of config.yaml)
+
+Unset, the rules above apply; set, the explicit choice wins:
+
+```yaml
+update:
+  remote: origin        # an existing remote name (mine/origin/upstream/anything), or remote_url instead
+  # remote_url: https://github.com/AIPentest/CyberStrikeAI.git
+  branch: main          # optional; defaults to @{upstream} / the current branch
+```
+
+The console page edits and saves all three. Saving validates: remote and branch names go through the
+same allowlist an update uses, and the address allowlist is https/http/ssh/git/file plus local
+absolute paths - git's `ext::` transport executes commands and is rejected outright. Following the
+official repository, your own fork, or somebody else's second-development repository is exactly the
+choice this section expresses.
+
+### Connecting a non-git installation (the tarball kind)
+
+An installation that started as an unpacked Release archive has no `.git`; once a source is saved it
+can be connected from the same page: the preview fetches in a throwaway repository and first lists
+**the local files the target would replace** and **the operator content that will be kept**; on
+confirm the directory becomes a git work tree (`git init`, origin added, the target branch checked
+out), every replaced file is kept under `.update-backup/<timestamp>/overwritten/`, operator content
+is stashed and restored as usual, and the binary is rebuilt. From then on it is a normal
+installation with one-click update and rollback - but note there is no git history before the
+connection, so the connection itself has no earlier commit to roll back to; the first real update
+writes the first rollback point.
 
 ### The four refusals
 
@@ -140,8 +169,23 @@ modified locally (`local_source_edits`).
 The process only stands down (graceful `Shutdown`, then exit 0) when the request explicitly says
 `restart: true` **and** a restart hook was wired at startup. Whether it actually comes back is up to a
 supervisor (systemd, `run.sh`), and the page says exactly that rather than promising a boot that may
-not happen. Otherwise the API only reports `needsRestart` and the old binary keeps running. Asking for
-a restart with no hook wired is a `400`, instead of stopping the service and claiming it restarted.
+not happen. Asking for a restart with no hook wired is a `400`, instead of stopping the service and
+claiming it restarted.
+
+**A pending binary is a durable state, and it can be activated later.** The status endpoint compares
+the binary identity captured at startup (size + nanosecond mtime) with what is on disk now: after an
+update, a rollback or a CLI run swapped the file without a restart, `needsRestart` is true,
+`binaryBuiltAt` says when it was built, and the console grows a persistent banner with **Restart now**
+(`POST /api/system/update/restart`; `409 nothing_pending` when there is nothing to activate, `409`
+while a job runs, `400` without a hook). The `supervised` field comes from environment markers
+(launchd's `XPC_SERVICE_NAME`, systemd's `INVOCATION_ID`/`JOURNAL_STREAM`) and only decides the tick's
+default.
+
+**And the page recovers by itself.** While the process is down the console becomes a recovery view
+that probes the status endpoint every 2 seconds: a 200 means the old process is still answering (keep
+waiting), a dead connection means it is on its way out, and a 401 from a process that no longer knows
+the session is the proof the restart happened - the page then `location.replace`s itself back to
+`#system-update`. Leaving the console stops the watching instead of yanking the user back.
 
 ## Adding a Business Module
 

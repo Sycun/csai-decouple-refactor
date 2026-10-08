@@ -818,7 +818,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	updateHandler := handler.NewUpdateHandler(configDir, log.Logger, auditSvc, func() {
 		app.Shutdown()
 		os.Exit(0)
-	})
+	}, configHandler.UpdateSource.Get, configHandler.UpdateSource.Save)
 
 	// 设置路由（使用 App 实例以便动态获取 handler）
 	setupRoutes(routeDeps{

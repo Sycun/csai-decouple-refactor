@@ -644,3 +644,15 @@ artifacts:
   install_dir: ""               # 已安装制品目录
   quarantine_dir: ""            # 隔离区：保留可见供复盘，不删除
   refresh_minutes: 0            # 0 表示不自动刷新（气隙部署保持关闭）
+
+# ============================================
+# 一键更新（可选）
+# ============================================
+# 更新源：不配置时，更新跟随本目录自己跟踪的 git 远端；配置后按这里指定的来源更新。
+# remote 与 remote_url 二选一（页面保存时两者互斥；都手写时以 remote_url 为准）。
+# 非 git 目录（解压/打包安装）配置地址后，可在「系统设置 → 一键更新」执行「接入更新源」，
+# 把目录变成跟踪该仓库的 git 工作树，此后按正常安装一键更新。
+# update:
+#   remote: origin                                            # 用已有远端名指定（mine/origin/upstream/任意名）
+#   remote_url: https://github.com/AIPentest/CyberStrikeAI.git # 或直接给仓库地址
+#   branch: main                                              # 要跟踪的分支；留空按 upstream/当前分支推断

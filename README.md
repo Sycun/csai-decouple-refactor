@@ -269,7 +269,7 @@ If server logs show `client sent an HTTP request to an HTTPS server`, a client i
 
 ### Upgrade and Compatibility
 
-**Prefer the platform's own one-click update** (console Platform management -> One-click update, or
+**Prefer the platform's own one-click update** (console System settings -> One-click update, or
 `./cyberstrike-ai -update` / `-check-update` / `-update-rollback`): it pulls **the remote this
 installation directory already tracks**, fast-forwards, rebuilds and swaps the binary atomically, keeps
 your `roles/skills/tools/agents/bundles/data/config.yaml` untouched (the result names every file it
@@ -280,6 +280,11 @@ diverged. See the [deployment guide](docs/en-US/deployment.md).
 above; only a non-git (tarball) installation falls back to the old "download a GitHub Release and
 rsync it in" path, where the source repository comes from `--repo owner/name` or `GITHUB_REPO` and the
 built-in default applies only when neither is given (with a warning naming the repository).
+
+The update source is one setting, in the `update` section of `config.yaml` or right on the console
+page - the official repository, your own fork, or somebody else's fork. An installation unpacked from
+a Release archive (no git) can be previewed and connected from the same page and updates in one click
+from then on.
 
 **CyberStrikeAI upgrade script:**
 1. (First time) enable the script: `chmod +x upgrade.sh`

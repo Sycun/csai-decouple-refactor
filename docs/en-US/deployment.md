@@ -77,7 +77,7 @@ proxy_set_header Connection "upgrade";
 
 ## Upgrading
 
-**Prefer the platform's own one-click update** (console Platform management -> One-click update,
+**Prefer the platform's own one-click update** (console System settings -> One-click update,
 `POST /api/system/update/apply`, or `./cyberstrike-ai -update` at a keyboard). It pulls **the remote
 this install directory already tracks**: fetch, fast-forward, `go build`, atomic binary swap (the old
 binary is kept as `cyberstrike-ai.prev`), while operator content - `roles/ skills/ tools/ agents/
@@ -85,6 +85,21 @@ bundles/ knowledge_base/ data/ config.yaml` - is put aside and restored, and the
 file it kept. For a fork this is the only path that does not overwrite you with somebody else's code;
 when source is modified locally or the branch has diverged it refuses and says why instead of forcing.
 See [the developer guide](developer-guide.md) for the full semantics.
+
+When a supervisor is detected (systemd/launchd startup markers in the environment), the "exit after
+updating" tick is pre-ticked: the process stands down after a successful update, the supervisor brings
+the new binary back, and the page reloads itself once the service answers (sessions live in memory, so
+one fresh login follows). Forgot the tick, or swapped the binary from the CLI? The console carries a
+persistent banner with **Restart now** - no shell login needed.
+
+The source is chosen either in the `update` section of `config.yaml` (`remote` or `remote_url`, plus
+an optional `branch`) or right on the console page: the official repository, your own fork, or
+somebody else's second-development repository are all just this one setting; unset, it follows the
+remote this directory already tracks. An installation unpacked from a Release archive (no `.git`)
+can be connected from the same page: the preview lists the files the target would replace and the
+operator content that is kept, replaced files are backed up under
+`.update-backup/<timestamp>/overwritten/`, and confirming turns the directory into a normal
+installation with one-click updates.
 
 `upgrade.sh` still works and is now a thin shell over that implementation, with two paths decided by
 the installation kind:

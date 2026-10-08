@@ -88,7 +88,7 @@ cp ~/csai-测试版/config.example.yaml ~/csai-测试版/config.yaml  # 端口�
 
 | 入口 | 怎么用 |
 |---|---|
-| 控制台 | 「平台管理 → 一键更新」（`#system-update`）。打开页面只读本机状态、不联网；点「检查更新」才去 fetch；「一键更新」发起任务并轮询进度；页面另有"更新完成后退出进程"勾选与回滚按钮 |
+| 控制台 | 「系统设置 → 一键更新」（`#system-update` 老深链仍可用）。打开这一区只读本机状态、不联网；点「检查更新」才去 fetch；「一键更新」发起任务并轮询进度；"更新完成后退出进程"在检测到守护进程（launchd/systemd 的启动标记）时默认勾选，重启期间页面守着重连、新进程一应答就自动刷新（会话在内存里，刷新后需重新登录）；另有回滚按钮 |
 | REST | `GET /api/system/update`（磁盘现状，不联网）、`POST /api/system/update/check`（fetch 后报告差集）、`POST /api/system/update/apply`（`202` 返回 `job_id`，用 `GET /api/system/update/job` 轮询）、`POST /api/system/update/rollback` |
 | CLI | `./cyberstrike-ai -check-update`、`./cyberstrike-ai -update`、`./cyberstrike-ai -update-rollback`。安装目录 = `--config` 所在目录，未给 `--config` 时是当前目录 |
 
@@ -101,6 +101,30 @@ cp ~/csai-测试版/config.example.yaml ~/csai-测试版/config.yaml  # 端口�
 remote 里取（这是本项目实际的克隆形态：自己的 fork 叫 `mine` 并跟踪自己的工作，上游只留作参考），
 分支默认取当前分支 `@{upstream}` 指向的名字（没有 upstream 时用当前分支名）。
 `upgrade.sh` 现在只是这条实现的薄壳：本目录是 git 工作树时它直接调 `./cyberstrike-ai -update`。
+
+### 选择更新源（config.yaml 的 update 段）
+
+不配置时按上面的规则跟随本树；配置后显式来源优先：
+
+```yaml
+update:
+  remote: origin        # 已有远端名（mine/origin/upstream/任意名），与 remote_url 二选一
+  # remote_url: https://github.com/AIPentest/CyberStrikeAI.git
+  branch: main          # 可选；留空按 upstream/当前分支推断
+```
+
+控制台的「一键更新」页可以直接编辑并保存这三项。服务端保存时校验：远端名与分支名走与更新同一套白名单，
+地址只允许 https/http/ssh/git/file:// 与本机绝对路径——git 的 `ext::` 传输会执行命令，一律拒绝。
+想让这套安装跟随官方仓库、自己的二开或别人的二开，改的都是这一处。
+
+### 接入非 git 安装（解压/打包装的那类）
+
+一开始用 Release 包解压安装、目录里没有 `.git` 的，配好上面的地址后可在同一页执行「预览并接入」：
+预览在临时仓库里 fetch，先列出**会被目标版本替换的本机文件**与**会保留的运维者内容**；确认后目录接入
+成为 git 工作树（`git init` + 添加 origin + 落地目标分支），被替换的文件全部留底在
+`.update-backup/<时间戳>/overwritten/`，运维者内容照旧先暂存再放回，随后重编译二进制。
+接入后它就是正常安装，一键更新与回滚都可用了；注意接入前没有 git 历史，因此「接入」本身没有可回滚的
+上一提交，第一个回滚点由接入后的第一次更新写下。
 
 ### 四种拒绝场景
 
@@ -137,15 +161,24 @@ remote 里取（这是本项目实际的克隆形态：自己的 fork 叫 `mine`
 
 只有请求显式带 `restart: true` **并且**本次启动装配了重启钩子时，进程才会在优雅 `Shutdown` 之后以 0 退出；
 是否真的"再起来"取决于外部守护（systemd、`run.sh`），页面文案也照这个说，不许诺一次可能不会发生的重启。
-其余情况只报告 `needsRestart`，运行的仍是旧二进制。`restart: true` 而本次启动没有钩子时直接 400，
-而不是把服务停掉然后声称重启过了。
+`restart: true` 而本次启动没有钩子时直接 400，而不是把服务停掉然后声称重启过了。
+
+**待生效状态是持久的、可补重启。** 状态接口对比"启动时记下的二进制身份（大小 + 纳秒 mtime）"与磁盘
+现值：更新、回滚或 CLI 换过二进制而没重启时，`needsRestart` 为真、`binaryBuiltAt` 给出构建时间，
+控制台顶部出现常驻横幅与「立即重启服务」（`POST /api/system/update/restart`；没有待生效版本时
+`409 nothing_pending`、有任务在跑 `409`、没钩子 `400`）。`supervised` 字段来自环境标记（launchd 的
+`XPC_SERVICE_NAME`、systemd 的 `INVOCATION_ID`/`JOURNAL_STREAM`），只用来决定勾选框的默认值。
+
+**重启后页面自己回来。** 重启期间控制台换成自恢复视图，每 2 秒探一次状态接口：旧进程还在应答（200）
+就继续等；连不上说明正在退出；新进程接客但对旧会话只回 401——这就是"重启已完成"的判据，页面随即
+`location.replace` 回 `#system-update` 整页刷新。离开控制台则静默停表，不把已经走开的用户拽回来。
 
 ## 路由
 
 路由由 `internal/app` 的**分域注册器**装配：`setupRoutes(routeDeps)` 只负责建组、挂中间件并逐个调用
 `routes_<domain>.go` 里的 `register<Domain>Routes`。装配点仍然唯一（`internal/app`），但"所有路由集中在
 `app.go` 一个函数里"这条旧约定已被解掉——那个函数曾经 558 行、30 个位置参数，加一个接口要在大函数里找位置。
-路由表由 `internal/app/testdata/routes.golden.txt`（278 条）与 `TestRouteTableMatchesGolden` 守住，
+路由表由 `internal/app/testdata/routes.golden.txt`（292 条）与 `TestRouteTableMatchesGolden` 守住，
 所以移动注册不会悄悄改变服务端实际暴露的路径。新增业务接口通常需要：
 
 1. 在 `internal/handler/` 增加 Handler。

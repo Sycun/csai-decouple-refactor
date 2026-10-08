@@ -110,8 +110,14 @@ function initRouter() {
         const hashParts = hash.split('?');
         let pageId = hashParts[0].replace(/^#?\//, '');
         if (pageId === 'c2') pageId = 'c2-listeners';
-        if (pageId && ['dashboard', 'chat', 'hitl', 'tool-guard', 'asset-overview', 'asset-library', 'info-collect', 'projects', 'vulnerabilities', 'webshell', 'chat-files', 'mcp-monitor', 'mcp-management', 'knowledge-management', 'knowledge-retrieval-logs', 'roles-management', 'platform-rbac', 'workflows', 'skills-monitor', 'skills-management', 'agents-management', 'plugins-management', 'system-update', 'settings', 'tasks', 'c2-listeners', 'c2-sessions', 'c2-tasks', 'c2-payloads', 'c2-events', 'c2-profiles'].includes(pageId)) {
+        // 一键更新已并进系统设置页的分区菜单：#system-update 这条老深链落到设置页的那一区。
+        const settingsSection = pageId === 'system-update' ? 'update' : '';
+        if (settingsSection) pageId = 'settings';
+        if (pageId && ['dashboard', 'chat', 'hitl', 'tool-guard', 'asset-overview', 'asset-library', 'info-collect', 'projects', 'vulnerabilities', 'webshell', 'chat-files', 'mcp-monitor', 'mcp-management', 'knowledge-management', 'knowledge-retrieval-logs', 'roles-management', 'platform-rbac', 'workflows', 'skills-monitor', 'skills-management', 'agents-management', 'plugins-management', 'settings', 'tasks', 'c2-listeners', 'c2-sessions', 'c2-tasks', 'c2-payloads', 'c2-events', 'c2-profiles'].includes(pageId)) {
             switchPage(pageId);
+            if (settingsSection && typeof switchSettingsSection === 'function') {
+                switchSettingsSection(settingsSection);
+            }
             if (pageId === 'chat') {
                 scheduleChatConversationFromHash(0);
             }
@@ -448,9 +454,6 @@ async function initPage(pageId) {
         case 'plugins-management':
             if (typeof loadPluginConsole === 'function') loadPluginConsole();
             break;
-        case 'system-update':
-            if (typeof loadUpdateConsole === 'function') loadUpdateConsole();
-            break;
         case 'tasks':
             // 初始化任务管理页面
             if (typeof initTasksPage === 'function') {
@@ -535,6 +538,12 @@ async function initPage(pageId) {
             if (typeof loadConfig === 'function') {
                 loadConfig(false);
             }
+            // 回到设置页时若停在「一键更新」分区，重新读一遍安装状态并把进度轮询接上——
+            // 离开设置页时轮询已被停掉，不接的话画面上会留一份不再动的进度。
+            const updateSection = document.getElementById('settings-section-update');
+            if (updateSection && updateSection.classList.contains('active') && typeof loadUpdateConsole === 'function') {
+                loadUpdateConsole();
+            }
             break;
         case 'roles-management':
             // 初始化角色管理页面
@@ -611,8 +620,9 @@ async function initPage(pageId) {
     if (pageId !== 'tasks' && typeof cleanupTasksPage === 'function') {
         cleanupTasksPage();
     }
-    // 一键更新的进度轮询同理：离开那一页就没必要每 1.5 秒读一次任务了。
-    if (pageId !== 'system-update' && typeof stopUpdatePolling === 'function') {
+    // 一键更新的进度轮询同理：它现在住在系统设置页里，离开设置页就没必要每 1.5 秒读一次任务了
+    // （同一页内切到别的分区由 settings.js 的 switchSettingsSection 负责停）。
+    if (pageId !== 'settings' && typeof stopUpdatePolling === 'function') {
         stopUpdatePolling();
     }
 }
@@ -631,8 +641,14 @@ document.addEventListener('DOMContentLoaded', function() {
         let pageId = hashParts[0].replace(/^#?\//, '');
         
         if (pageId === 'c2') pageId = 'c2-listeners';
-        if (pageId && ['dashboard', 'chat', 'hitl', 'tool-guard', 'asset-overview', 'asset-library', 'info-collect', 'projects', 'tasks', 'workflows', 'vulnerabilities', 'webshell', 'chat-files', 'mcp-monitor', 'mcp-management', 'knowledge-management', 'knowledge-retrieval-logs', 'roles-management', 'platform-rbac', 'skills-monitor', 'skills-management', 'agents-management', 'plugins-management', 'system-update', 'settings', 'c2-listeners', 'c2-sessions', 'c2-tasks', 'c2-payloads', 'c2-events', 'c2-profiles'].includes(pageId)) {
+        // 与首屏解析同一套别名：#system-update 落到系统设置页的「一键更新」分区。
+        const settingsSection = pageId === 'system-update' ? 'update' : '';
+        if (settingsSection) pageId = 'settings';
+        if (pageId && ['dashboard', 'chat', 'hitl', 'tool-guard', 'asset-overview', 'asset-library', 'info-collect', 'projects', 'tasks', 'workflows', 'vulnerabilities', 'webshell', 'chat-files', 'mcp-monitor', 'mcp-management', 'knowledge-management', 'knowledge-retrieval-logs', 'roles-management', 'platform-rbac', 'skills-monitor', 'skills-management', 'agents-management', 'plugins-management', 'settings', 'c2-listeners', 'c2-sessions', 'c2-tasks', 'c2-payloads', 'c2-events', 'c2-profiles'].includes(pageId)) {
             switchPage(pageId);
+            if (settingsSection && typeof switchSettingsSection === 'function') {
+                switchSettingsSection(settingsSection);
+            }
             if (pageId === 'chat') {
                 scheduleChatConversationFromHash(0);
             }

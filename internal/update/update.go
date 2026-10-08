@@ -34,6 +34,11 @@ import (
 // Binary is the default executable name an update replaces.
 const Binary = "cyberstrike-ai"
 
+// urlRefNamespace is where a fetch from an explicit address (config.yaml update.remote_url)
+// parks its remote-tracking ref. A fixed name no remote can shadow keeps the update reading
+// the same shape whether the source is a remote name or a URL.
+const urlRefNamespace = "update-source"
+
 // maxIncoming caps how many commits a status page lists; the count is reported
 // separately so "37 new commits, showing 50" is impossible.
 const maxIncoming = 50
@@ -43,6 +48,38 @@ const maxIncoming = 50
 // rather than from a request - but the same validator is used for both, so there is one
 // rule instead of one that is stricter in the case nobody attacks.
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/@-]*$`)
+
+// urlSchemePattern is the allowlist of fetch schemes. git also accepts "ext::" URLs, which
+// run the command written after the colons, so this is an allowlist rather than "whatever
+// git accepts"; every other "::" form is rejected outright.
+var urlSchemePattern = regexp.MustCompile(`^(https?|ssh|git|file)://`)
+
+// maxRemoteURLLength caps what a config file can put on a git command line.
+const maxRemoteURLLength = 512
+
+// ValidRemoteURL reports whether s may be used as a fetch source. Local absolute paths are
+// allowed on purpose: they are how this project's own trees point at each other in tests
+// and on one machine.
+func ValidRemoteURL(s string) bool {
+	if s == "" || len(s) > maxRemoteURLLength {
+		return false
+	}
+	if strings.HasPrefix(s, "-") {
+		return false
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	if strings.Contains(s, "::") {
+		return false
+	}
+	if strings.HasPrefix(s, "/") {
+		return true
+	}
+	return urlSchemePattern.MatchString(s)
+}
 
 // protectedDirs are install-tree directories whose contents the operator may have
 // changed through the console or by hand. An update never overwrites them.
@@ -73,11 +110,15 @@ func Protected(rel string) bool {
 }
 
 // Options describes which installation to act on. Root is the only required field;
-// Remote and Branch exist for a tree that tracks something other than its own upstream.
+// Remote, RemoteURL and Branch carry an explicit update source (config.yaml update
+// section) for a tree that tracks something other than its own upstream - either a remote
+// it already has, by name, or an address to fetch directly. When both are set, the
+// address wins.
 type Options struct {
-	Root   string
-	Remote string
-	Branch string
+	Root      string
+	Remote    string
+	RemoteURL string
+	Branch    string
 	// BinaryName overrides the executable swapped after a successful update. Empty
 	// means "cyberstrike-ai" in Root; "none" means leave the binary alone.
 	BinaryName string
@@ -120,10 +161,13 @@ type Commit struct {
 
 // Snapshot is everything a person needs to decide whether to press the button.
 type Snapshot struct {
-	Root        string `json:"root"`
-	Installed   bool   `json:"installed"`
-	Branch      string `json:"branch"`
-	Remote      string `json:"remote"`
+	Root      string `json:"root"`
+	Installed bool   `json:"installed"`
+	Branch    string `json:"branch"`
+	Remote    string `json:"remote"`
+	// RemoteURL is set when the update source is an explicit address (config.yaml
+	// update.remote_url) rather than a remote this tree already has.
+	RemoteURL   string `json:"remoteUrl,omitempty"`
 	Remotes     []string
 	Commit      string `json:"commit"`
 	Subject     string `json:"subject"`
@@ -211,11 +255,19 @@ func Status(ctx context.Context, opts Options) (*Snapshot, error) {
 		BlockingChanges: []Change{},
 	}
 
+	if url := strings.TrimSpace(opts.RemoteURL); url != "" {
+		if !ValidRemoteURL(url) {
+			snap.CheckError = "配置的更新源地址不合法（只允许 https/http/ssh/git/file:// 或本机绝对路径）"
+			return snap, nil
+		}
+		snap.RemoteURL = url
+	}
+
 	if _, err := gitCmd(ctx, root, "rev-parse", "--is-inside-work-tree"); err != nil {
 		// Not a git tree: the page still has to say something useful, so this is a
 		// state rather than an error.
 		snap.Installed = false
-		snap.CheckError = "这个目录不是 git 工作树，无法自动更新；请用源码包方式更新"
+		snap.CheckError = "这个目录不是 git 工作树：可以先配置更新源再接入（配置文件 update 段），或按发布包方式更新"
 		snap.GoToolchain, snap.CanBuild = toolchain(ctx, root)
 		snap.HasBinary = fileExists(filepath.Join(root, opts.binaryName()))
 		return snap, nil
@@ -295,6 +347,33 @@ func pickRemote(remotes []string, branch, optsRemote string) string {
 	return ""
 }
 
+// fetchTarget is what git is pointed at: the configured address, or the chosen remote.
+func (s *Snapshot) fetchTarget() string {
+	if s.RemoteURL != "" {
+		return s.RemoteURL
+	}
+	return s.Remote
+}
+
+// fetchNamespace is where the fetched branch is parked under refs/remotes/.
+func (s *Snapshot) fetchNamespace() string {
+	if s.RemoteURL != "" {
+		return urlRefNamespace
+	}
+	return s.Remote
+}
+
+// sourceRef is the remote-tracking ref a status or an update compares against.
+func (s *Snapshot) sourceRef() string { return s.fetchNamespace() + "/" + s.Branch }
+
+// sourceLabel is the human-facing name of where an update would come from.
+func (s *Snapshot) sourceLabel() string {
+	if s.RemoteURL != "" {
+		return s.RemoteURL
+	}
+	return s.Remote
+}
+
 // localChanges lists modified and deleted tracked files, and splits them by who owns
 // the path.
 func localChanges(ctx context.Context, root string) (all, blocking []Change) {
@@ -344,8 +423,8 @@ func Check(ctx context.Context, opts Options) (*Snapshot, error) {
 		return snap, nil
 	}
 	root := snap.Root
-	if snap.Remote == "" {
-		snap.CheckError = "该安装没有配置任何 git remote，无法检查更新"
+	if snap.Remote == "" && snap.RemoteURL == "" {
+		snap.CheckError = "该安装没有配置任何 git remote，也没有配置更新源地址，无法检查更新"
 		return snap, nil
 	}
 	if snap.Branch == "" || snap.Branch == "HEAD" || !ValidName(snap.Branch) {
@@ -356,12 +435,12 @@ func Check(ctx context.Context, opts Options) (*Snapshot, error) {
 	// history. A detached fetch of one branch means a remote with many refs cannot
 	// turn the update check into a full clone.
 	if _, err := gitCmd(ctx, root, "fetch", "--quiet", "--no-tags", "--prune", "--recurse-submodules=no",
-		snap.Remote, "+refs/heads/"+snap.Branch+":refs/remotes/"+snap.Remote+"/"+snap.Branch); err != nil {
+		snap.fetchTarget(), "+refs/heads/"+snap.Branch+":refs/remotes/"+snap.fetchNamespace()+"/"+snap.Branch); err != nil {
 		snap.CheckError = err.Error()
 		return snap, nil
 	}
 
-	ref := snap.Remote + "/" + snap.Branch
+	ref := snap.sourceRef()
 	if v, err := gitCmd(ctx, root, "rev-parse", "--short", ref); err == nil {
 		snap.RemoteCommit = v
 	} else {

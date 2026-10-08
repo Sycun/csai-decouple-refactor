@@ -70,13 +70,20 @@ type Result struct {
 	// Upstream may well have changed them; saying which ones is the difference between
 	// "my roles disappeared" and "my roles are still mine, and these upstream files did
 	// not land".
-	KeptContent  []string `json:"keptContent"`
-	BinaryPath   string   `json:"binaryPath"`
-	BinaryBuilt  bool     `json:"binaryBuilt"`
-	PrevBinary   string   `json:"prevBinary"`
-	BackupDir    string   `json:"backupDir"`
-	NeedsRestart bool     `json:"needsRestart"`
-	Duration     string   `json:"duration"`
+	KeptContent []string `json:"keptContent"`
+	// Overwritten names local files whose content the target repository's version replaced
+	// during an adoption; copies are kept under <BackupDir>/overwritten/ so nothing is lost
+	// without a way back.
+	Overwritten []string `json:"overwritten,omitempty"`
+	// Adopted marks a result that comes from connecting a plain directory to a source
+	// rather than from moving an existing work tree.
+	Adopted      bool   `json:"adopted,omitempty"`
+	BinaryPath   string `json:"binaryPath"`
+	BinaryBuilt  bool   `json:"binaryBuilt"`
+	PrevBinary   string `json:"prevBinary"`
+	BackupDir    string `json:"backupDir"`
+	NeedsRestart bool   `json:"needsRestart"`
+	Duration     string `json:"duration"`
 }
 
 // Error is a refusal with the information needed to act on it. Callers render the
@@ -107,7 +114,7 @@ func Apply(ctx context.Context, opts Options, onStep func(Step)) (*Result, error
 
 	// A refusal is not the end of the timeline: the page renders these lines, so the first
 	// one says what was looked at even when the answer is "nothing to do".
-	step("preflight", fmt.Sprintf("检查安装目录 %s（分支 %s / 远端 %s / 提交 %s）", snap.Root, snap.Branch, snap.Remote, snap.Commit))
+	step("preflight", fmt.Sprintf("检查安装目录 %s（分支 %s / 远端 %s / 提交 %s）", snap.Root, snap.Branch, snap.sourceLabel(), snap.Commit))
 
 	if !snap.Installed {
 		return nil, &Error{Reason: "not_a_repo", Message: "这个目录不是 git 工作树，无法自动更新"}
@@ -140,14 +147,14 @@ func Apply(ctx context.Context, opts Options, onStep func(Step)) (*Result, error
 		}, nil
 	}
 
-	step("fetch", fmt.Sprintf("%s/%s 有 %d 个新提交：%s → %s", snap.Remote, snap.Branch, snap.Behind, snap.Commit, snap.RemoteCommit))
+	step("fetch", fmt.Sprintf("%s/%s 有 %d 个新提交：%s → %s", snap.sourceLabel(), snap.Branch, snap.Behind, snap.Commit, snap.RemoteCommit))
 
 	// Put operator-owned content aside, and clear the paths the incoming change would
 	// write to, so the fast-forward cannot be refused by "your local changes would be
 	// overwritten". Nothing here deletes a file the operator made: every path is copied
 	// out first and copied back after.
 	root := snap.Root
-	ref := snap.Remote + "/" + snap.Branch
+	ref := snap.sourceRef()
 	backupDir, kept, err := stashProtected(ctx, root, ref)
 	if err != nil {
 		return nil, err
@@ -155,12 +162,12 @@ func Apply(ctx context.Context, opts Options, onStep func(Step)) (*Result, error
 	step("protect", fmt.Sprintf("已暂存 %d 个本地内容文件（roles/skills/tools/数据/配置），更新完成后放回", len(kept)))
 
 	if out, err := gitCmd(ctx, root, "merge", "--ff-only", "--no-verify", ref); err != nil {
-		restoreProtected(backupDir)
+		restoreProtected(backupDir, kept)
 		return nil, &Error{Reason: "merge_failed", Message: fmt.Sprintf("快进合并失败：%v\n%s", err, strings.TrimSpace(out))}
 	}
 	// The merge wrote upstream's version of the content paths; the operator's copies win
 	// them back, which is what "update the code, keep my work" means.
-	if err := restoreProtected(backupDir); err != nil {
+	if err := restoreProtected(backupDir, kept); err != nil {
 		return nil, err
 	}
 
@@ -271,25 +278,26 @@ func stashProtected(ctx context.Context, root, ref string) (backupDir string, ke
 	return "", nil, nil
 }
 
-// restoreProtected puts the operator's copies back over whatever the merge wrote.
-func restoreProtected(backupDir string) error {
+// restoreProtected puts the named operator-owned copies back over whatever the merge
+// wrote. The list is the one stashProtected returned: an adoption parks replaced
+// non-protected files in the same backup directory (under overwritten/), and those must
+// NOT be restored over the target repository's version.
+func restoreProtected(backupDir string, kept []string) error {
 	if backupDir == "" {
 		return nil
 	}
-	return filepath.WalkDir(backupDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		rel, err := filepath.Rel(backupDir, path)
+	root := filepath.Join(filepath.Dir(backupDir), "..")
+	for _, rel := range kept {
+		abs := filepath.Join(backupDir, filepath.FromSlash(rel))
+		info, err := os.Stat(abs)
 		if err != nil {
 			return err
 		}
-		info, err := os.Stat(path)
-		if err != nil {
+		if err := copyFile(abs, filepath.Join(root, filepath.FromSlash(rel)), info.Mode()); err != nil {
 			return err
 		}
-		return copyFile(path, filepath.Join(filepath.Dir(backupDir), "..", rel), info.Mode())
-	})
+	}
+	return nil
 }
 
 // untrackedUnder lists untracked files under the given repository paths - the operator's

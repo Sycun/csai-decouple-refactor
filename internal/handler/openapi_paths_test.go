@@ -74,7 +74,7 @@ func TestOpenAPIGroupsDoNotOverlap(t *testing.T) {
 // while the others are intact only trims it. Each group keeps at least the paths it has
 // today: raise a floor when you document a new path in that group, never lower one.
 func TestOpenAPIGroupFloors(t *testing.T) {
-	floors := map[string]int{"chat": 41, "knowledge": 25, "capabilities": 32, "mcp": 6, "ops": 14}
+	floors := map[string]int{"chat": 41, "knowledge": 25, "capabilities": 35, "mcp": 6, "ops": 14}
 	for _, group := range openAPIGroups() {
 		floor, ok := floors[group.name]
 		if !ok {

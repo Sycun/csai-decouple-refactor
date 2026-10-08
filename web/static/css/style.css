@@ -46789,7 +46789,7 @@ html[data-theme="dark"] { --tool-blocked-color: #f4bc62; }
 }
 
 /* ---------------------------------------------------------------------------
-   一键更新控制台（system-update）：这里说的每一句状态都要能被眼睛分区——
+   一键更新控制台（系统设置页的 settings-section-update 分区）：这里说的每一句状态都要能被眼睛分区——
    本机事实、远端比较、能不能点、正在跑的进度、以及跑完的结论。
    ok/warn/danger 三色是给"说谎"留的对照组：查不了必须是 warn/danger，不能长得像 ok。
    --------------------------------------------------------------------------- */
@@ -46797,6 +46797,85 @@ html[data-theme="dark"] { --tool-blocked-color: #f4bc62; }
     display: flex;
     flex-direction: column;
     gap: 20px;
+}
+
+/* 分区标题行：标题在左、刷新在右；窄屏放不下就换行，别把标题压扁 */
+.update-section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* 待生效横幅：磁盘二进制与运行进程不一致时的常驻出口（忘勾重启也有救） */
+.update-restart-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 14px;
+    border: 1px solid rgba(217, 130, 43, 0.45);
+    border-radius: 10px;
+    background: rgba(217, 130, 43, 0.12);
+}
+
+.update-restart-banner-text {
+    flex: 1 1 240px;
+    min-width: 0;
+    font-size: 13px;
+    color: #b06a17;
+}
+
+.update-restart-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+/* 自恢复视图：重启期间控制台让位给这一屏，新进程应答后整页刷新 */
+.update-overlay {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 32px 16px;
+    text-align: center;
+}
+
+.update-overlay-spinner {
+    width: 28px;
+    height: 28px;
+    border: 3px solid rgba(58, 110, 197, 0.25);
+    border-top-color: #2d5bb0;
+    border-radius: 50%;
+    animation: update-spin 0.9s linear infinite;
+}
+
+@keyframes update-spin {
+    to { transform: rotate(360deg); }
+}
+
+.update-overlay-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.update-overlay-body {
+    max-width: 460px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.update-overlay-slow {
+    max-width: 460px;
+    font-size: 13px;
+    color: #b06a17;
+}
+
+.update-overlay-actions {
+    margin-top: 4px;
 }
 
 .update-intro {
@@ -47075,4 +47154,40 @@ html[data-theme="dark"] { --tool-blocked-color: #f4bc62; }
 .update-failure-message {
     white-space: pre-wrap;
     word-break: break-word;
+}
+
+/* 更新源区块：一行一个输入（label 上、输入下），与平台的设置表单同构。 */
+.update-source-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.update-source-form label {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.update-source-input {
+    padding: 8px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.update-source-url,
+.update-source-remote,
+.update-source-branch {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.update-source-save-btn,
+.update-adopt-preview-btn,
+.update-adopt-confirm-btn {
+    align-self: flex-start;
 }

@@ -268,7 +268,7 @@ go build -o cyberstrike-ai cmd/server/main.go
 
 ### 版本升级与兼容性
 
-**优先用平台自带的「一键更新」**（控制台「平台管理 → 一键更新」，或 `./cyberstrike-ai -update` /
+**优先用平台自带的「一键更新」**（控制台「系统设置 → 一键更新」，或 `./cyberstrike-ai -update` /
 `-check-update` / `-update-rollback`）：它拉的是**本安装目录自己跟踪的远端**，快进后重编译并原子换二进制，
 你的 `roles/skills/tools/agents/bundles/data/config.yaml` 会被原样保留（结果里逐个点名保留了什么），
 本地源码有改动或分支已分叉时它会拒绝而不是覆盖。详见 [部署指南](docs/zh-CN/deployment.md)。
@@ -276,6 +276,9 @@ go build -o cyberstrike-ai cmd/server/main.go
 `upgrade.sh` 仍然可用：本目录是 git 工作树时它就是上面那条命令的薄壳；不是 git 工作树（tarball 安装）时
 才回落到"下载 GitHub Release 包 + rsync"的老路径，此时源码仓库由 `--repo owner/name` 或 `GITHUB_REPO`
 决定（都不给才用内置默认值，并会警告说明代码来自哪个仓库）。
+
+更新源可在 `config.yaml` 的 `update` 段或控制台「一键更新」页指定（跟随官方仓库、自己的二开或别人的二开
+都只是一处配置）；解压安装（目录里没有 git）也能在同一页「预览并接入」后进入一键更新。
 
 1. （首次使用）启用脚本：`chmod +x upgrade.sh`
 2. 升级：`./upgrade.sh`（可选参数：`--check`、`--tag vX.Y.Z`、`--repo owner/name`、`--no-venv`、`--yes`）。本地的 `tools/`、`roles/`、`skills/`、`agents/`、`bundles/` 会始终保留不被覆盖。

@@ -232,9 +232,12 @@ POST /api/robot/wecom
 POST /api/roles
 POST /api/skills
 POST /api/storage/cleanup
+POST /api/system/update/adopt
 POST /api/system/update/apply
 POST /api/system/update/check
+POST /api/system/update/restart
 POST /api/system/update/rollback
+POST /api/system/update/source
 POST /api/terminal/run
 POST /api/terminal/run/stream
 POST /api/tool-guard/test

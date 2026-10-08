@@ -54,6 +54,20 @@ type Config struct {
 	MultiAgent  MultiAgentConfig      `yaml:"multi_agent,omitempty" json:"multi_agent,omitempty"`
 	Project     ProjectConfig         `yaml:"project,omitempty" json:"project,omitempty"`
 	Vision      VisionConfig          `yaml:"vision,omitempty" json:"vision,omitempty"`
+	Update      UpdateConfig          `yaml:"update,omitempty" json:"update,omitempty"`
+}
+
+// UpdateConfig 一键更新的更新源（可选）：显式指定从哪个仓库/分支更新本安装。
+// 不配置时更新跟随安装目录自己跟踪的远端；两种来源都在本地解析，没有写死的仓库地址。
+type UpdateConfig struct {
+	// Remote 用安装树里已有的远端名指定更新源（mine/origin/upstream 或任意自定义名）。
+	Remote string `yaml:"remote,omitempty" json:"remote,omitempty"`
+	// RemoteURL 直接给出仓库地址（https/http/ssh/git/file:// 或本机绝对路径），不必先 git remote add；
+	// 与 Remote 同时配置时以地址为准（页面保存时两者互斥）。
+	RemoteURL string `yaml:"remote_url,omitempty" json:"remote_url,omitempty"`
+	// Branch 要跟踪的分支；留空时取当前分支的 upstream（没有 upstream 时取当前分支名；
+	// 非 git 目录接入时取仓库的默认分支）。
+	Branch string `yaml:"branch,omitempty" json:"branch,omitempty"`
 }
 
 type EnsureLocalConfigResult struct {

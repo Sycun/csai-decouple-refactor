@@ -89,7 +89,10 @@ type ConfigHandler struct {
 	// Tools 拥有配方清单、recipe 能力层与整个 MCP 工具面（见 tool_table.go）。注册表按层
 	// 替换，内置工具的策略不会被一次 config「应用」清掉，这是原先 ClearTools 丢工具问题的
 	// 根治点；把它从 ConfigHandler 拆出来，是因为它有自己的状态和自己的串行化。
-	Tools                *ToolLayer
+	Tools *ToolLayer
+	// UpdateSource 拥有更新源（config.yaml 的 update 段）这笔状态，页面读写都走它；
+	// 保存复用本类型的 saveConfig，文件仍只有一处写入（见 update_source.go）。
+	UpdateSource         *UpdateSourceStore
 	settings             *SettingsStore // 发布运行期配置的快照存储（见 internal/settings）
 	c2Runtime            C2Runtime      // C2 启停（可选）
 	retrieverUpdater     RetrieverUpdater
@@ -148,7 +151,7 @@ func NewConfigHandler(configPath string, cfg *config.Config, mcpServer *mcp.Serv
 			APIKey:   cfg.Knowledge.Embedding.APIKey,
 		}
 	}
-	return &ConfigHandler{
+	h := &ConfigHandler{
 		configPath:          configPath,
 		config:              cfg,
 		mcpServer:           mcpServer,
@@ -160,6 +163,8 @@ func NewConfigHandler(configPath string, cfg *config.Config, mcpServer *mcp.Serv
 		logger:              logger,
 		lastEmbeddingConfig: lastEmbeddingConfig,
 	}
+	h.UpdateSource = newUpdateSourceStore(&cfg.Update, h.saveConfig)
+	return h
 }
 
 // SetC2Runtime 设置 C2 运行时（Apply 时启停）
@@ -1772,6 +1777,7 @@ func (h *ConfigHandler) saveConfig() error {
 	updateAIConfig(root, h.config.AI)
 	removeKeyFromMap(root.Content[0], "openai")
 	updateVisionConfig(root, h.config.Vision)
+	updateUpdateSourceConfig(root, h.config.Update)
 	updateFOFAConfig(root, h.config.FOFA)
 	updateSpaceSearchConfig(root, "zoomeye", h.config.ZoomEye)
 	updateSpaceSearchConfig(root, "quake", h.config.Quake)
@@ -1903,6 +1909,35 @@ func updateMCPConfig(doc *yaml.Node, cfg config.MCPConfig) {
 	setBoolInMap(mcpNode, "enabled", cfg.Enabled)
 	setStringInMap(mcpNode, "host", cfg.Host)
 	setIntInMap(mcpNode, "port", cfg.Port)
+}
+
+// updateUpdateSourceConfig 写入一键更新的更新源（update 段）。三项全空时把整段删掉，
+// 而不是留下一个空的 update: 块——"没有配置"应当就是文件里没有这一段。
+func updateUpdateSourceConfig(doc *yaml.Node, cfg config.UpdateConfig) {
+	root := doc.Content[0]
+	remote := strings.TrimSpace(cfg.Remote)
+	remoteURL := strings.TrimSpace(cfg.RemoteURL)
+	branch := strings.TrimSpace(cfg.Branch)
+	if remote == "" && remoteURL == "" && branch == "" {
+		removeKeyFromMap(root, "update")
+		return
+	}
+	node := ensureMap(root, "update")
+	if remote != "" {
+		setStringInMap(node, "remote", remote)
+	} else {
+		removeKeyFromMap(node, "remote")
+	}
+	if remoteURL != "" {
+		setStringInMap(node, "remote_url", remoteURL)
+	} else {
+		removeKeyFromMap(node, "remote_url")
+	}
+	if branch != "" {
+		setStringInMap(node, "branch", branch)
+	} else {
+		removeKeyFromMap(node, "branch")
+	}
 }
 
 func updateVisionConfig(doc *yaml.Node, cfg config.VisionConfig) {

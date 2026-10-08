@@ -6,12 +6,19 @@ import (
 	"cyberstrike-ai/internal/update"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
+
+// updateRestartDelay is how long a stand-down waits after the response is written: the
+// page that asked for the restart gets one more poll window to read the final state
+// before the process it is watching goes away. A variable so tests do not sleep for it.
+var updateRestartDelay = 2 * time.Second
 
 // UpdateHandler is the "update my own source" surface: what this installation is, what
 // its remote has that it does not, and one action that moves the tree and rebuilds the
@@ -29,6 +36,17 @@ type UpdateHandler struct {
 	// request asked for a restart, because an unsupervised process that exits stays
 	// exited - "I restarted you" would be a lie on most deployments.
 	restart func()
+	// source reports the configured update source (config.yaml update section) as the
+	// operator last saved it; empty strings mean "not configured". A function rather
+	// than a value because the config can change while the process runs.
+	source func() (remote, remoteURL, branch string)
+	// saveSource persists a new source through the config layer; nil means this start
+	// has no config to write to.
+	saveSource func(remote, remoteURL, branch string) error
+	// baseline is the binary this process is actually running: the file on disk at
+	// construction time. An update, a rollback or a CLI run that replaces it leaves a
+	// different file behind, and that difference is what "restart to activate" means.
+	baseline update.BinaryStamp
 
 	mu     sync.Mutex
 	jobs   map[string]*updateJob
@@ -41,6 +59,7 @@ type UpdateHandler struct {
 // compiler finishes.
 type updateJob struct {
 	ID       string         `json:"id"`
+	Kind     string         `json:"kind"`  // apply | adopt
 	State    string         `json:"state"` // running | succeeded | failed
 	Started  string         `json:"started"`
 	Finished string         `json:"finished,omitempty"`
@@ -62,17 +81,63 @@ func (j *updateJob) view() *updateJob {
 // a SetAudit the assembly has to remember, for the same reason PluginHandler does:
 // forgetting here is a compile error instead of a privileged endpoint that writes no
 // audit records at all.
-func NewUpdateHandler(root string, logger *zap.Logger, auditSvc *audit.Service, restart func()) *UpdateHandler {
+func NewUpdateHandler(root string, logger *zap.Logger, auditSvc *audit.Service, restart func(),
+	source func() (remote, remoteURL, branch string), saveSource func(remote, remoteURL, branch string) error) *UpdateHandler {
 	return &UpdateHandler{
-		root:    root,
-		logger:  logger,
-		audit:   auditSvc,
-		restart: restart,
-		jobs:    map[string]*updateJob{},
+		root:       root,
+		logger:     logger,
+		audit:      auditSvc,
+		restart:    restart,
+		source:     source,
+		saveSource: saveSource,
+		baseline:   update.StampBinary(root, update.Options{Root: root}),
+		jobs:       map[string]*updateJob{},
 	}
 }
 
-func (h *UpdateHandler) options() update.Options { return update.Options{Root: h.root} }
+// restartPending reports whether the binary on disk is no longer the one this process is
+// running, and when that binary was built (empty when there is nothing on disk to run).
+func (h *UpdateHandler) restartPending() (bool, string) {
+	stamp := update.StampBinary(h.root, h.options())
+	if stamp.Same(h.baseline) {
+		return false, ""
+	}
+	builtAt := ""
+	if stamp.Exists {
+		builtAt = stamp.ModTime.Format(time.RFC3339)
+	}
+	return true, builtAt
+}
+
+// restartSupervised reports whether something outside this process is set up to bring it
+// back: launchd (XPC_SERVICE_NAME) and systemd (INVOCATION_ID / JOURNAL_STREAM) both leave
+// a marker in the environment. It is only the page's default for the restart tick - the
+// operator's own checkbox remains the decision.
+func restartSupervised() bool {
+	return strings.TrimSpace(os.Getenv("XPC_SERVICE_NAME")) != "" ||
+		strings.TrimSpace(os.Getenv("INVOCATION_ID")) != "" ||
+		strings.TrimSpace(os.Getenv("JOURNAL_STREAM")) != ""
+}
+
+func (h *UpdateHandler) options() update.Options {
+	opts := update.Options{Root: h.root}
+	if h.source != nil {
+		opts.Remote, opts.RemoteURL, opts.Branch = h.source()
+	}
+	return opts
+}
+
+// sourceView is the configured source as the page edits it (empty strings = unset).
+func (h *UpdateHandler) sourceView() gin.H {
+	var remote, remoteURL, branch string
+	if h.source != nil {
+		remote, remoteURL, branch = h.source()
+	}
+	return gin.H{
+		"remote": remote, "remoteUrl": remoteURL, "branch": branch,
+		"configured": remote != "" || remoteURL != "" || branch != "",
+	}
+}
 
 // GetStatus answers GET /api/system/update: the install tree as it is on disk, without a
 // network round trip, so opening the page is never gated on GitHub being reachable.
@@ -82,10 +147,15 @@ func (h *UpdateHandler) GetStatus(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	needsRestart, binaryBuiltAt := h.restartPending()
 	c.JSON(http.StatusOK, gin.H{
-		"status":     snap,
-		"job":        h.latest(),
-		"canRestart": h.restart != nil,
+		"status":        snap,
+		"job":           h.latest(),
+		"canRestart":    h.restart != nil,
+		"supervised":    restartSupervised(),
+		"needsRestart":  needsRestart,
+		"binaryBuiltAt": binaryBuiltAt,
+		"source":        h.sourceView(),
 	})
 }
 
@@ -102,6 +172,92 @@ func (h *UpdateHandler) Check(c *gin.Context) {
 		"commit": snap.Commit, "remote_commit": snap.RemoteCommit, "behind": snap.Behind, "error": snap.CheckError,
 	})
 	c.JSON(http.StatusOK, gin.H{"status": snap})
+}
+
+// SaveSource answers POST /api/system/update/source: the operator picks what this
+// installation updates from - the official repository, their own fork, or a second
+// development line - and the choice lands in the update section of config.yaml. A remote
+// name and an address are two ways to say the same thing and are refused together rather
+// than silently ordered.
+func (h *UpdateHandler) SaveSource(c *gin.Context) {
+	var body struct {
+		Remote    string `json:"remote"`
+		RemoteURL string `json:"remoteUrl"`
+		Branch    string `json:"branch"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求体不是合法 JSON"})
+		return
+	}
+	body.Remote = strings.TrimSpace(body.Remote)
+	body.RemoteURL = strings.TrimSpace(body.RemoteURL)
+	body.Branch = strings.TrimSpace(body.Branch)
+	if body.Remote != "" && body.RemoteURL != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "远端名与远端地址二选一：要么指名已有远端，要么直接给地址"})
+		return
+	}
+	if body.Remote != "" && !update.ValidName(body.Remote) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "远端名不合法：" + body.Remote})
+		return
+	}
+	if body.RemoteURL != "" && !update.ValidRemoteURL(body.RemoteURL) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "地址不合法（只允许 https/http/ssh/git/file:// 或本机绝对路径）"})
+		return
+	}
+	if body.Branch != "" && !update.ValidName(body.Branch) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "分支名不合法：" + body.Branch})
+		return
+	}
+	if h.saveSource == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "本次启动没有接入配置保存，更新源改不了"})
+		return
+	}
+	if err := h.saveSource(body.Remote, body.RemoteURL, body.Branch); err != nil {
+		h.record(c, "update.source", "failure", "保存更新源失败: "+err.Error(), map[string]interface{}{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败：" + err.Error()})
+		return
+	}
+	h.record(c, "update.source", "success", "更新源已保存", map[string]interface{}{
+		"remote": body.Remote, "remote_url": body.RemoteURL, "branch": body.Branch,
+	})
+	c.JSON(http.StatusOK, gin.H{"source": h.sourceView()})
+}
+
+// Adopt answers POST /api/system/update/adopt. Without confirm it is a side-effect-free
+// preview (the fetch happens in a throwaway repository outside the install tree); with
+// confirm it starts the same kind of job an update does.
+func (h *UpdateHandler) Adopt(c *gin.Context) {
+	var body struct {
+		Confirm bool `json:"confirm"`
+		Restart bool `json:"restart"`
+	}
+	if c.Request.ContentLength > 0 {
+		if err := c.ShouldBindJSON(&body); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "请求体不是合法 JSON"})
+			return
+		}
+	}
+	if body.Confirm && body.Restart && h.restart == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "本次启动没有提供重启钩子，接入完成后请由外部进程管理器重启服务"})
+		return
+	}
+	if !body.Confirm {
+		plan, err := update.Preview(c.Request.Context(), h.options())
+		if err != nil {
+			h.record(c, "update.adopt", "failure", "接入预览失败: "+err.Error(), map[string]interface{}{"error": errMessage(err)})
+			c.JSON(statusForError(err), errorBody(err))
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"plan": plan})
+		return
+	}
+	job, started := h.startJob("adopt", body.Restart)
+	if !started {
+		c.JSON(http.StatusConflict, gin.H{"error": "已有一次更新在进行中", "job": job})
+		return
+	}
+	h.record(c, "update.adopt", "started", "开始把目录接入更新源", map[string]interface{}{"job": job.ID, "restart": body.Restart})
+	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID, "state": job.State})
 }
 
 // Apply answers POST /api/system/update/apply. It starts one job and returns immediately;
@@ -122,7 +278,7 @@ func (h *UpdateHandler) Apply(c *gin.Context) {
 		return
 	}
 
-	job, started := h.startJob(body.Restart)
+	job, started := h.startJob("apply", body.Restart)
 	if !started {
 		c.JSON(http.StatusConflict, gin.H{"error": "已有一次更新在进行中", "job": job})
 		return
@@ -130,6 +286,28 @@ func (h *UpdateHandler) Apply(c *gin.Context) {
 	h.record(c, "update.apply", "started", "开始一键更新源码并重编译", map[string]interface{}{"job": job.ID, "restart": body.Restart})
 
 	c.JSON(http.StatusAccepted, gin.H{"job_id": job.ID, "state": job.State})
+}
+
+// Restart answers POST /api/system/update/restart: stand this process down so the binary
+// already on disk - an update or a rollback that ran without one - becomes the thing
+// answering requests. It refuses when there is nothing to activate, because a bounce that
+// cannot change anything is a dropped service for no reason.
+func (h *UpdateHandler) Restart(c *gin.Context) {
+	if busy := h.activeJob(); busy != nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "更新进行中，等它结束再重启", "job": busy})
+		return
+	}
+	if h.restart == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "本次启动没有提供重启钩子，请由外部进程管理器重启服务"})
+		return
+	}
+	if needsRestart, _ := h.restartPending(); !needsRestart {
+		c.JSON(http.StatusConflict, gin.H{"error": "磁盘上的二进制与当前进程一致，没有待生效的版本", "reason": "nothing_pending"})
+		return
+	}
+	h.record(c, "update.restart", "started", "重启安装以运行磁盘上的新二进制", nil)
+	c.JSON(http.StatusAccepted, gin.H{"restarting": true})
+	time.AfterFunc(updateRestartDelay, h.restart)
 }
 
 // Job answers GET /api/system/update/job: the running job, or the most recent one, with
@@ -158,13 +336,14 @@ func (h *UpdateHandler) Rollback(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"result": res})
 }
 
-func (h *UpdateHandler) startJob(restart bool) (*updateJob, bool) {
+func (h *UpdateHandler) startJob(kind string, restart bool) (*updateJob, bool) {
 	h.mu.Lock()
 	if h.active != "" {
 		return h.jobs[h.active].view(), false
 	}
 	job := &updateJob{
 		ID:      fmt.Sprintf("upd-%d", time.Now().UnixNano()),
+		Kind:    kind,
 		State:   "running",
 		Started: time.Now().Format(time.RFC3339),
 		Restart: restart,
@@ -198,7 +377,11 @@ func (h *UpdateHandler) startJob(restart bool) (*updateJob, bool) {
 				h.logger.Info("更新进度", zap.String("phase", s.Phase), zap.String("message", s.Message))
 			}
 		}
-		res, err := update.Apply(ctx, h.options(), onStep)
+		var run func(context.Context, update.Options, func(update.Step)) (*update.Result, error) = update.Apply
+		if kind == "adopt" {
+			run = update.Adopt
+		}
+		res, err := run(ctx, h.options(), onStep)
 		finish := "succeeded"
 		if err != nil {
 			finish = "failed"
@@ -218,7 +401,7 @@ func (h *UpdateHandler) startJob(restart bool) (*updateJob, bool) {
 			h.mu.Unlock()
 			// Give the polling page one more chance to read the final state before the
 			// process it is watching goes away.
-			time.AfterFunc(2*time.Second, h.restart)
+			time.AfterFunc(updateRestartDelay, h.restart)
 			return
 		}
 		h.active = ""
@@ -309,7 +492,7 @@ func statusForError(err error) int {
 		return http.StatusInternalServerError
 	}
 	switch ue.Reason {
-	case "local_source_edits", "diverged", "no_state", "moved_since_update", "no_binary":
+	case "local_source_edits", "diverged", "no_state", "moved_since_update", "no_binary", "already_a_repo":
 		return http.StatusConflict
 	default:
 		return http.StatusBadRequest

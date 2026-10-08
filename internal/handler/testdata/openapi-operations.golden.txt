@@ -126,9 +126,12 @@ POST /api/robot/wecom|wecomCallbackMessage|机器人集成
 POST /api/roles|createRole|角色管理
 POST /api/skills|createSkill|Skills管理
 POST /api/storage/cleanup|runStorageCleanup|存储清理
+POST /api/system/update/adopt|adoptUpdateSource|系统更新
 POST /api/system/update/apply|applyUpdate|系统更新
 POST /api/system/update/check|checkUpdate|系统更新
+POST /api/system/update/restart|restartUpdate|系统更新
 POST /api/system/update/rollback|rollbackUpdate|系统更新
+POST /api/system/update/source|saveUpdateSource|系统更新
 POST /api/terminal/run/stream|terminalRunStream|终端
 POST /api/terminal/run|terminalRun|终端
 POST /api/vulnerabilities|createVulnerability|漏洞管理

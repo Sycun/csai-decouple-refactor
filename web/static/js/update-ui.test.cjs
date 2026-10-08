@@ -6,13 +6,32 @@ const assert = require('node:assert/strict');
 const source = fs.readFileSync('web/static/js/update.js', 'utf8');
 const template = fs.readFileSync('web/templates/index.html', 'utf8');
 const router = fs.readFileSync('web/static/js/router.js', 'utf8');
+const settings = fs.readFileSync('web/static/js/settings.js', 'utf8');
 const sheet = fs.readFileSync('web/static/css/style.css', 'utf8');
 const zh = JSON.parse(fs.readFileSync('web/static/i18n/zh-CN.json', 'utf8'));
 const en = JSON.parse(fs.readFileSync('web/static/i18n/en-US.json', 'utf8'));
 
 // The only handlers this console is allowed to wire into markup.
 const HANDLES = ['startUpdateApply', 'checkForUpdates', 'rollbackUpdate',
-    'updateRestartChoiceChanged', 'loadUpdateConsole'];
+    'updateRestartChoiceChanged', 'loadUpdateConsole',
+    'saveUpdateSource', 'previewAdoptSource', 'confirmAdoptSource',
+    'startRestartNow', 'refreshUpdatePage'];
+
+// The envelope shape GET /api/system/update answers with, plus what the source endpoints return.
+const emptySource = { remote: '', remoteUrl: '', branch: '', configured: false };
+const configuredSource = { remote: '', remoteUrl: 'https://github.com/Sycun/CyberStrikeAI.git', branch: 'main', configured: true };
+const adoptPlan = {
+    root: '/srv/csai',
+    source: 'https://github.com/Sycun/CyberStrikeAI.git',
+    branch: 'main',
+    commit: 'abc1234',
+    subject: 'target head',
+    incoming: 42,
+    overwrittenTotal: 2,
+    overwritten: ['web/static/js/a.js', 'web/static/js/b.js'],
+    protectedTotal: 1,
+    protected: ['roles/我的角色.yaml'],
+};
 
 function flatKeys(obj, prefix, out) {
     Object.keys(obj).forEach(k => {
@@ -63,9 +82,18 @@ function statusOf(patch) {
     return Object.assign({}, baseStatus, patch || {});
 }
 
-// The shape is the endpoint's own: {status, job, canRestart}. job is null until an update ran.
-function envelope(status, job, canRestart) {
-    return { status: status || statusOf(), job: job === undefined ? null : job, canRestart: canRestart !== false };
+// The shape is the endpoint's own: {status, job, canRestart, supervised, needsRestart, source}.
+// job is null until an update ran.
+function envelope(status, job, canRestart, source, flags) {
+    return {
+        status: status || statusOf(),
+        job: job === undefined ? null : job,
+        canRestart: canRestart !== false,
+        supervised: !!(flags && flags.supervised),
+        needsRestart: !!(flags && flags.needsRestart),
+        binaryBuiltAt: (flags && flags.binaryBuiltAt) || '',
+        source: source || emptySource,
+    };
 }
 
 const runningJob = {
@@ -137,8 +165,12 @@ function harness(options) {
             checked: false,
             insertAdjacentHTML(_pos, html) { this.innerHTML = html + this.innerHTML; },
         };
+        // 控制台住在系统设置页的「一键更新」分区里：页面和分区都得是 active，它才算在前台。
+        let seeded = ['page'];
+        if (id === 'page-settings') seeded = ['page'].concat(active ? ['active'] : []);
+        if (id === 'settings-section-update') seeded = ['settings-section-content'].concat(active ? ['active'] : []);
         el.classList = {
-            _set: new Set(id === 'page-system-update' && active ? ['page', 'active'] : ['page']),
+            _set: new Set(seeded),
             contains(c) { return this._set.has(c); },
             add(c) { this._set.add(c); },
             remove(c) { this._set.delete(c); },
@@ -147,12 +179,21 @@ function harness(options) {
     }
 
     const responses = Object.assign({
-        'GET /api/system/update': [{ status: 200, body: envelope(opts.status, opts.job, opts.canRestart) }],
+        'GET /api/system/update': [{ status: 200, body: envelope(opts.status, opts.job, opts.canRestart, opts.source, opts.flags) }],
         'POST /api/system/update/check': [{ status: 200, body: { status: statusOf(opts.checkedStatus) } }],
         'POST /api/system/update/apply': [{ status: 202, body: { job_id: 'upd-1', state: 'running' } }],
         'GET /api/system/update/job': [{ status: 200, body: { job: opts.job || runningJob } }],
         'POST /api/system/update/rollback': [{ status: 200, body: { result: { fromCommit: 'f9e8d7c', toCommit: 'a1b2c3d' } } }],
+        'POST /api/system/update/source': [{ status: 200, body: { source: opts.source || emptySource } }],
+        'POST /api/system/update/adopt': [{ status: 200, body: { plan: adoptPlan } }],
     }, opts.responses || {});
+
+    // The watchdog probes with plain fetch (the app's apiFetch turns a 401 into "logged out",
+    // and the whole point here is to read that 401 as "the new process is up"). Tests script
+    // the answers: 'ok' (old process still answering), 'unauthorized' (a new process without
+    // our session), 'down' (nothing is listening), 'bad gateway'.
+    const probeQueue = (opts.probes || ['ok']).slice();
+    const fetchProbes = [];
 
     const sandbox = {
         document: {
@@ -217,10 +258,17 @@ function harness(options) {
             // Resolved against the same zh-CN.json the browser loads, with {{var}} interpolated the
             // way i18next does. A key the dictionary does not carry comes back as the raw key, so a
             // missing translation fails the copy assertions instead of quietly painting a key name.
+            // i18next escapes interpolated values by default (including / -> &#x2F;); a call that
+            // asks for escapeValue:false gets the raw value, exactly like the browser would.
             t(key, o) {
                 const found = resolve(zh, key);
                 if (found === undefined) return key;
-                return found.replace(/\{\{(\w+)\}\}/g, (m, name) => (o && name in o ? String(o[name]) : m));
+                const escape = !(o && o.interpolation && o.interpolation.escapeValue === false);
+                const esc = (v) => escape ? String(v)
+                    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/\//g, '&#x2F;')
+                    : String(v);
+                return found.replace(/\{\{(\w+)\}\}/g, (m, name) => (o && name in o ? esc(o[name]) : m));
             },
             showNotification(msg, type) { toasts.push({ msg, type }); },
             confirm(message) { confirms.push(message); return confirmAnswer; },
@@ -249,6 +297,31 @@ function harness(options) {
                 json: () => Promise.resolve(entry.body),
             });
         },
+        fetch(url, reqOpts = {}) {
+            fetchProbes.push({ url, opts: reqOpts });
+            const answer = probeQueue.length > 1 ? probeQueue.shift() : (probeQueue[0] || 'ok');
+            if (answer === 'down') {
+                return Promise.reject(new TypeError('Failed to fetch'));
+            }
+            if (answer === 'unauthorized') {
+                return Promise.resolve({ ok: false, status: 401, json: () => Promise.resolve({ error: 'unauthorized' }) });
+            }
+            if (answer === 'bad gateway') {
+                return Promise.resolve({ ok: false, status: 502, json: () => Promise.resolve({}) });
+            }
+            return Promise.resolve({
+                ok: true, status: 200,
+                json: () => Promise.resolve(envelope(opts.status, opts.job, opts.canRestart, opts.source, opts.flags)),
+            });
+        },
+        location: {
+            pathname: '/',
+            hash: '',
+            replaced: [],
+            reloads: 0,
+            replace(target) { this.replaced.push(target); },
+            reload() { this.reloads++; },
+        },
     };
     sandbox.window.document = sandbox.document;
     vm.createContext(sandbox);
@@ -256,14 +329,20 @@ function harness(options) {
     vm.runInContext(`
         this.api = {
             loadUpdateConsole, checkForUpdates, startUpdateApply, rollbackUpdate,
-            updateRestartChoiceChanged, pollUpdateJob, renderUpdateConsole, stopUpdatePolling
+            updateRestartChoiceChanged, pollUpdateJob, renderUpdateConsole, stopUpdatePolling,
+            startRestartNow
         };
         this.vars = {
             setBusy(v) { updateBusy = v; },
             getRestartChoice() { return updateRestartChoice; },
             getPollTimer() { return updatePollTimer; },
             getCheckDone() { return updateCheck.done; },
-            autoCheckDone() { return updateAutoCheckDone; }
+            autoCheckDone() { return updateAutoCheckDone; },
+            getWatchdogTimer() { return updateWatchdogTimer; },
+            getWatchdogSlow() { return updateWatchdogSlow; },
+            restartPending() { return updateRestartPending; },
+            // The deadline is wall-clock; tests move it into the past instead of sleeping 90s.
+            expireWatchdog() { updateWatchdogDeadline = Date.now() - 1; }
         };
     `, sandbox);
 
@@ -289,6 +368,8 @@ function harness(options) {
         sandbox, nodes, calls, toasts, confirms, timers, flush, runHandler, extractHandlers, responses,
         api: sandbox.api,
         vars: sandbox.vars,
+        location: sandbox.location,
+        probes: fetchProbes,
         // The deferred auto-check timer is inspected from this side: `timers` is the harness's own
         // array, not something the page's context can see.
         deferredTimers() { return timers.filter(t => t.deferred && !t.cleared).map(t => t.ms); },
@@ -300,11 +381,15 @@ function harness(options) {
             if (!text) throw new Error('handler ' + name + ' is not present in the rendered markup');
             return runHandler(text, thisArg);
         },
-        // Flipping the router's page-active class is all that leaving a page means for this console.
+        // Flipping the router's active classes (the settings page and its update section) is all
+        // that leaving means for this console.
         setActive(v) {
             active = v;
-            const node = nodes.get('page-system-update');
-            if (v) node.classList.add('active'); else node.classList.remove('active');
+            ['page-settings', 'settings-section-update'].forEach(id => {
+                const node = nodes.get(id);
+                if (!node) return;
+                if (v) node.classList.add('active'); else node.classList.remove('active');
+            });
         },
         setConfirm(v) { confirmAnswer = v; },
         liveTimers() { return timers.filter(t => !t.cleared && !t.deferred); },
@@ -318,36 +403,64 @@ function harness(options) {
     return Promise.resolve(sandbox.api.loadUpdateConsole()).then(flush).then(() => h);
 }
 
-test('the page is wired in everywhere a page has to be registered', () => {
-    assert.match(template, /<div class="nav-item" data-page="system-update">/);
-    assert.match(template, /<div id="page-system-update" class="page">/);
+test('the console lives inside the settings page as its own section', () => {
+    // The entry is no longer a page of its own: it is one section of 系统设置, so the main sidebar
+    // must not advertise a sibling item for it any more.
+    assert.doesNotMatch(template, /data-page="system-update"/,
+        'the standalone sidebar entry must be gone: the console is a settings section now');
+    assert.doesNotMatch(template, /id="page-system-update"/,
+        'the standalone page must be gone: its content moved into 系统设置');
+
+    const settingsNavItem = template.indexOf('<div class="settings-nav-item" data-section="update" data-require-permission="update:read" onclick="switchSettingsSection(\'update\')">');
+    assert.ok(settingsNavItem > -1, 'the settings menu must carry the 一键更新 entry');
+    assert.match(template, /<span data-i18n="settings\.nav\.update">一键更新<\/span>/);
+    const storageItem = template.indexOf('data-section="storage"');
+    assert.ok(storageItem > -1 && storageItem < settingsNavItem, 'the entry must follow 存储清理 in the settings menu');
+
+    // The console markup sits inside page-settings, wrapped in its own section.
+    const pageSettings = template.indexOf('<div id="page-settings" class="page">');
+    const section = template.indexOf('<div id="settings-section-update" class="settings-section-content" data-require-permission="update:read">');
+    const nextPage = template.indexOf('<!-- 平台权限页面 -->');
+    assert.ok(pageSettings > -1 && section > pageSettings && nextPage > section,
+        'settings-section-update must live inside page-settings');
+    assert.match(template, /id="settings-section-update"[\s\S]{0,700}?id="update-console"/);
     assert.match(template, /id="update-console"/);
     assert.match(template, /<script src="\/static\/js\/update\.js\?v=\{\{\.Version\}\}"><\/script>/);
+    assert.match(template, /<div class="settings-section-header update-section-head">/);
+    assert.match(template, /<h3 data-i18n="update\.title">/);
 
-    const group = template.indexOf('<span data-i18n="navGroups.administration">平台管理</span>');
-    const plugins = template.indexOf('<div class="nav-item" data-page="plugins-management">');
-    const update = template.indexOf('<div class="nav-item" data-page="system-update">');
-    const rbac = template.indexOf('<div class="nav-item" data-page="platform-rbac">');
-    assert.ok(group > -1 && plugins > group && update > plugins && rbac > update,
-        'the nav item must sit in 平台管理 right after the capability bundles');
-    assert.match(template, /data-page="system-update"[\s\S]{0,400}?onclick="switchPage\('system-update'\)"/);
-    assert.match(template, /<div class="nav-item-content" data-title="一键更新" onclick="switchPage\('system-update'\)" data-i18n="nav\.systemUpdate" data-i18n-attr="data-title"/);
-    assert.match(template, /<div class="page-header">\s*\n\s*<h2 data-i18n="update\.title">/);
+    // Both hash entry points carry the alias, and the retired page id is gone from the whitelists:
+    // #system-update has to land on 系统设置 with its update section selected.
+    const aliases = [...router.matchAll(/const settingsSection = pageId === 'system-update' \? 'update' : '';/g)];
+    assert.equal(aliases.length, 2, 'both hash parsers must normalize #system-update into the settings section');
+    const selects = [...router.matchAll(/if \(settingsSection && typeof switchSettingsSection === 'function'\) \{[\s\S]{0,80}?switchSettingsSection\(settingsSection\);/g)];
+    assert.equal(selects.length, 2, 'both hash paths must open the update section after switching the page');
+    const lists = router.split('\n').filter(l => l.includes("['dashboard'") && l.includes("'settings'"));
+    assert.equal(lists.length, 2, 'settings must stay in both router page lists');
+    assert.ok(lists.every(l => !l.includes("'system-update'")), 'no whitelist may still name the retired page id');
+    assert.doesNotMatch(router, /case 'system-update':/, 'the page init case must be gone with the page');
+    // Leaving the settings page stops the poller; switching sections within it is settings.js's job.
+    assert.match(router, /if \(pageId !== 'settings' && typeof stopUpdatePolling === 'function'\)/);
+    // Coming back to the settings page while the update section is still selected must re-read the
+    // install state and re-arm the poller: leaving the page stopped it, and a frozen progress
+    // read is exactly the "nothing is happening" picture an operator must never be shown.
+    assert.match(router, /case 'settings':[\s\S]{0,450}?getElementById\('settings-section-update'\)[\s\S]{0,250}?loadUpdateConsole\(\)/);
 
-    // Registered in the router twice on purpose: the hash whitelist on boot, and the one used when
-    // a page builds its own hash. A page missing from either is silently unreachable.
-    const lists = router.split('\n').filter(l => l.includes("['dashboard'") && l.includes("'system-update'"));
-    assert.equal(lists.length, 2, 'system-update must appear in both router page lists');
-    assert.match(router, /case 'system-update':\s*\n\s*if \(typeof loadUpdateConsole === 'function'\) loadUpdateConsole\(\);/);
-    // And the leave-page cleanup: the router only calls initPage on entry, so the progress poller
-    // has to be stopped from the same tail that already does this for the tasks page.
-    assert.match(router, /if \(pageId !== 'system-update' && typeof stopUpdatePolling === 'function'\)/);
+    // Selecting the section runs the console; selecting anything else stops its poller.
+    assert.match(settings, /if \(section === 'update'\) \{[\s\S]{0,160}?loadUpdateConsole\(\)/);
+    assert.match(settings, /else if \(typeof stopUpdatePolling === 'function'\) \{[\s\S]{0,120}?stopUpdatePolling\(\);/);
+
+    // And the console's own idea of "on screen" is the settings page plus that section.
+    assert.match(source, /getElementById\('page-settings'\)/);
+    assert.match(source, /getElementById\('settings-section-update'\)/);
 });
 
 test('the update console has its own stylesheet section', () => {
-    const block = sheet.slice(sheet.indexOf('.plugin-drift-list'));
-    assert.ok(block.includes('.update-console'), 'the .update-* section must come after the plugins one');
-    ['.update-console', '.update-section-title', '.update-facts', '.update-chip-ok', '.update-chip-warn',
+    const header = sheet.indexOf('一键更新控制台（系统设置页的 settings-section-update 分区）');
+    assert.ok(header > -1, 'style.css must carry the update console section header');
+    const block = sheet.slice(header);
+    assert.ok(block.includes('.update-console'), 'the .update-* section must follow its own section header');
+    ['.update-console', '.update-section-head', '.update-section-title', '.update-facts', '.update-chip-ok', '.update-chip-warn',
         '.update-chip-danger', '.update-error', '.update-check-failed', '.update-step-list', '.update-table',
         '.update-restart-choice', '.update-blocker-list', '.update-apply-btn:disabled'].forEach(sel => {
         assert.ok(sheet.includes(sel), sel + ' must be defined');
@@ -368,9 +481,15 @@ test('both locales carry the same update keys, and everything the page asks for 
     assert.deepEqual([...zhKeys].filter(k => !enKeys.has(k)), [], 'keys missing from en-US');
     assert.deepEqual([...enKeys].filter(k => !zhKeys.has(k)), [], 'keys missing from zh-CN');
     assert.ok(zhKeys.size >= 60, 'the update namespace has gone thin: ' + zhKeys.size);
-    assert.ok(zh.nav.systemUpdate && en.nav.systemUpdate, 'nav.systemUpdate must exist in both locales');
-    assert.equal(zh.nav.systemUpdate, '一键更新');
-    assert.equal(en.nav.systemUpdate, 'One-Click Update');
+    // The settings menu is where this feature's entry lives now; the old nav key must be retired
+    // everywhere rather than left behind as a second, drifting label.
+    assert.ok(zh.settings.nav.update && en.settings.nav.update,
+        'settings.nav.update must exist in both locales');
+    assert.equal(zh.settings.nav.update, '一键更新');
+    assert.equal(en.settings.nav.update, 'One-Click Update');
+    [['zh-CN', zh], ['en-US', en]].forEach(([label, dict]) => {
+        assert.ok(!dict.nav.systemUpdate, label + ' still carries the retired nav.systemUpdate key');
+    });
 
     // The English dictionary must not be holding Chinese text.
     [...enKeys].forEach(k => {
@@ -380,7 +499,7 @@ test('both locales carry the same update keys, and everything the page asks for 
     });
 
     const htmlKeys = [...template.matchAll(/data-i18n="([^"]+)"/g)].map(m => m[1])
-        .filter(k => k.startsWith('update.') || k === 'nav.systemUpdate');
+        .filter(k => k.startsWith('update.') || k === 'settings.nav.update');
     assert.ok(htmlKeys.length >= 3, 'the page must carry its own translated titles: ' + htmlKeys);
     htmlKeys.forEach(k => {
         assert.ok(resolve(zh, k), 'zh-CN missing ' + k);
@@ -562,13 +681,16 @@ test('local edits, a diverged tree and a clean-but-unchecked tree each block the
 });
 
 test('applying posts {"restart":false} and then reads the job every 1.5 seconds', async () => {
+    // This test is about the poll cadence and the final re-read, so the job finishes without
+    // having asked for a restart; the restart hand-off has its own test below.
+    const plainSucceededJob = Object.assign({}, succeededJob, { restartRequested: false });
     const h = await harness({
         responses: {
             'POST /api/system/update/apply': [{ status: 202, body: { job_id: 'upd-1', state: 'running' } }],
             'GET /api/system/update/job': [
                 { status: 200, body: { job: runningJob } },
                 { status: 200, body: { job: runningJob } },
-                { status: 200, body: { job: succeededJob } },
+                { status: 200, body: { job: plainSucceededJob } },
             ],
             'GET /api/system/update': [
                 { status: 200, body: envelope(statusOf(), null, true) },
@@ -577,7 +699,7 @@ test('applying posts {"restart":false} and then reads the job every 1.5 seconds'
                     body: envelope(statusOf({
                         updateAvailable: false, behind: 0, incoming: [], incomingTotal: 0,
                         commit: 'f9e8d7c',
-                    }), succeededJob, true),
+                    }), plainSucceededJob, true),
                 },
             ],
         },
@@ -625,7 +747,6 @@ test('applying posts {"restart":false} and then reads the job every 1.5 seconds'
     assert.match(html, /二进制已换新/);
     assert.match(html, /需要重启才会运行新版本/);
     assert.match(html, /3m12s/);
-    assert.match(html, /已要求在完成后退出/);
     const success = h.toasts.filter(t => t.type === 'success' && /更新完成/.test(t.msg)).pop();
     assert.ok(success, 'a finished update must be announced: ' + JSON.stringify(h.toasts));
     assert.match(success.msg, /f9e8d7c/, 'the toast names the commit the tree is on now');
@@ -670,7 +791,22 @@ test('the restart tick only appears when the process can actually be restarted',
         responses: { 'GET /api/system/update/job': [{ status: 200, body: { job: null } }] },
     });
     assert.match(on.html(), /<input type="checkbox" id="update-restart-choice"[^>]*onchange="updateRestartChoiceChanged\(this\.checked\)">/);
-    assert.ok(!/id="update-restart-choice" checked/.test(on.html()), 'the restart tick must default to off');
+    assert.ok(!/id="update-restart-choice" checked/.test(on.html()),
+        'with nothing supervising the process, the tick must default to off: ticking it would just stop the platform');
+
+    // The default follows the environment: launchd/systemd markers mean a restart is a
+    // restart, so one click should be the whole update.
+    const supervised = await harness({
+        canRestart: true,
+        flags: { supervised: true },
+        responses: { 'GET /api/system/update/job': [{ status: 200, body: { job: null } }] },
+    });
+    assert.match(supervised.html(), /id="update-restart-choice" checked/,
+        'detected supervision must pre-tick the box');
+    // Once the operator decides for themselves, the default stops second-guessing them.
+    supervised.sandbox.document.getElementById('update-restart-choice').checked = false;
+    supervised.fire('updateRestartChoiceChanged', { checked: false });
+    assert.ok(!/id="update-restart-choice" checked/.test(supervised.html()));
 
     on.calls.length = 0;
     on.fire('startUpdateApply');
@@ -966,4 +1102,245 @@ test('the hint describes the automatic check instead of denying any network use'
             label + ' still promises the page never touches the network');
         assert.match(text, /自动|automatic|automatically/, label + ' must mention the automatic check');
     }
+});
+
+test('the source section shows what is in effect, and saving posts all three fields', async () => {
+    const h = await harness({ status: statusOf({ installed: true }), source: configuredSource });
+    assert.match(h.html(), /https:\/\/github\.com\/Sycun\/CyberStrikeAI\.git/,
+        'the configured address must be visible');
+    assert.match(h.html(), /update-source-save-btn/);
+
+    h.runHandler("updateSourceFieldChanged('branch', 'release')");
+    await h.fire('saveUpdateSource');
+    await h.flush();
+    const save = h.calls.find(c => c.url === '/api/system/update/source');
+    assert.ok(save, 'saving must hit the source endpoint');
+    assert.deepEqual(JSON.parse(save.body), {
+        remote: '', remoteUrl: 'https://github.com/Sycun/CyberStrikeAI.git', branch: 'release',
+    });
+    assert.ok(h.toasts.some(t => t.type === 'success'), 'a saved source must be confirmed');
+});
+
+test('a refused save shows the server reason instead of a generic failure', async () => {
+    const refusal = '远端名与远端地址二选一：要么指名已有远端，要么直接给地址';
+    const h = await harness({
+        status: statusOf({ installed: true }),
+        source: configuredSource,
+        responses: {
+            'POST /api/system/update/source': [{ status: 400, body: { error: refusal } }],
+        },
+    });
+    h.runHandler("updateSourceFieldChanged('remote', 'origin')");
+    await h.fire('saveUpdateSource');
+    await h.flush();
+    assert.match(h.html(), /二选一/, 'the refusal must be on screen');
+    assert.ok(h.toasts.some(t => t.type === 'error' && t.msg.includes('二选一')), 'and in a toast');
+    assert.match(h.html(), /origin/, 'the typed value must survive the failed save');
+});
+
+test('the adopt entry appears only for a directory that is not a git installation', async () => {
+    const notGit = await harness({ status: statusOf({ installed: false }), source: configuredSource });
+    assert.match(notGit.html(), /previewAdoptSource\(\)/, 'a configured non-git tree must offer connecting');
+
+    const gitTree = await harness({ status: statusOf({ installed: true }), source: configuredSource });
+    assert.doesNotMatch(gitTree.html(), /previewAdoptSource\(\)/, 'a git installation updates, it does not adopt');
+});
+
+test('adopt previews first, and confirming carries the counts into the dialog', async () => {
+    const h = await harness({ status: statusOf({ installed: false }), source: configuredSource });
+    await h.fire('previewAdoptSource');
+    await h.flush();
+    assert.match(h.html(), /abc1234/, 'the target commit must be on screen');
+    assert.match(h.html(), /web\/static\/js\/a\.js/, 'the files to be replaced must be listed');
+    assert.match(h.html(), /roles\/我的角色\.yaml/, 'and the operator content that is kept');
+
+    await h.fire('confirmAdoptSource');
+    await h.flush();
+    assert.strictEqual(h.confirms.length, 1, 'connecting must ask first');
+    assert.match(h.confirms[0], /42/, 'the dialog counts what will happen');
+    const adopt = h.calls.find(c => c.url === '/api/system/update/adopt' && c.method === 'POST' && c.body && c.body.includes('"confirm":true'));
+    assert.ok(adopt, 'confirming must post to adopt');
+    assert.deepEqual(JSON.parse(adopt.body), { confirm: true, restart: false });
+    assert.ok(h.vars.getPollTimer(), 'the job it started must be polled');
+});
+
+// ---------------------------------------------------------------------------
+// 待生效的二进制：常驻横幅 + 立即重启 + 守侧重连。这一组是"忘勾重启也有救、重启后页面
+// 自己回来"的直接门禁——任何一处退化成"界面没反应"或"要手动刷新"，这里都会红。
+// ---------------------------------------------------------------------------
+
+test('a binary swap that never got a restart is announced with a way to activate it', async () => {
+    const h = await harness({ flags: { needsRestart: true, binaryBuiltAt: '2026-10-07T22:23:04+08:00' } });
+    assert.match(h.html(), /update-restart-banner/,
+        'the tree already says the new commit while the process still runs the old build; that must be impossible to miss');
+    assert.match(h.html(), /立即重启服务/);
+    assert.match(h.html(), /data-require-permission="update:apply"/);
+    assert.match(h.html(), /2026/, 'the banner names when the binary on disk was built');
+    assert.match(h.html(), /\d{1,2}\/\d{1,2}\/\d{4}/,
+        'the build time must render as a date: i18next escapes / unless the console turns that off');
+    assert.doesNotMatch(h.html(), /&#x2F;/, 'an interpolated value must not arrive pre-escaped');
+    assert.match(h.html(), /需要重启才会运行新版本/);
+    assert.match(source, /interpolation: \{ escapeValue: false \}/,
+        'the console has to stop i18next from HTML-escaping interpolated values before escapeHtml runs');
+
+    // A tree without a commit (not a git install) must still read like a sentence.
+    const noCommit = await harness({
+        flags: { needsRestart: true, binaryBuiltAt: '2026-10-07T22:23:04+08:00' },
+        status: statusOf({ installed: false, commit: '' }),
+    });
+    assert.doesNotMatch(noCommit.html(), /已更新到 -/, 'no commit must not read as "updated to -"');
+    assert.match(noCommit.html(), /磁盘上的二进制已换新/, 'the no-commit sentence must stand on its own');
+
+    const clean = await harness({});
+    assert.doesNotMatch(clean.html(), /update-restart-banner/,
+        'a process running the binary that is on disk has nothing to restart for');
+});
+
+test('restart now asks first, posts once, and hands the page to the watchdog', async () => {
+    const h = await harness({
+        flags: { needsRestart: true },
+        responses: { 'POST /api/system/update/restart': [{ status: 202, body: { restarting: true } }] },
+    });
+    h.setConfirm(false);
+    h.calls.length = 0;
+    h.fire('startRestartNow');
+    await h.flush();
+    assert.equal(h.confirms.length, 1, 'standing the service down is confirmed, never implied');
+    assert.match(h.confirms[0], /守护/, 'the confirm has to say what brings it back: ' + h.confirms[0]);
+    assert.deepEqual(h.calls, [], 'a cancelled restart must not post');
+    assert.equal(h.vars.getWatchdogTimer(), null, 'nothing may be watched for a restart nobody asked for');
+
+    h.setConfirm(true);
+    h.vars.setBusy(false);
+    h.calls.length = 0;
+    h.fire('startRestartNow');
+    await h.flush();
+    assert.deepEqual(h.calls.map(c => c.method + ' ' + c.url), ['POST /api/system/update/restart']);
+    assert.match(h.html(), /正在重启服务/, 'the console becomes the recovery view');
+    assert.ok(h.vars.getWatchdogTimer(), 'the watchdog must be armed once the stand-down is accepted');
+    // Exactly one watcher: the console is replaced by the recovery view, so there is no second
+    // button to press - and re-arming must not stack timers anyway.
+    assert.equal(h.timers.filter(t => !t.cleared && t.ms === 2000).length, 1);
+});
+
+test('a refused restart is reported with the server sentence and arms nothing', async () => {
+    const refusal = '磁盘上的二进制与当前进程一致，没有待生效的版本';
+    const h = await harness({
+        flags: { needsRestart: true },
+        responses: { 'POST /api/system/update/restart': [{ status: 409, body: { error: refusal } }] },
+    });
+    await h.api.startRestartNow();
+    await h.flush();
+    assert.match(h.toasts[h.toasts.length - 1].msg, /没有待生效的版本/, 'the server sentence is the one to show');
+    assert.equal(h.toasts[h.toasts.length - 1].type, 'error');
+    assert.equal(h.vars.getWatchdogTimer(), null, 'a refusal must not start watching for a boot that is not coming');
+    assert.equal(h.location.replaced.length, 0);
+});
+
+test('the watchdog reloads only when the NEW process answers, never while the old one still does', async () => {
+    const h = await harness({
+        flags: { needsRestart: true },
+        probes: ['ok', 'down', 'down', 'unauthorized'],
+        responses: { 'POST /api/system/update/restart': [{ status: 202, body: { restarting: true } }] },
+    });
+    await h.api.startRestartNow();
+    await h.flush();
+    assert.equal(h.location.replaced.length, 0);
+
+    await h.tick();
+    await h.flush();
+    assert.equal(h.location.replaced.length, 0, 'a 200 from the old process is not "it is back"');
+
+    await h.tick();
+    await h.flush();
+    await h.tick();
+    await h.flush();
+    assert.equal(h.location.replaced.length, 0, 'a dead service is not a recovered one');
+
+    await h.tick();
+    await h.flush();
+    assert.equal(h.location.replaced.length, 1,
+        'a 401 is the proof: only a new process can fail to know our session');
+    assert.match(h.location.replaced[0], /\?restarted=\d+/);
+    assert.match(h.location.replaced[0], /#system-update$/);
+    assert.equal(h.vars.getWatchdogTimer(), null, 'the page is leaving: the timer must be down');
+});
+
+test('a restart that does not come back says so instead of spinning forever', async () => {
+    const downCase = await harness({
+        flags: { needsRestart: true },
+        probes: ['down'],
+        responses: { 'POST /api/system/update/restart': [{ status: 202, body: { restarting: true } }] },
+    });
+    await downCase.api.startRestartNow();
+    await downCase.flush();
+    downCase.vars.expireWatchdog();
+    await downCase.tick();
+    await downCase.flush();
+    assert.match(downCase.html(), /没有守护进程|不会自己启动/, 'the down advice must name the supervision question');
+
+    const aliveCase = await harness({
+        flags: { needsRestart: true },
+        probes: ['ok'],
+        responses: { 'POST /api/system/update/restart': [{ status: 202, body: { restarting: true } }] },
+    });
+    await aliveCase.api.startRestartNow();
+    await aliveCase.flush();
+    aliveCase.vars.expireWatchdog();
+    await aliveCase.tick();
+    await aliveCase.flush();
+    assert.equal(aliveCase.vars.getWatchdogSlow(), 'running');
+    assert.match(aliveCase.html(), /仍在以旧进程应答|重启似乎没有发生/);
+});
+
+test('an update that asked for a restart hands the page to the watchdog instead of reporting a failed poll', async () => {
+    const h = await harness({
+        flags: { supervised: true },
+        responses: {
+            'GET /api/system/update/job': [
+                { status: 200, body: { job: runningJob } },
+                { status: 200, body: { job: succeededJob } },
+            ],
+        },
+        probes: ['unauthorized'],
+    });
+    // In a real browser the pre-ticked box makes this true; the harness reads the element.
+    h.sandbox.document.getElementById('update-restart-choice').checked = true;
+    h.fire('startUpdateApply');
+    await h.flush();
+    const apply = h.calls.find(c => c.url === '/api/system/update/apply');
+    assert.deepEqual(JSON.parse(apply.body), { restart: true },
+        'with launchd/systemd detected, one click is the whole update, restart included');
+
+    // The apply already polled once (running); this tick reads the finished job, which asked
+    // for the restart - that is the hand-off point.
+    await h.tick();
+    await h.flush();
+    assert.match(h.html(), /正在重启服务/, 'the succeeded-with-restart job hands over to the recovery view');
+    assert.deepEqual(h.toasts.filter(t => t.type === 'error'), [],
+        'the process going away by request is not a polling failure to complain about');
+    assert.ok(h.vars.restartPending());
+
+    await h.tick();
+    await h.flush();
+    assert.equal(h.location.replaced.length, 1);
+});
+
+test('a job poll that dies while the restart is in flight is not a failure', async () => {
+    // The realistic race: the process exits (and stops answering the job poll) before the
+    // page's next poll lands. That is the restart happening, not a broken console.
+    const h = await harness({
+        flags: { supervised: true },
+        rejects: ['GET /api/system/update/job'],
+        probes: ['unauthorized'],
+    });
+    h.sandbox.document.getElementById('update-restart-choice').checked = true;
+    h.fire('startUpdateApply');
+    await h.flush();
+    assert.match(h.html(), /正在重启服务/, 'a dead poll while a restart is requested means the restart is in flight');
+    assert.deepEqual(h.toasts.filter(t => t.type === 'error'), [], 'and it must not be toasted as a failure');
+
+    await h.tick();
+    await h.flush();
+    assert.equal(h.location.replaced.length, 1);
 });
