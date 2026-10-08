@@ -1838,6 +1838,10 @@ func (h *ConfigHandler) saveConfig() error {
 		}
 	}
 
+	// 保存成功的配置要发布进活快照：对话、批量任务等运行路径读的是快照（currentConfig），
+	// 只写文件与启动对象的话，改完基址要重启才生效。
+	mirrorLiveConfig(h.config)
+
 	h.logger.Info("配置已保存", zap.String("path", h.configPath))
 	return nil
 }

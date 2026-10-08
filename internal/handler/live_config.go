@@ -57,3 +57,15 @@ func currentRoles(fallback *config.Config) map[string]config.RoleConfig {
 	}
 	return fallback.Roles
 }
+
+// mirrorLiveConfig publishes the boot config a save just wrote into the live snapshot, so a run
+// started afterwards reads the change instead of boot-time values. Without this the save only
+// reached config.yaml and the writer's own object: editing a channel base_url looked applied in
+// the settings page while every run kept calling the old endpoint until a restart.
+// With no store installed the readers fall back to this same config object, so there is nothing
+// to publish.
+func mirrorLiveConfig(src *config.Config) {
+	if s := settingsStore(); s != nil {
+		s.MirrorFrom(src)
+	}
+}

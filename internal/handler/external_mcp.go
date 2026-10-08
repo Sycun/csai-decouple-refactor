@@ -438,6 +438,9 @@ func (h *ExternalMCPHandler) saveConfig() error {
 		return fmt.Errorf("保存配置文件失败: %w", err)
 	}
 
+	// 与 ConfigHandler.saveConfig 同一个口径：文件写成功即为一次生效，同一份配置发布进活快照。
+	mirrorLiveConfig(h.config)
+
 	h.logger.Info("配置已保存", zap.String("path", h.configPath))
 	return nil
 }
