@@ -279,7 +279,12 @@ one identity scheme and one live table:
   Installs are confined to `<configDir>/bundles` (`../` and absolute paths are 400), and unit
   identities contain a slash, so the routes split into `:kind/:name` - one escaped segment would
   be unescaped by gin before matching and would never hit. Every mutation republishes the role
-  catalog, so the next request already sees the change.
+  catalog, so the next request already sees the change - and **the page is just as hot**: a
+  successful install / unplug / rollback / switch also re-reads the copies the other views keep in
+  memory (the chat page's role sidebar, the WebShell role list, the `@` tool list), and entering
+  chat re-aligns the role list once. Before this, freshly installed roles only appeared after a
+  full browser reload (found in a real-browser pass on 2026-10-08); a selection whose pack got
+  unplugged now falls back to default on the spot instead of leaving a phantom role name behind.
   A pack that was installed is re-installed into the capability table on the next start-up
   (`installBundlesFromDisk` replays the `installed_bundles` record, built-ins scanned first so a
   pack that shadows a shipped identity is still refused by identity), and a pack carrying a recipe
