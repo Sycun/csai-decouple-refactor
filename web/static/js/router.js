@@ -422,6 +422,12 @@ async function initPage(pageId) {
         case 'chat':
             // 恢复对话列表折叠状态（从其他页返回时保持用户选择）
             initConversationSidebarState();
+            // 角色列表来自服务端，且可能在页面之外被改变（能力包一键安装/卸载、另一个标签页）：
+            // 本页只在浏览器加载时取过一次。与 roles-management 同样处理——每次进入都对一次
+            // 服务端，让刚装好的角色不必刷新整页就能看见。
+            if (typeof loadRoles === 'function') {
+                loadRoles();
+            }
             if (typeof prefetchProjectsForChat === 'function') {
                 prefetchProjectsForChat();
             }

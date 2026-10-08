@@ -29,6 +29,11 @@ test('the bundle console is reachable, and both locales carry the same keys', ()
     const lists = router.split('\n').filter(l => l.includes("['dashboard'") && l.includes("'plugins-management'"));
     assert.equal(lists.length, 2, 'plugins-management must appear in both router page lists');
     assert.match(router, /case 'plugins-management':\s*\n\s*if \(typeof loadPluginConsole === 'function'\) loadPluginConsole\(\);/);
+    // 进入对话页时角色列表要对齐服务端：能力可以在能力包页被安装/卸载，而对话页的角色侧栏
+    // 只在浏览器加载时取过一次——这正是「装完要刷新浏览器」的根因。
+    const chatCase = router.split("case 'chat':")[1].split('break;')[0];
+    assert.match(chatCase, /typeof loadRoles === 'function'[\s\S]*?loadRoles\(\);/,
+        'entering chat must re-read the role list instead of keeping the load-time copy');
 
     const zhKeys = flatKeys(zh.plugins, '', new Set());
     const enKeys = flatKeys(en.plugins, '', new Set());
@@ -49,7 +54,11 @@ function harness(state, catalog, options = {}) {
         return {
             id,
             innerHTML: '',
-            classList: { contains: () => true },
+            // contains() stays true on purpose: the failure path draws its banner only when
+            // isPluginConsoleActive() answers true, and that path is under test here. The mutators
+            // are no-ops so handlers that flip classes still run end to end.
+            classList: { contains: () => true, add() {}, remove() {}, toggle() {} },
+            setAttribute() {},
             insertAdjacentHTML: function (_pos, html) { this.innerHTML = html + this.innerHTML; },
         };
     }
@@ -128,8 +137,9 @@ function harness(state, catalog, options = {}) {
     vm.runInContext(source, sandbox);
     vm.runInContext(`
         this.api = { loadPluginConsole, installPluginBundle, unplugPluginBundle, setPluginUnitEnabled,
-                     rollbackPluginBundle, applyPluginFilter };
+                     rollbackPluginBundle, applyPluginFilter, switchPluginTab };
         this.pluginConsoleBusyReset = () => { pluginConsoleBusy = false; };
+        this.pluginTabState = () => pluginConsoleTab;
     `, sandbox);
     return { sandbox, nodes, calls, toasts, confirms };
 }
@@ -500,4 +510,99 @@ test('every pluginsT key the console asks for exists in both locales', () => {
     const missingEn = statics.filter(k => !enKeys.has(k));
     assert.deepEqual(missingZh, [], 'keys missing from zh-CN');
     assert.deepEqual(missingEn, [], 'keys missing from en-US');
+});
+
+// 能力在能力包页装好之后，对话页的角色侧栏仍停在上次整页加载时的那份 /api/roles 上——
+// 这就是实测到的「装完要刷新浏览器才看得见」。变更成功必须把别的页在内存里各留一份的
+// 清单一起重读；拒绝的变更什么都没改，不许触发重读。
+test('a successful mutation re-reads the role lists the other pages keep in memory', async () => {
+    const { sandbox } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+    let roleLoads = 0;
+    let wsLoads = 0;
+    sandbox.loadRoles = () => { roleLoads++; return Promise.resolve([]); };
+    sandbox.wsLoadRoles = () => { wsLoads++; };
+    delete sandbox.window._mentionToolsRoleChanged;
+
+    await sandbox.api.installPluginBundle('ai-app-redteam');
+    assert.equal(roleLoads, 1, 'the chat role sidebar must be re-read right after the install');
+    assert.equal(wsLoads, 1, 'the webshell role copy must be re-read right after the install');
+    assert.equal(sandbox.window._mentionToolsRoleChanged, true,
+        'the @ tool list must be invalidated: a pack can add tools without the role changing');
+
+    await sandbox.api.unplugPluginBundle('mobile-app-security');
+    await sandbox.api.setPluginUnitEnabled('role', '移动端安全测试', false);
+    assert.equal(roleLoads, 3, 'every successful mutation re-reads the shared role list');
+    assert.equal(wsLoads, 3);
+});
+
+test('a refused mutation re-reads nothing', async () => {
+    const { sandbox } = harness(sampleState, sampleCatalog, { fail: '/api/plugins/install', error: '冲突' });
+    await sandbox.api.loadPluginConsole();
+    let roleLoads = 0;
+    sandbox.loadRoles = () => { roleLoads++; return Promise.resolve([]); };
+    await sandbox.api.installPluginBundle('mobile-app-security');
+
+    assert.equal(roleLoads, 0, 'nothing changed on the server, so the role list must not be re-read');
+});
+
+// 安装 toast 要说出装了什么：数量来自响应里的 bundle.units（服务端读盘后的答复），
+// 而不是点击参数——这才让「装完就看见拿到了什么」与其它字段同一判据。
+test('the install toast names what the pack brought, counted from the response', async () => {
+    const { sandbox, toasts } = harness(sampleState, sampleCatalog, {
+        responses: {
+            '/api/plugins/install': {
+                bundle: {
+                    id: 'reporting-pack',
+                    units: [
+                        { kind: 'role', name: '报告撰写' },
+                        { kind: 'role', name: '报告审核' },
+                        { kind: 'skill', name: 'report-format' },
+                    ],
+                },
+            },
+        },
+    });
+    await sandbox.api.loadPluginConsole();
+    await sandbox.api.installPluginBundle('reporting-pack');
+    assert.match(toasts[toasts.length - 1].msg, /角色 × 2、技能 × 1/,
+        'the toast must count the installed units: ' + toasts[toasts.length - 1].msg);
+});
+
+// 「可安装 / 已安装」是标签页而不是一直摊开的两段：点哪个显示哪个（交互对齐系统设置），
+// 默认停在可安装。一次变更会整页重渲染，所以重渲染后必须落回用户点开的那一页——
+// 否则装完一个包等于把用户甩回第一页，装到哪儿去了又要翻。
+test('the two lists are tabs: only the open one shows, and it survives re-renders', async () => {
+    const { sandbox } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+    const consoleHtml = () => sandbox.document.getElementById('plugin-console').innerHTML;
+
+    const before = consoleHtml();
+    assert.match(before, /class="dashboard-feed-tab is-active" role="tab" id="plugin-tab-available"/,
+        'the available tab must be the default');
+    assert.match(before, /id="plugin-section-available" role="tabpanel" aria-labelledby="plugin-tab-available">/);
+    assert.match(before, /id="plugin-section-installed" role="tabpanel" aria-labelledby="plugin-tab-installed" hidden>/,
+        'the installed list must start hidden');
+    assert.match(before, /可安装的能力包/);
+    assert.match(before, /已安装的能力包/);
+
+    // 跑一遍真实 onclick 文本，而不是直接调函数：参数形状错了照样在这里现形。
+    const decoded = s => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    const tabClicks = (before.match(/onclick="switchPluginTab\([^"]*\)"/g) || [])
+        .map(a => decoded(a.slice('onclick="'.length, -1)));
+    assert.equal(tabClicks.length, 2, tabClicks.join(' | '));
+    vm.runInContext(tabClicks[1], sandbox);
+    assert.equal(sandbox.pluginTabState(), 'installed', 'the emitted handler must switch the tab');
+
+    sandbox.window.renderPluginConsole();
+    const after = consoleHtml();
+    assert.match(after, /class="dashboard-feed-tab is-active" role="tab" id="plugin-tab-installed"/);
+    assert.match(after, /id="plugin-section-installed" role="tabpanel" aria-labelledby="plugin-tab-installed">/);
+    assert.match(after, /id="plugin-section-available" role="tabpanel" aria-labelledby="plugin-tab-available" hidden>/);
+
+    // 变更后的重渲染（安装会重读表格）也要停在这一页
+    await sandbox.api.installPluginBundle('ai-app-redteam');
+    const afterInstall = consoleHtml();
+    assert.match(afterInstall, /class="dashboard-feed-tab is-active" role="tab" id="plugin-tab-installed"/,
+        'a mutation re-render must land back on the tab the operator had open');
 });

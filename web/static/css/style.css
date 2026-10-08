@@ -46694,6 +46694,11 @@ html[data-theme="dark"] { --tool-blocked-color: #f4bc62; }
     margin: 0 0 10px;
 }
 
+/* 标签面板的显隐走 hidden；显式兜底，避免以后给 .plugin-section 加 display 时静默失效 */
+.plugin-section[hidden] {
+    display: none !important;
+}
+
 .plugin-card {
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
