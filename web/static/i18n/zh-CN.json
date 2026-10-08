@@ -1907,6 +1907,7 @@
     "connectionFailed": "连接失败",
     "disabled": "已禁用",
     "disconnected": "未连接",
+    "stopped": "已停止",
     "stopConnection": "停止连接",
     "startConnection": "启动连接",
     "stop": "停止",

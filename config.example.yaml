@@ -431,8 +431,14 @@ mcp:
   auth_header: "X-MCP-Token" # 可选的全局服务凭证 Header；普通调用请使用用户 Authorization: Bearer Token
   auth_header_value: "" # 全局服务凭证值，仅 allow_global_access=true 时生效
   allow_global_access: false # 高风险兼容模式：静态密钥映射为全局服务身份；默认请使用用户 Bearer Token
-# 外部 MCP 配置
+# 外部 MCP（兼容 Claude Desktop / Cursor / VS Code 配置格式）
+# 服务器一律不在开机时启动，也不因保存配置或「应用配置」而启动：启动是显式动作
+# （MCP 管理页的启动按钮，或能力单元的开关）。只有正在运行的服务器其工具才进入对话；
+# 停止或被空闲回收后，工具随之从对话中淡出。
 external_mcp:
+  # 空闲回收秒数：显式启动的服务器超过该时长没有被工具调用即自动停止，下次要用再显式启动。
+  # 0 或缺省=默认 1800（30 分钟）；负数=关闭回收。
+  idle_timeout_seconds: 1800
   servers: {}
 # 内置 C2：本机仅做对话/知识库时可设为 false，不启动监听器、不注册 C2 MCP 工具；省略本段时默认启用
 c2:

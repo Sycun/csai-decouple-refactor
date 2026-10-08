@@ -1180,30 +1180,9 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 			// 同步更新 externalMCPMgr 中的配置，确保 GetConfigs() 返回最新配置
 			// 在循环外部统一更新，避免重复调用
 			h.externalMCPMgr.LoadConfigs(&h.config.ExternalMCP)
-
-			// 处理MCP连接状态（异步启动，避免阻塞）
-			for mcpName := range externalMCPToolMap {
-				cfg := h.config.ExternalMCP.Servers[mcpName]
-				// 如果MCP需要启用，确保客户端已启动
-				if cfg.ExternalMCPEnable {
-					// 启动外部MCP（如果未启动）- 异步执行，避免阻塞
-					client, exists := h.externalMCPMgr.GetClient(mcpName)
-					if !exists || !client.IsConnected() {
-						go func(name string) {
-							if err := h.externalMCPMgr.StartClient(name); err != nil {
-								h.logger.Warn("启动外部MCP失败",
-									zap.String("mcp", name),
-									zap.Error(err),
-								)
-							} else {
-								h.logger.Info("启动外部MCP",
-									zap.String("mcp", name),
-								)
-							}
-						}(mcpName)
-					}
-				}
-			}
+			// 配置写入不再顺带启动服务器：启动是操作员的显式动作（MCP 页的启动按钮或能力
+			// 单元开关），「应用配置」只让运行时看到新定义。此处原本会为每台启用的服务器
+			// 拉起进程，那正是「在线才可见」要解耦掉的行为。
 		}
 	}
 

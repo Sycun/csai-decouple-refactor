@@ -16231,6 +16231,12 @@ tr.mcp-stats-tool-row[data-tool-name]:focus-visible {
     border: 1px solid rgba(108, 117, 125, 0.3);
 }
 
+.external-mcp-status.status-stopped {
+    background: rgba(108, 117, 125, 0.12);
+    color: var(--text-secondary);
+    border: 1px solid rgba(108, 117, 125, 0.3);
+}
+
 .external-mcp-status.status-connecting {
     background: rgba(0, 123, 255, 0.12);
     color: var(--accent-color);

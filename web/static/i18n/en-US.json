@@ -1919,6 +1919,7 @@
     "connectionFailed": "Connection failed",
     "disabled": "Disabled",
     "disconnected": "Disconnected",
+    "stopped": "Stopped",
     "stopConnection": "Stop connection",
     "startConnection": "Start connection",
     "stop": "Stop",

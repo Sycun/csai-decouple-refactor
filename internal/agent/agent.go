@@ -377,7 +377,9 @@ func (a *Agent) getAvailableTools(roleTools []string) []Tool {
 					continue // 跳过格式不正确的工具
 				}
 
-				// 检查工具是否启用
+				// 检查工具是否启用。能走到这里的工具已经过了第一道门槛——GetAllTools 只列
+				// 正在运行的服务器的工具（在线才可见）；这一层查的是许可与单工具开关：
+				// 配置里被停用的服务器，即使进程还在跑，它的工具也不注入。
 				enabled := false
 				if cfg, exists := externalMCPConfigs[mcpName]; exists {
 					// 首先检查外部MCP是否启用

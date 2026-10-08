@@ -21,6 +21,11 @@ const (
 	externalToolListCacheTTL = 60 * time.Second
 	// externalToolCountRefreshInterval 后台刷新工具数量的间隔（仅刷新缓存过期或缺失的客户端）。
 	externalToolCountRefreshInterval = 60 * time.Second
+	// externalDefaultIdleTimeout 显式启动的外部 MCP 服务器在这么久没有工具调用后被自动回收；
+	// external_mcp.idle_timeout_seconds 的 0 值取此默认。
+	externalDefaultIdleTimeout = 30 * time.Minute
+	// externalIdleReapInterval 空闲回收的扫描间隔（回收粒度 = 超时 + 最多一次扫描间隔）。
+	externalIdleReapInterval = time.Minute
 )
 
 // toolListCacheEntry 外部 MCP 工具列表缓存条目
@@ -68,11 +73,17 @@ type ExternalMCPManager struct {
 	// inventoryObserver is held in an atomic pointer rather than a plain field: the notify
 	// happens while some callers already hold m.mu, and sync.RWMutex is not reentrant, so
 	// reading it under m.mu deadlocks a removal or a stop.
-	inventoryObserver  atomic.Pointer[toolInventoryObserver]
-	listToolsMu        sync.Mutex
-	listToolsInflight  map[string]*listToolsInflight
-	stopRefresh        chan struct{}  // 停止后台刷新的信号
-	refreshWg          sync.WaitGroup // 等待后台刷新goroutine完成
+	inventoryObserver atomic.Pointer[toolInventoryObserver]
+	listToolsMu       sync.Mutex
+	listToolsInflight map[string]*listToolsInflight
+	stopRefresh       chan struct{}  // 停止后台刷新的信号
+	refreshWg         sync.WaitGroup // 等待后台刷新goroutine完成
+	// lastUsed 记录每台服务器最近一次工具调用的时间，空闲回收据此判断；与 m.mu 同锁保护。
+	lastUsed map[string]time.Time
+	// idleTimeout 空闲回收超时；0 表示不回收。见 ConfigureIdleTimeout。
+	idleTimeout        time.Duration
+	reaperStop         chan struct{}  // 停止空闲回收循环的信号
+	reaperWg           sync.WaitGroup // 等待回收goroutine完成
 	refreshing         atomic.Bool    // 防止 refreshToolCounts 并发堆积
 	mu                 sync.RWMutex
 	runningCancels     map[string]context.CancelFunc
@@ -137,6 +148,9 @@ func NewExternalMCPManagerWithStorage(logger *zap.Logger, storage MonitorStorage
 		toolCache:          make(map[string]toolListCacheEntry),
 		listToolsInflight:  make(map[string]*listToolsInflight),
 		stopRefresh:        make(chan struct{}),
+		lastUsed:           make(map[string]time.Time),
+		idleTimeout:        externalDefaultIdleTimeout,
+		reaperStop:         make(chan struct{}),
 		runningCancels:     make(map[string]context.CancelFunc),
 		abortUserNotes:     make(map[string]string),
 		reconnecting:       make(map[string]bool),
@@ -156,6 +170,8 @@ func NewExternalMCPManagerWithStorage(logger *zap.Logger, storage MonitorStorage
 	manager.executionService = NewExecutionService(storage, logger)
 	// 启动后台刷新工具数量的goroutine
 	manager.startToolCountRefresh()
+	// 启动空闲回收循环：显式启动过的服务器闲置超时后自动停止（见 reapIdle）。
+	manager.startIdleReaper()
 	return manager
 }
 
@@ -295,7 +311,10 @@ func (m *ExternalMCPManager) AddOrUpdateConfig(name string, serverCfg config.Ext
 			ErrPackOwnedServer, name, entry.owner)
 	}
 
-	m.applyConfigLocked(name, serverCfg)
+	// Saving a definition is not starting one: a server that was not running stays down (its
+	// start is the operator's explicit action), while a running one reconnects on the new values.
+	_, wasRunning := m.clients[name]
+	m.applyConfigLocked(name, serverCfg, wasRunning && m.isEnabled(serverCfg))
 
 	return nil
 }
@@ -316,6 +335,7 @@ func (m *ExternalMCPManager) RemoveConfig(name string) error {
 		client.Close()
 		delete(m.clients, name)
 	}
+	delete(m.lastUsed, name)
 
 	delete(m.configs, name)
 	m.clearReconnectState(name)
@@ -356,7 +376,9 @@ func (m *ExternalMCPManager) startClient(name string, autoReconnect bool) error 
 		return fmt.Errorf("配置不存在: %s", name)
 	}
 
-	if autoReconnect && !m.isEnabled(serverCfg) {
+	// The run intent, not the config flag, decides whether a reconnect is wanted: an operator stop
+	// or an idle reap removes the client, and neither may be undone by a straggling retry.
+	if autoReconnect && !m.isRunning(name) {
 		return nil
 	}
 
@@ -385,6 +407,8 @@ func (m *ExternalMCPManager) startClient(name string, autoReconnect bool) error 
 	}
 
 	if autoReconnect {
+		// 顶部已按运行意图放行；这里是一道更窄的闸：刚刚关闭旧客户端的窗口里，操作员可能点了
+		// 停止（写 enabled=false），此时不能把进程再拉回来。
 		m.mu.RLock()
 		serverCfg, exists = m.configs[name]
 		enabled := exists && m.isEnabled(serverCfg)
@@ -414,6 +438,7 @@ func (m *ExternalMCPManager) startClient(name string, autoReconnect bool) error 
 	// 立即保存客户端，这样前端查询时就能看到"connecting"状态
 	m.mu.Lock()
 	m.clients[name] = client
+	m.lastUsed[name] = time.Now()
 	m.mu.Unlock()
 
 	// 在后台异步进行实际连接
@@ -466,6 +491,7 @@ func (m *ExternalMCPManager) StopClient(name string) error {
 		client.Close()
 		delete(m.clients, name)
 	}
+	delete(m.lastUsed, name)
 
 	// 清除错误信息
 	delete(m.errors, name)
@@ -857,6 +883,7 @@ func (m *ExternalMCPManager) CallTool(ctx context.Context, toolName string, args
 				blockedByGuard = true
 				return blocked, nil
 			}
+			m.markUsed(mcpName)
 			result, callErr := client.CallTool(runCtx, actualToolName, args)
 			if callErr != nil {
 				m.handleConnectionDead(mcpName, client, callErr)
@@ -1647,56 +1674,6 @@ func findSubstring(s, substr string) int {
 	return -1
 }
 
-// StartAllEnabled 启动所有启用的客户端
-func (m *ExternalMCPManager) StartAllEnabled() {
-	m.mu.RLock()
-	configs := make(map[string]config.ExternalMCPServerConfig)
-	for k, v := range m.configs {
-		configs[k] = v
-	}
-	m.mu.RUnlock()
-
-	for name, cfg := range configs {
-		if m.isEnabled(cfg) {
-			go func(n string, c config.ExternalMCPServerConfig) {
-				if err := m.connectClient(n, c); err != nil {
-					// 检查是否是连接被拒绝的错误（服务可能还没启动）
-					errStr := strings.ToLower(err.Error())
-					isConnectionRefused := strings.Contains(errStr, "connection refused") ||
-						strings.Contains(errStr, "dial tcp") ||
-						strings.Contains(errStr, "connect: connection refused")
-
-					if isConnectionRefused {
-						// 连接被拒绝，说明目标服务可能还没启动，这是正常的
-						// 使用 Warn 级别，提示用户这是正常的，可以通过手动启动或等待服务启动后自动连接
-						fields := []zap.Field{
-							zap.String("name", n),
-							zap.String("message", "目标服务可能尚未启动，这是正常的。服务启动后可通过界面手动连接，或等待自动重试"),
-							zap.Error(err),
-						}
-
-						transport := c.GetTransportType()
-
-						if transport == "http" && c.URL != "" {
-							fields = append(fields, zap.String("url", c.URL))
-						} else if transport == "stdio" && c.Command != "" {
-							fields = append(fields, zap.String("command", c.Command))
-						}
-
-						m.logger.Warn("外部MCP服务暂未就绪", fields...)
-					} else {
-						// 其他错误，使用 Error 级别
-						m.logger.Error("启动外部MCP客户端失败",
-							zap.String("name", n),
-							zap.Error(err),
-						)
-					}
-				}
-			}(name, cfg)
-		}
-	}
-}
-
 // StopAll 停止所有客户端
 func (m *ExternalMCPManager) StopAll() {
 	if m.executionService != nil {
@@ -1727,6 +1704,11 @@ func (m *ExternalMCPManager) StopAll() {
 	m.toolCache = make(map[string]toolListCacheEntry)
 	m.toolCacheMu.Unlock()
 
+	// 运行意图一并清空：StopAll 之后没有服务器可以被自动重连拉回来。
+	m.mu.Lock()
+	m.lastUsed = make(map[string]time.Time)
+	m.mu.Unlock()
+
 	// 停止后台刷新（使用 select 避免重复关闭 channel）
 	select {
 	case <-m.stopRefresh:
@@ -1735,6 +1717,9 @@ func (m *ExternalMCPManager) StopAll() {
 		close(m.stopRefresh)
 	}
 	m.refreshWg.Wait()
+
+	// 停止空闲回收循环
+	m.stopIdleReaper()
 }
 
 // ExternalCancellationConfirmer is an optional adapter contract for MCP

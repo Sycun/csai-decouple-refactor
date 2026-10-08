@@ -34,13 +34,14 @@ Always set an auth value and restrict network access.
 
 ## External MCP Lifecycle
 
-1. Register config: name, type, command/URL, environment.
-2. Start connection: stdio process or HTTP/SSE client.
+1. Register config: name, type, command/URL, environment. Registering is not starting; boot starts nothing.
+2. Start (explicit): stdio process or HTTP/SSE client, from the MCP page's start button or a capability unit's switch.
 3. Pull tool list: names, descriptions, schemas.
-4. Expose to Agent: affected by role, tool_search, HITL.
+4. Expose to Agent: running servers only, then affected by role, tool_search, HITL.
 5. Execute: validate args, call, monitor.
-6. Recover: handle process/network failure.
-7. Stop/delete: remove runtime and config.
+6. Recover: handle process/network failure; a server stopped on purpose or reaped for idleness is not resurrected.
+7. Idle reap: an explicitly started server with no tool call for `external_mcp.idle_timeout_seconds` is stopped automatically (in-flight calls postpone it); the next use starts it again.
+8. Stop/delete: remove runtime and config.
 
 Debug by locating the failed step.
 

@@ -4256,16 +4256,18 @@ function renderExternalMCPList(servers) {
     
     let html = '<div class="external-mcp-items">';
     for (const [name, server] of Object.entries(servers)) {
-        const status = server.status || 'disconnected';
+        const status = server.status || 'stopped';
         const statusClass = status === 'connected' ? 'status-connected' : 
                            status === 'connecting' ? 'status-connecting' :
                            status === 'error' ? 'status-error' :
-                           status === 'disabled' ? 'status-disabled' : 'status-disconnected';
+                           status === 'disabled' ? 'status-disabled' :
+                           status === 'stopped' ? 'status-stopped' : 'status-disconnected';
         const statusT = typeof window.t === 'function' ? window.t : (k) => k;
         const statusText = status === 'connected' ? statusT('mcp.connected') : 
                           status === 'connecting' ? statusT('mcp.connecting') :
                           status === 'error' ? statusT('mcp.connectionFailed') :
-                          status === 'disabled' ? statusT('mcp.disabled') : statusT('mcp.disconnected');
+                          status === 'disabled' ? statusT('mcp.disabled') :
+                          status === 'stopped' ? statusT('mcp.stopped') : statusT('mcp.disconnected');
         const transport = server.config.type || server.config.transport || (server.config.command ? 'stdio' : 'http');
         const transportIcon = transport === 'stdio' ? '⚙️' : '🌐';
         
@@ -4284,7 +4286,7 @@ function renderExternalMCPList(servers) {
                         <span class="external-mcp-status ${statusClass}">${statusText}</span>
                     </div>
                     <div class="external-mcp-item-actions">
-                        ${status === 'connected' || status === 'disconnected' || status === 'error' || status === 'disabled' ?
+                        ${status === 'connected' || status === 'disconnected' || status === 'error' || status === 'disabled' || status === 'stopped' ?
                             `<button class="btn-small" id="btn-toggle-${settingsEscapeAttr(name)}" onclick="toggleExternalMCP(${settingsEscapeJsStringAttr(name)}, ${settingsEscapeJsStringAttr(status)})" title="${settingsEscapeAttr(status === 'connected' ? statusT('mcp.stopConnection') : statusT('mcp.startConnection'))}">
                                 ${status === 'connected' ? '⏸ ' + statusT('mcp.stop') : '▶ ' + statusT('mcp.start')}
                             </button>` :

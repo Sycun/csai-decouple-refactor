@@ -160,6 +160,7 @@ mcp:
   auth_header: "X-MCP-Token"
   auth_header_value: ""
 external_mcp:
+  idle_timeout_seconds: 1800 # 空闲回收：显式启动后超时未调用即自动停止（0=默认1800；负数=关闭）
   servers: {}
 ```
 
@@ -167,7 +168,8 @@ external_mcp:
 - `tool_description_mode`：`short` 更省 token，`full` 更完整。
 - `mcp.enabled`：是否启动独立 HTTP MCP 服务。
 - `mcp.auth_header_value`：外部调用 MCP 时的共享密钥，生产环境必须设置。
-- `external_mcp.servers`：外部 MCP 联邦配置。
+- `external_mcp.servers`：外部 MCP 联邦配置（不在开机时启动；启动是 MCP 管理页的显式动作）。
+- `external_mcp.idle_timeout_seconds`：空闲回收秒数，见 `mcp-federation.md`。
 
 工具 YAML 规则见 `tools/README.md`。
 

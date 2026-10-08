@@ -89,12 +89,11 @@ func (m *ExternalMCPManager) reconnectBackoff(attempts int) time.Duration {
 	return d
 }
 
+// scheduleReconnect schedules a reconnect for a server that is still wanted. Wanted is a run
+// intent - the live client is still held - not the config flag: a server the operator stopped, or
+// the idle reap stopped, has no client, and a disconnect that races that stop must not resurrect it.
 func (m *ExternalMCPManager) scheduleReconnect(name string) {
-	m.mu.RLock()
-	cfg, exists := m.configs[name]
-	enabled := exists && m.isEnabled(cfg)
-	m.mu.RUnlock()
-	if !enabled {
+	if !m.isRunning(name) {
 		return
 	}
 	go m.tryReconnect(name)
@@ -127,14 +126,12 @@ func (m *ExternalMCPManager) tryReconnect(name string) {
 	}()
 
 	m.mu.RLock()
-	cfg, exists := m.configs[name]
-	enabled := exists && m.isEnabled(cfg)
 	client, hasClient := m.clients[name]
 	connecting := hasClient && client.GetStatus() == "connecting"
 	m.mu.RUnlock()
 
-	if !enabled {
-		m.logger.Debug("跳过自动重连（外部MCP已停用）", zap.String("name", name))
+	if !hasClient {
+		m.logger.Debug("跳过自动重连（外部MCP未在运行）", zap.String("name", name))
 		return
 	}
 	if connecting {
@@ -163,11 +160,7 @@ func (m *ExternalMCPManager) tryReconnect(name string) {
 
 // scheduleReconnectAfterFailure 在自动重连失败后，按当前退避间隔预约下一次重试。
 func (m *ExternalMCPManager) scheduleReconnectAfterFailure(name string) {
-	m.mu.RLock()
-	cfg, exists := m.configs[name]
-	enabled := exists && m.isEnabled(cfg)
-	m.mu.RUnlock()
-	if !enabled {
+	if !m.isRunning(name) {
 		return
 	}
 	m.reconnectMu.Lock()

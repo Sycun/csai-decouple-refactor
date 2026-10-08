@@ -45,7 +45,7 @@ func (m *ExternalMCPManager) DeclarePackServer(name, bundleID string, serverCfg 
 		m.packServers = make(map[string]packServerEntry)
 	}
 	m.packServers[name] = packServerEntry{owner: bundleID, cfg: serverCfg}
-	m.applyConfigLocked(name, serverCfg)
+	m.applyConfigLocked(name, serverCfg, m.isEnabled(serverCfg))
 	return nil
 }
 
@@ -88,15 +88,20 @@ func (m *ExternalMCPManager) checkNotPackOwned(name, action string) error {
 		ErrPackOwnedServer, action, name, entry.owner)
 }
 
-// applyConfigLocked replaces one live configuration and reconnects only if it is enabled. Closing
-// the previous client is what makes switching a server off stop the process.
-func (m *ExternalMCPManager) applyConfigLocked(name string, serverCfg config.ExternalMCPServerConfig) {
+// applyConfigLocked replaces one live configuration. start is the caller's run-intent decision:
+//
+//   - the unit switch passes its own new state, so opening it starts the server and closing it
+//     stops the process;
+//   - a plain config write passes "was running", so saving a definition neither starts a server
+//     that was not running (starting is an explicit action) nor leaves a running one behind old
+//     values - it reconnects on the new definition.
+func (m *ExternalMCPManager) applyConfigLocked(name string, serverCfg config.ExternalMCPServerConfig, start bool) {
 	if client, exists := m.clients[name]; exists {
 		client.Close()
 		delete(m.clients, name)
 	}
 	m.configs[name] = serverCfg
-	if m.isEnabled(serverCfg) {
+	if start {
 		go m.connectClient(name, serverCfg)
 	}
 }

@@ -584,3 +584,48 @@ func TestExternalMCPPageCannotMutateAPackDeclaredServer(t *testing.T) {
 		t.Fatalf("a declared-but-not-started server reads %q, want disabled", got.Status)
 	}
 }
+
+// A server with no client is not "disconnected" - that would read as a connection that once
+// existed. It is stopped: never started (boot starts nothing now) or ended by a stop or the idle
+// reap. The enabled flag alone no longer implies a running process, so the list has to say so.
+func TestExternalMCPListDistinguishesStoppedFromDisabled(t *testing.T) {
+	router, handler, configPath := setupTestRouter()
+	defer cleanupTestConfig(configPath)
+
+	// enabled but not running: what every server looks like right after boot.
+	if err := handler.manager.AddOrUpdateConfig("standing-by", config.ExternalMCPServerConfig{
+		Type: "http", URL: "http://127.0.0.1:1/mcp", ExternalMCPEnable: true,
+	}); err != nil {
+		t.Fatalf("declare standing-by: %v", err)
+	}
+	// declared and switched off.
+	if err := handler.manager.AddOrUpdateConfig("retired", config.ExternalMCPServerConfig{
+		Type: "http", URL: "http://127.0.0.1:1/mcp", ExternalMCPEnable: false,
+	}); err != nil {
+		t.Fatalf("declare retired: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/external-mcp", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body.String())
+	}
+	var listed struct {
+		Servers map[string]ExternalMCPResponse `json:"servers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if got := listed.Servers["standing-by"].Status; got != "stopped" {
+		t.Fatalf("an enabled-but-not-running server reads %q, want stopped", got)
+	}
+	if got := listed.Servers["retired"].Status; got != "disabled" {
+		t.Fatalf("a switched-off server reads %q, want disabled", got)
+	}
+
+	// Saving a definition must not start anything: starting is the operator's explicit action.
+	if _, running := handler.manager.GetClient("standing-by"); running {
+		t.Fatal("saving a definition started a process")
+	}
+}

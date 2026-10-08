@@ -12,6 +12,36 @@ import (
 	"go.uber.org/zap"
 )
 
+// Declared at boot, still not running. Every boot path that registers a server - the file's own
+// LoadConfigs and a pack's re-declaration - writes declarations only: starting a process is the
+// operator's explicit action (the MCP page's start, or a unit switch), and a declared server that
+// nobody starts contributes no tools to a conversation.
+func TestBootLeavesEveryDeclaredServerStopped(t *testing.T) {
+	manager := mcp.NewExternalMCPManager(zap.NewNop())
+	manager.LoadConfigs(&config.ExternalMCPConfig{Servers: map[string]config.ExternalMCPServerConfig{
+		"file-stdio": {Command: "/bin/echo", ExternalMCPEnable: true},
+		"file-http":  {Type: "http", URL: "http://127.0.0.1:1/mcp", ExternalMCPEnable: true},
+	}})
+
+	// The pack path runs too: a bundle's declaration is re-applied on every boot, and an empty
+	// table declares nothing.
+	table := plugin.NewTable()
+	if declared, note := provisionDeclaredServers(manager, table); declared != 0 || note != "" {
+		t.Fatalf("empty table declared %d servers (note=%q)", declared, note)
+	}
+
+	for _, name := range []string{"file-stdio", "file-http"} {
+		if _, running := manager.GetClient(name); running {
+			t.Fatalf("%q was started at boot; starting is the operator's explicit action", name)
+		}
+	}
+
+	// With no key configured the idle reap is still on, which is what bounds an explicit start.
+	if got := manager.ConfigureIdleTimeout(0); got <= 0 {
+		t.Fatalf("default idle timeout = %v; the reap must default on", got)
+	}
+}
+
 // The manager's live server set is built from config.yaml at start-up, so a pack's declaration has
 // to be re-applied after the packs are re-installed - otherwise the unit is in the table, the
 // console calls it installed, and nothing connects to it.

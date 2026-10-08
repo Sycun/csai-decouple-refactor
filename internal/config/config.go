@@ -1561,6 +1561,10 @@ func (a AuditConfig) AuthFailureCooldownEffective() int {
 // ExternalMCPConfig 外部MCP配置
 type ExternalMCPConfig struct {
 	Servers map[string]ExternalMCPServerConfig `yaml:"servers,omitempty" json:"servers,omitempty"`
+	// IdleTimeoutSeconds 空闲回收秒数。外部 MCP 服务器一律不在开机时启动（在线才可见：只有正在
+	// 运行的服务器，工具才进入对话）；被显式启动后超过这个时长没有工具调用就被自动停止，
+	// 下次要用再显式启动。0=默认 1800（30 分钟）；负数=关闭回收。
+	IdleTimeoutSeconds int `yaml:"idle_timeout_seconds,omitempty" json:"idle_timeout_seconds,omitempty"`
 }
 
 // ExternalMCPServerConfig 外部MCP服务器配置（遵循官方 MCP 配置格式，兼容 Claude Desktop / Cursor / VS Code）。

@@ -462,6 +462,27 @@ func (s *ExecutionService) ActiveRunningExecutionIDs() map[string]struct{} {
 	return out
 }
 
+// HasActiveExecutionWithToolPrefix reports whether any execution whose tool name starts with
+// prefix is still running or queued. The external-MCP idle reap asks this before stopping a
+// server: a call in flight is not idleness, and queued work waiting for a slot would fail if its
+// server went away underneath it.
+func (s *ExecutionService) HasActiveExecutionWithToolPrefix(prefix string) bool {
+	if s == nil || prefix == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, entry := range s.entries {
+		if entry == nil || entry.exec == nil || isExecutionTerminal(entry.exec.Status) {
+			continue
+		}
+		if strings.HasPrefix(entry.exec.ToolName, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *ExecutionService) CancelAll(note string) {
 	if s == nil {
 		return

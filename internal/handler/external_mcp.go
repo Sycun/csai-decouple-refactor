@@ -74,12 +74,13 @@ func (h *ExternalMCPHandler) GetExternalMCPs(c *gin.Context) {
 	result := make(map[string]ExternalMCPResponse)
 	for name, cfg := range configs {
 		client, exists := h.manager.GetClient(name)
-		status := "disconnected"
+		// No client means the server is not running: it was never started (boot no longer starts
+		// anything) or a stop or the idle reap ended it. That is its own state - reporting
+		// "disconnected" here would read as a connection that once existed.
+		status := "stopped"
 		if exists {
 			status = client.GetStatus()
-		} else if h.isEnabled(cfg) {
-			status = "disconnected"
-		} else {
+		} else if !h.isEnabled(cfg) {
 			status = "disabled"
 		}
 
@@ -115,12 +116,10 @@ func (h *ExternalMCPHandler) GetExternalMCP(c *gin.Context) {
 	}
 
 	client, clientExists := h.manager.GetClient(name)
-	status := "disconnected"
+	status := "stopped"
 	if clientExists {
 		status = client.GetStatus()
-	} else if h.isEnabled(cfg) {
-		status = "disconnected"
-	} else {
+	} else if !h.isEnabled(cfg) {
 		status = "disabled"
 	}
 
