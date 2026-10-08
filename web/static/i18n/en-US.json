@@ -120,6 +120,7 @@
       "skill": "Skill",
       "tool": "Tool recipe",
       "mcp": "MCP server",
+      "mode": "Chat mode",
       "plugin": "plugin (executable)"
     },
     "switchCapabilitiesPrefix": "",

@@ -178,7 +178,7 @@ rerank 的 provider 名字是**另一个命名空间**，不要塞进模型方�
 
 ## 十二、能力单元表与热插拔
 
-角色 / skill / markdown agent / 工具配方 / MCP 声明 / 插件二进制这六类可扩展的东西，过去各有各的生命周期，
+角色 / skill / markdown agent / 工具配方 / MCP 声明 / 对话模式 / 插件二进制这七类可扩展的东西，过去各有各的生命周期，
 而且**没有一类能在不重启的情况下改变**。现在它们共用一套身份与一张活表：
 
 - `internal/plugin`：`Unit`（身份 `<kind>/<name>` + 源路径 + 安装期摘要）与 `Bundle`
@@ -196,6 +196,11 @@ rerank 的 provider 名字是**另一个命名空间**，不要塞进模型方�
 - `plugin` 是**唯一携带可执行代码**的单元类型：声明文件里的 `capabilities` 是人审过的入口清单，
   启用时宿主启动二进制并调 `capabilities/list` **双向核对**，一致才把能力登记进 `LayerPlugin`；
   `class/permission/grants` 只来自声明文件，绝不来自插件的自我描述。目录形状与全部规则见 `bundles/README.md`。
+- `mode` 单元激活内核**已经会跑**的对话模式：声明文件只写 `id`（与文件名一致），runner 与
+  编排名是内核知识（`internal/agentmode`），未知 id 安装即拒、`eino_single` 内置底线不可被单元覆盖。
+  「多代理编排包」（1.1.0）带 deep / plan_execute / supervisor 三份声明——装上，三个模式进入
+  `GET /api/agent-modes` 目录与前端选择器；卸载即从目录消失（"不点不存在"），带着旧模式的
+  请求在对话/机器人/批量/workflow 入口被 fail-closed 挡住并指名原因。
 - 包里插件的能力**会出现在 MCP 工具面上**：它没有配方，所以每次重建由能力表补上，且排在内置注册之后
   （同名保留内置）；停用单元既失去能力身份也失去工具。反过来，启动过程把包里 `plugin` 单元一律置为
   「已声明、未启用」，持久化开关只重放「停用」方向——`internal/app/boot_plugins_test.go` 与
@@ -256,7 +261,7 @@ rerank 的 provider 名字是**另一个命名空间**，不要塞进模型方�
   卸载与摘除也会指名清理，否则后来同名能力会继承别人关掉的开关），启动时在包重新装入**之后**重新
   套上，并按需要重发角色目录、重建工具层。MCP 这一类**不接受持久化**：每次启动都回到停用，所以那
   一次开关的响应写 `switch_persisted:false` 并指路 `config.yaml`。
-- `served:false` 只说真话：六类 kind 的运行路径都要么读表、要么被明确判为「按开关供给」，所以 `servedKinds` 与 `plugin.Kinds`
+- `served:false` 只说真话：七类 kind 的运行路径都要么读表、要么被明确判为「按开关供给」，所以 `servedKinds` 与 `plugin.Kinds`
   同规模，`TestEveryKindReportsItsActualServedState` 双向钉（少一类就红，将来加一类没接线也红）。
   mcp 这一类另有第二个条件：表里声明过还不够，活管理器得**仍然持有**这条声明——`config.yaml`
   同名接管后控制台会把该单元标成未服务并写明"配置文件里有同名服务器"，而不是继续报"已服务"。

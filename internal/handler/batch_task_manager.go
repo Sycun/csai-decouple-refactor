@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/store"
@@ -321,7 +322,7 @@ func (m *BatchTaskManager) loadQueueFromDB(queueID string) *BatchTaskQueue {
 	queue := &BatchTaskQueue{
 		ID:           queueRow.ID,
 		HITLPolicy:   queueRow.HITLPolicy,
-		AgentMode:    "eino_single",
+		AgentMode:    agentmode.DefaultID,
 		ScheduleMode: "manual",
 		Status:       queueRow.Status,
 		CreatedAt:    queueRow.CreatedAt,
@@ -566,7 +567,7 @@ func (m *BatchTaskManager) LoadFromDB() error {
 		queue := &BatchTaskQueue{
 			ID:           queueRow.ID,
 			HITLPolicy:   queueRow.HITLPolicy,
-			AgentMode:    "eino_single",
+			AgentMode:    agentmode.DefaultID,
 			ScheduleMode: "manual",
 			Status:       queueRow.Status,
 			CreatedAt:    queueRow.CreatedAt,

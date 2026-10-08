@@ -598,19 +598,27 @@ let toolsLoadSequence = 0;
 
 let c2NavSyncedOnce = false;
 
-/** 根据是否启用多代理，禁用/启用机器人模式中的 Eino 编排选项 */
+/** 依据模式目录重填机器人模式下拉（选项来自 /api/agent-modes，不再写死在模板里）。 */
 function syncRobotAgentModeSelectOptions(multiEnabled) {
     const sel = document.getElementById('multi-agent-robot-mode');
     if (!sel) return;
-    ['deep', 'plan_execute', 'supervisor'].forEach(function (v) {
-        const opt = sel.querySelector('option[value="' + v + '"]');
-        if (opt) opt.disabled = !multiEnabled;
-    });
-    if (!multiEnabled && ['deep', 'plan_execute', 'supervisor'].indexOf(sel.value) >= 0) {
-        sel.value = 'eino_single';
+    if (typeof window.populateAgentModeSelect === 'function') {
+        window.populateAgentModeSelect(sel);
+    }
+    // 引擎关着时清掉失效的多代理选择（与保存侧同一条规则）。
+    if (!multiEnabled && typeof window.csaiAgentModes !== 'undefined' && window.csaiAgentModes.isMulti(sel.value)) {
+        sel.value = window.csaiAgentModes.default;
     }
     syncSettingsCustomSelect(sel);
 }
+
+// 目录变化（装/卸能力包、引擎开关保存后）时设置页下拉跟随刷新。
+document.addEventListener('csai-agent-modes-changed', function () {
+    const sel = document.getElementById('multi-agent-robot-mode');
+    if (!sel) return;
+    const enabled = document.getElementById('multi-agent-enabled')?.checked === true;
+    syncRobotAgentModeSelectOptions(enabled);
+});
 
 /** 首次进入仪表盘等页面前拉一次配置，隐藏侧栏 C2（避免禁用后仍显示） */
 window.syncC2NavOnceFromServer = async function syncC2NavOnceFromServer() {
@@ -872,7 +880,12 @@ async function loadConfig(loadTools = true, options = {}) {
         }
         const maRobotMode = document.getElementById('multi-agent-robot-mode');
         if (maRobotMode) {
-            let mode = (ma.robot_default_agent_mode || 'eino_single').trim().toLowerCase();
+            // 先按目录重填选项（含把「配置里存着但此刻不可用」的值保留为禁用项），再回填值。
+            const rawMode = ma.robot_default_agent_mode || '';
+            if (typeof window.populateAgentModeSelect === 'function') {
+                window.populateAgentModeSelect(maRobotMode, rawMode);
+            }
+            const mode = String(rawMode || (window.csaiAgentModes ? window.csaiAgentModes.default : '')).trim().toLowerCase();
             maRobotMode.value = mode;
             syncRobotAgentModeSelectOptions(ma.enabled === true);
         }
@@ -2079,9 +2092,9 @@ async function applySettings() {
                 const latestTailParsed = parseInt(latestTailRaw, 10);
                 const latestTail = Number.isNaN(latestTailParsed) ? 0 : Math.max(0, latestTailParsed);
                 const maEnabled = document.getElementById('multi-agent-enabled')?.checked === true;
-                let robotMode = document.getElementById('multi-agent-robot-mode')?.value || 'eino_single';
-                if (!maEnabled && ['deep', 'plan_execute', 'supervisor'].indexOf(robotMode) >= 0) {
-                    robotMode = 'eino_single';
+                let robotMode = document.getElementById('multi-agent-robot-mode')?.value || (window.csaiAgentModes ? window.csaiAgentModes.default : '');
+                if (!maEnabled && window.csaiAgentModes && window.csaiAgentModes.isMulti(robotMode)) {
+                    robotMode = window.csaiAgentModes.default;
                 }
                 const parseNonNegativeInt = function (id) {
                     const raw = document.getElementById(id)?.value;
@@ -3945,7 +3958,7 @@ async function saveToolsConfig() {
             agent: currentConfig.agent || {},
             multi_agent: {
                 enabled: currentConfig?.multi_agent?.enabled === true,
-                robot_default_agent_mode: currentConfig?.multi_agent?.robot_default_agent_mode || 'eino_single',
+                robot_default_agent_mode: currentConfig?.multi_agent?.robot_default_agent_mode || (window.csaiAgentModes ? window.csaiAgentModes.default : ''),
                 batch_use_multi_agent: currentConfig?.multi_agent?.batch_use_multi_agent === true,
                 plan_execute_loop_max_iterations: Number(currentConfig?.multi_agent?.plan_execute_loop_max_iterations || 0),
                 tool_search_always_visible_tools: getAlwaysVisibleForSave()

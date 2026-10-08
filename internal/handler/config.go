@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/agents"
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/config"
@@ -1013,7 +1014,7 @@ func (h *ConfigHandler) UpdateConfig(c *gin.Context) {
 		if mode := strings.TrimSpace(req.MultiAgent.RobotDefaultAgentMode); mode != "" {
 			h.config.MultiAgent.RobotDefaultAgentMode = mode
 		} else {
-			h.config.MultiAgent.RobotDefaultAgentMode = "eino_single"
+			h.config.MultiAgent.RobotDefaultAgentMode = agentmode.DefaultID
 		}
 		if req.MultiAgent.PlanExecuteLoopMaxIterations != nil {
 			h.config.MultiAgent.PlanExecuteLoopMaxIterations = *req.MultiAgent.PlanExecuteLoopMaxIterations

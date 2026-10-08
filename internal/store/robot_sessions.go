@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/sqltime"
 )
 
@@ -36,7 +37,7 @@ func (r *RobotSessions) requireDB() error {
 // exist in the column defaults as well, so a row written by an older build reads back the same way.
 const (
 	DefaultRoleName  = "默认"
-	DefaultAgentMode = "eino_single"
+	DefaultAgentMode = agentmode.DefaultID
 )
 
 // The agent_mode column arrived later than the table: a base created by an older release has four

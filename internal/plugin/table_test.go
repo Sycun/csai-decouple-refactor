@@ -28,6 +28,7 @@ func sampleBundleDir(t *testing.T, id, version string) string {
 	writeFile(t, filepath.Join(dir, "agents", id+".md"), "---\nname: "+id+"\n---\nbody\n")
 	writeFile(t, filepath.Join(dir, "skills", id+"-triage", "SKILL.md"), "---\nname: "+id+"-triage\n---\nsteps\n")
 	writeFile(t, filepath.Join(dir, "tools", id+"-scan.yaml"), "name: "+id+"-scan\ncommand: /bin/true\n")
+	writeFile(t, filepath.Join(dir, "modes", id+".yaml"), "id: "+id+"\n")
 	writeFile(t, filepath.Join(dir, "bin", id+"-plugin"), "#!/bin/sh\nexit 0\n")
 	if err := os.Chmod(filepath.Join(dir, "bin", id+"-plugin"), 0o755); err != nil {
 		t.Fatal(err)
@@ -48,9 +49,11 @@ units:
     path: skills/%s-triage
   - kind: tool
     path: tools/%s-scan.yaml
+  - kind: mode
+    path: modes/%s.yaml
   - kind: plugin
     path: plugins/%s.yaml
-`, id, id, version, id, id, id, id, id))
+`, id, id, version, id, id, id, id, id, id))
 	return dir
 }
 

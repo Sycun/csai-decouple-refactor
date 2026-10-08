@@ -154,30 +154,18 @@ function applyWebshellDetectedOS(conn, data) {
     }
 }
 
-/** 与主对话页一致：Eino 模式走 /api/multi-agent/stream，body 带 orchestration */
+/** 与主对话页一致：多代理模式走 /api/multi-agent/stream，body 带 orchestration。
+ *  走哪条端点由模式目录回答（不再请求 /api/config 自行判断开关）。 */
 function resolveWebshellAiStreamRequest() {
-    if (typeof apiFetch === 'undefined') {
-        return Promise.resolve({ path: '/api/eino-agent/stream', orchestration: null });
+    var dir = window.csaiAgentModes;
+    var stored = null;
+    try { stored = localStorage.getItem('cyberstrike-chat-agent-mode'); } catch (e) { /* ignore */ }
+    var norm = dir ? dir.normalize(stored, true) : (stored || '');
+    var entry = dir ? dir.entry(norm) : null;
+    if (entry && entry.available && dir.isMulti(norm)) {
+        return Promise.resolve({ path: '/api/multi-agent/stream', orchestration: norm });
     }
-    return apiFetch('/api/config').then(function (r) {
-        if (!r.ok) return null;
-        return r.json();
-    }).then(function (cfg) {
-        var norm = 'eino_single';
-        if (typeof window.csaiChatAgentMode === 'object' && typeof window.csaiChatAgentMode.normalizeStored === 'function') {
-            norm = window.csaiChatAgentMode.normalizeStored(localStorage.getItem('cyberstrike-chat-agent-mode'), cfg);
-        } else {
-            var mode = localStorage.getItem('cyberstrike-chat-agent-mode');
-            norm = (mode && (mode === 'eino_single' || mode === 'deep' || mode === 'plan_execute' || mode === 'supervisor')) ? mode : 'eino_single';
-        }
-        if (cfg && cfg.multi_agent && cfg.multi_agent.enabled &&
-            typeof window.csaiChatAgentMode === 'object' && typeof window.csaiChatAgentMode.isEino === 'function' && window.csaiChatAgentMode.isEino(norm)) {
-            return { path: '/api/multi-agent/stream', orchestration: norm };
-        }
-        return { path: '/api/eino-agent/stream', orchestration: null };
-    }).catch(function () {
-        return { path: '/api/eino-agent/stream', orchestration: null };
-    });
+    return Promise.resolve({ path: '/api/eino-agent/stream', orchestration: null });
 }
 
 // ─── WebShell AI 助手：角色 + 对话模式选择器（与主「对话」页对齐） ───
@@ -282,39 +270,57 @@ function wsCloseRolePanel() {
 // ─── 对话模式选择器 ───
 
 function wsInitAgentMode() {
-    if (typeof apiFetch === 'undefined') return;
-    apiFetch('/api/config').then(function (r) { return r.ok ? r.json() : null; }).then(function (cfg) {
-        var wrapper = document.getElementById('ws-agent-mode-wrapper');
-        if (!wrapper) return;
-        wrapper.style.display = '';
-        // 是否启用多代理
-        var multiOn = cfg && cfg.multi_agent && cfg.multi_agent.enabled;
-        // 隐藏/显示多代理选项
-        var opts = wrapper.querySelectorAll('.ws-agent-mode-option');
-        opts.forEach(function (el) {
-            var v = el.getAttribute('data-value');
-            if (v === 'deep' || v === 'plan_execute' || v === 'supervisor') {
-                el.style.display = multiOn ? '' : 'none';
-            }
-        });
-        // 标准化当前值
-        var stored = localStorage.getItem('cyberstrike-chat-agent-mode');
-        var norm;
-        if (typeof window.csaiChatAgentMode === 'object' && typeof window.csaiChatAgentMode.normalizeStored === 'function') {
-            norm = window.csaiChatAgentMode.normalizeStored(stored, cfg);
-        } else {
-            norm = stored || 'eino_single';
-            if (norm !== 'eino_single' && norm !== 'deep' && norm !== 'plan_execute' && norm !== 'supervisor') {
-                norm = 'eino_single';
-            }
-            if (norm === 'multi') norm = 'deep';
+    var wrapper = document.getElementById('ws-agent-mode-wrapper');
+    if (!wrapper) return;
+    wrapper.style.display = '';
+    // 模式清单来自目录（/api/agent-modes），与主对话页同一份；这里不再读 /api/config
+    // 自行判断多代理开关，也不再有第二份归一逻辑。
+    wsRenderAgentModeOptions();
+    var stored = null;
+    try { stored = localStorage.getItem('cyberstrike-chat-agent-mode'); } catch (e) { /* ignore */ }
+    wsSyncAgentMode(window.csaiAgentModes.normalize(stored, true));
+}
+
+/** 从目录重渲 WebShell 助手的模式选项（只渲染此刻可用的模式）。 */
+function wsRenderAgentModeOptions() {
+    var box = document.getElementById('ws-agent-mode-options');
+    if (!box || typeof window.csaiAgentModes === 'undefined') return;
+    var dir = window.csaiAgentModes;
+    box.textContent = '';
+    dir.available().forEach(function (m) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'role-selection-item-main agent-mode-option ws-agent-mode-option';
+        btn.setAttribute('role', 'option');
+        btn.setAttribute('data-value', m.id);
+        var icon = document.createElement('div');
+        icon.className = 'role-selection-item-icon-main';
+        icon.textContent = '\ud83e\udd16';
+        var content = document.createElement('div');
+        content.className = 'role-selection-item-content-main';
+        var name = document.createElement('div');
+        name.className = 'role-selection-item-name-main';
+        name.textContent = dir.label(m.id);
+        content.appendChild(name);
+        var descText = dir.hint(m.id);
+        if (descText) {
+            var desc = document.createElement('div');
+            desc.className = 'role-selection-item-description-main';
+            desc.textContent = descText;
+            content.appendChild(desc);
         }
-        wsSyncAgentMode(norm);
-    }).catch(function () {
-        var wrapper = document.getElementById('ws-agent-mode-wrapper');
-        if (wrapper) wrapper.style.display = '';
-        wsSyncAgentMode('eino_single');
+        var check = document.createElement('div');
+        check.className = 'role-selection-checkmark-main agent-mode-check';
+        check.setAttribute('data-agent-mode-check', m.id);
+        check.textContent = '\u2713';
+        btn.appendChild(icon);
+        btn.appendChild(content);
+        btn.appendChild(check);
+        btn.addEventListener('click', function () { wsSelectAgentMode(m.id); });
+        box.appendChild(btn);
     });
+    var hid = document.getElementById('ws-agent-mode-select');
+    if (hid && hid.value) wsSyncAgentMode(hid.value);
 }
 
 function wsSyncAgentMode(value) {
@@ -323,7 +329,7 @@ function wsSyncAgentMode(value) {
     var icon = document.getElementById('ws-agent-mode-icon');
     if (hid) hid.value = value;
     if (label) label.textContent = (typeof getAgentModeLabelForValue === 'function') ? getAgentModeLabelForValue(value) : value;
-    if (icon) icon.textContent = (typeof getAgentModeIconForValue === 'function') ? getAgentModeIconForValue(value) : '\ud83e\udd16';
+    if (icon) icon.textContent = '\ud83e\udd16';
     var wrapper = document.getElementById('ws-agent-mode-wrapper');
     if (wrapper) {
         wrapper.querySelectorAll('.ws-agent-mode-option').forEach(function (el) {
@@ -331,6 +337,16 @@ function wsSyncAgentMode(value) {
         });
     }
 }
+
+// 目录变化（装/卸能力包、引擎开关）后 WebShell 助手的选择器跟随刷新与重归一。
+document.addEventListener('csai-agent-modes-changed', function () {
+    if (!document.getElementById('ws-agent-mode-wrapper')) return;
+    wsRenderAgentModeOptions();
+    var hid = document.getElementById('ws-agent-mode-select');
+    if (hid) {
+        wsSyncAgentMode(window.csaiAgentModes.normalize(hid.value, true));
+    }
+});
 
 function wsSelectAgentMode(mode) {
     try { localStorage.setItem('cyberstrike-chat-agent-mode', mode); } catch (e) { /* */ }
@@ -550,11 +566,9 @@ function wsRefreshSelectors() {
     wsUpdateRoleSelectorDisplay();
     wsRenderRoleList();
     wsUpdateProjectButtonLabel();
-    var stored = localStorage.getItem('cyberstrike-chat-agent-mode') || 'eino_single';
-    if (stored !== 'eino_single' && stored !== 'deep' && stored !== 'plan_execute' && stored !== 'supervisor') {
-        stored = 'eino_single';
-    }
-    wsSyncAgentMode(stored);
+    var stored = null;
+    try { stored = localStorage.getItem('cyberstrike-chat-agent-mode'); } catch (e) { /* ignore */ }
+    wsSyncAgentMode(window.csaiAgentModes.normalize(stored, true));
 }
 
 // 点击面板外部关闭
@@ -2567,11 +2581,7 @@ function selectWebshell(id, stateReady) {
         '<div class="role-selection-panel-header agent-mode-panel-header"><h3 class="role-selection-panel-title">' + (wsT('chat.agentModePanelTitle') || '对话模式') + '</h3>' +
         '<button type="button" class="role-selection-panel-close" onclick="wsCloseAgentModePanel()"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>' +
         '</div>' +
-        '<div class="agent-mode-options">' +
-        '<button type="button" class="role-selection-item-main agent-mode-option ws-agent-mode-option" data-value="eino_single" role="option" onclick="wsSelectAgentMode(\'eino_single\')" data-agent-mode-detail="' + escapeHtmlAttr(wsT('chat.agentModeEinoSingleHint') || 'Eino ChatModelAgent + Runner') + '"><div class="role-selection-item-icon-main">\u26a1</div><div class="role-selection-item-content-main"><div class="role-selection-item-name-main">' + (wsT('chat.agentModeEinoSingle') || 'Eino 单代理（ADK）') + '</div><div class="role-selection-item-description-main">' + (wsT('chat.agentModeEinoSingleHint') || 'Eino ChatModelAgent + Runner') + '</div></div><div class="role-selection-checkmark-main agent-mode-check" data-agent-mode-check="eino_single">\u2713</div></button>' +
-        '<button type="button" class="role-selection-item-main agent-mode-option ws-agent-mode-option" data-value="deep" role="option" onclick="wsSelectAgentMode(\'deep\')" data-agent-mode-detail="' + escapeHtmlAttr(wsT('chat.agentModeDeepHint') || 'Eino DeepAgent，适合复杂安全测试、多阶段 task 子代理委派与汇总') + '"><div class="role-selection-item-icon-main">\ud83e\udde9</div><div class="role-selection-item-content-main"><div class="role-selection-item-name-main">' + (wsT('chat.agentModeDeep') || 'Deep（DeepAgent）') + '</div><div class="role-selection-item-description-main">' + (wsT('chat.agentModeDeepHint') || 'Eino DeepAgent，适合复杂安全测试、多阶段 task 子代理委派与汇总') + '</div></div><div class="role-selection-checkmark-main agent-mode-check" data-agent-mode-check="deep">\u2713</div></button>' +
-        '<button type="button" class="role-selection-item-main agent-mode-option ws-agent-mode-option" data-value="plan_execute" role="option" onclick="wsSelectAgentMode(\'plan_execute\')" data-agent-mode-detail="' + escapeHtmlAttr(wsT('chat.agentModePlanExecuteHint') || '规划 → 执行 → 重规划') + '"><div class="role-selection-item-icon-main">\ud83d\udccb</div><div class="role-selection-item-content-main"><div class="role-selection-item-name-main">' + (wsT('chat.agentModePlanExecuteLabel') || 'Plan-Execute') + '</div><div class="role-selection-item-description-main">' + (wsT('chat.agentModePlanExecuteHint') || '规划 → 执行 → 重规划') + '</div></div><div class="role-selection-checkmark-main agent-mode-check" data-agent-mode-check="plan_execute">\u2713</div></button>' +
-        '<button type="button" class="role-selection-item-main agent-mode-option ws-agent-mode-option" data-value="supervisor" role="option" onclick="wsSelectAgentMode(\'supervisor\')" data-agent-mode-detail="' + escapeHtmlAttr(wsT('chat.agentModeSupervisorHint') || '专家路由场景：监督者通过 transfer 动态分派多个专业子代理') + '"><div class="role-selection-item-icon-main">\ud83c\udfaf</div><div class="role-selection-item-content-main"><div class="role-selection-item-name-main">' + (wsT('chat.agentModeSupervisorLabel') || 'Supervisor（专家路由）') + '</div><div class="role-selection-item-description-main">' + (wsT('chat.agentModeSupervisorHint') || '专家路由场景：监督者通过 transfer 动态分派多个专业子代理') + '</div></div><div class="role-selection-checkmark-main agent-mode-check" data-agent-mode-check="supervisor">\u2713</div></button>' +
+        '<div class="agent-mode-options" id="ws-agent-mode-options"></div>' +
         '</div></div></div>' +
         '<input type="hidden" id="ws-agent-mode-select" value="eino_single" autocomplete="off" />' +
         '</div>' +

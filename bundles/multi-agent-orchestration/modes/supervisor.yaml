@@ -1,0 +1,2 @@
+# 激活内核的 supervisor 多代理模式（监督者按 transfer 分派专家子代理）。
+id: supervisor

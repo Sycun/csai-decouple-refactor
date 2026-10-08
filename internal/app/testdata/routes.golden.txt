@@ -38,6 +38,7 @@ GET /api-docs
 GET /api/agent-loop/task-events
 GET /api/agent-loop/tasks
 GET /api/agent-loop/tasks/completed
+GET /api/agent-modes
 GET /api/assets
 GET /api/assets/selection
 GET /api/assets/stats

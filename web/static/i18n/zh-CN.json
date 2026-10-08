@@ -120,6 +120,7 @@
       "skill": "技能",
       "tool": "工具配方",
       "mcp": "MCP 服务器",
+      "mode": "对话模式",
       "plugin": "插件（可执行代码）"
     },
     "switchCapabilitiesPrefix": "已核对并登记 ",

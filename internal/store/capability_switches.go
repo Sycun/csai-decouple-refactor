@@ -29,8 +29,10 @@ import (
 // A plugin/ row is accepted for the same reason an mcp/ one is: the kind is real, its identity must
 // parse, and a narrowing "off" is always safe to record. Neither is ever replayed as "on" - the
 // boot path re-declares both disabled, because running a pack's process or re-trusting a pack's
-// binary is the operator's decision every time, not a persisted one.
-var switchUnitPrefixes = []string{"role/", "agent/", "skill/", "tool/", "mcp/", "plugin/"}
+// binary is the operator's decision every time, not a persisted one. A mode/ row is the plain
+// case: switching a mode unit off takes it out of the catalog ("不点不存在"), and the row is
+// replayed as "off" like any other narrowing decision.
+var switchUnitPrefixes = []string{"role/", "agent/", "skill/", "tool/", "mcp/", "mode/", "plugin/"}
 
 // CapabilitySwitches is the store for that table.
 type CapabilitySwitches struct {

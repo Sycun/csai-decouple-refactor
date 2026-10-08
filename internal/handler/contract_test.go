@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"sort"
 
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/plugin"
 	"cyberstrike-ai/internal/routes"
 	"strings"
@@ -226,6 +227,44 @@ func TestEveryCapabilityKindHasAConsoleLabel(t *testing.T) {
 			}
 			if !known {
 				t.Errorf("%s labels a kind %q that plugin.Kinds does not have", locale, name)
+			}
+		}
+	}
+}
+
+// TestEveryAgentModeHasI18nLabels —— 目录声明的每个模式，其 labelKey / hintKey 必须在
+// 中英两份字典里都有非空文案，且必须是 chat. 前缀（选择器从 chat 段取）。
+// 目录的可用位置会随装卸变化，但「装好之后能读出人话」必须恒成立——缺一个 key，
+// 选择器就会把 key 文本原样渲染给运维者，而所有 Go 测试照样绿。
+func TestEveryAgentModeHasI18nLabels(t *testing.T) {
+	for _, locale := range []string{"zh-CN", "en-US"} {
+		path := filepath.Join("..", "..", "web", "static", "i18n", locale+".json")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		var doc map[string]any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		chat, ok := doc["chat"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s has no chat section", locale)
+		}
+		for _, m := range agentmode.All() {
+			for name, key := range map[string]string{"labelKey": m.LabelKey, "hintKey": m.HintKey} {
+				if key == "" {
+					t.Errorf("模式 %s 声明缺 %s：选择器会渲染出原始 id", m.ID, name)
+					continue
+				}
+				short, cut := strings.CutPrefix(key, "chat.")
+				if !cut {
+					t.Errorf("模式 %s 的 %s %q 必须以 chat. 开头（前端从 chat 段取）", m.ID, name, key)
+					continue
+				}
+				if v, ok := chat[short].(string); !ok || strings.TrimSpace(v) == "" {
+					t.Errorf("%s 缺 %q（模式 %s）：装好之后选择器会显示 key 文本", locale, key, m.ID)
+				}
 			}
 		}
 	}

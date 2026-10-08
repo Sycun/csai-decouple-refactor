@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"cyberstrike-ai/internal/agent"
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
@@ -30,7 +31,7 @@ func chatRequestAgentMode(req *ChatRequest, source string) string {
 	if strings.HasPrefix(strings.TrimSpace(source), "multi_agent") {
 		return config.NormalizeMultiAgentOrchestration(req.Orchestration)
 	}
-	return "eino_single"
+	return agentmode.DefaultID
 }
 
 func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context, source string) (*multiAgentPrepared, error) {

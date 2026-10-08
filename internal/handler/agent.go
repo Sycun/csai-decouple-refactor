@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"cyberstrike-ai/internal/agent"
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/authctx"
 	"cyberstrike-ai/internal/config"
@@ -917,23 +918,23 @@ func (h *AgentHandler) ProcessMessageForRobot(ctx context.Context, platform stri
 	taskCtx = h.tasks.BindProcessScope(taskCtx, conversationID, taskRunID)
 	progressCallback := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, nil)
 
-	robotMode := config.NormalizeAgentMode(agentMode)
+	robotMode := agentmode.ResolveWithDefault(agentMode, agentmode.DefaultID)
 	if err := h.conversations.SetConversationAgentMode(conversationID, robotMode); err != nil {
 		h.logger.Warn("机器人：更新对话模式失败", zap.String("conversationId", conversationID), zap.String("agentMode", robotMode), zap.Error(err))
 	}
-	switch robotMode {
-	case "eino_single":
-		return h.runRobotEinoSingleWithRetry(taskCtx, conversationID, finalMessage, agentHistoryMessages, roleTools, progressCallback, assistantMessageID, &taskStatus)
-	case "deep", "plan_execute", "supervisor":
-		if h.config == nil || !h.config.MultiAgent.Enabled {
-			taskStatus = "failed"
-			return "", conversationID, fmt.Errorf("机器人对话模式 %s 需要启用 Eino 多代理", robotMode)
-		}
-		return h.runRobotMultiAgentWithRetry(taskCtx, conversationID, finalMessage, robotMode, agentHistoryMessages, roleTools, progressCallback, assistantMessageID, &taskStatus)
+	// fail-closed：模式不可用（包未安装/单元停用）或引擎未启用时明确报错，不静默换模式。
+	entry, modeErr := checkAgentMode(h.config, robotMode)
+	if modeErr != nil {
+		taskStatus = "failed"
+		return "", conversationID, fmt.Errorf("机器人%s", modeErr.Error())
 	}
-
-	taskStatus = "failed"
-	return "", conversationID, fmt.Errorf("不支持的机器人代理模式: %s", robotMode)
+	runner, orchestration, _ := agentmode.RunnerFor(entry.ID)
+	switch runner {
+	case agentmode.RunnerMultiAgent:
+		return h.runRobotMultiAgentWithRetry(taskCtx, conversationID, finalMessage, orchestration, agentHistoryMessages, roleTools, progressCallback, assistantMessageID, &taskStatus)
+	default:
+		return h.runRobotEinoSingleWithRetry(taskCtx, conversationID, finalMessage, agentHistoryMessages, roleTools, progressCallback, assistantMessageID, &taskStatus)
+	}
 }
 
 // StreamEvent 流式事件
@@ -1871,8 +1872,12 @@ type BatchTaskRequest struct {
 
 // batchQueueWantsEino 队列是否配置为走 Eino 多代理。
 func batchQueueWantsEino(agentMode string) bool {
-	m := strings.TrimSpace(strings.ToLower(agentMode))
-	return m == "deep" || m == "plan_execute" || m == "supervisor"
+	id, ok := agentmode.Canonical(agentMode)
+	if !ok {
+		return false
+	}
+	runner, _, ok := agentmode.RunnerFor(id)
+	return ok && runner == agentmode.RunnerMultiAgent
 }
 
 func normalizeBatchQueueScheduleMode(mode string) string {

@@ -458,6 +458,47 @@ func openAPIPathsChat() map[string]interface{} {
 				},
 			},
 		},
+		"/api/agent-modes": map[string]interface{}{
+			"get": map[string]interface{}{
+				"tags":        []string{"对话交互"},
+				"summary":     "对话模式目录（内置单代理 + 已激活的多代理模式）",
+				"description": "返回此刻的对话模式目录：`eino_single` 是内核内置、恒在且可用；`deep` / `plan_execute` / `supervisor` 随「多代理编排包」的安装进入目录，卸载或停用即从目录消失（不点不存在）。多代理模式在 `multi_agent.enabled=false` 时返回 `available=false`、`reason=engine_disabled`。对话页、WebShell 助手、批量队列与机器人「模式」命令都以此为准。",
+				"operationId": "listAgentModes",
+				"responses": map[string]interface{}{
+					"200": map[string]interface{}{
+						"description": "成功",
+						"content": map[string]interface{}{
+							"application/json": map[string]interface{}{
+								"schema": map[string]interface{}{
+									"type": "object",
+									"properties": map[string]interface{}{
+										"default": map[string]interface{}{"type": "string"},
+										"modes": map[string]interface{}{
+											"type": "array",
+											"items": map[string]interface{}{
+												"type": "object",
+												"properties": map[string]interface{}{
+													"id":        map[string]interface{}{"type": "string"},
+													"label":     map[string]interface{}{"type": "string"},
+													"labelKey":  map[string]interface{}{"type": "string"},
+													"hintKey":   map[string]interface{}{"type": "string"},
+													"runner":    map[string]interface{}{"type": "string", "description": "执行器：eino_single（单代理）或 multi_agent（多代理编排）"},
+													"available": map[string]interface{}{"type": "boolean"},
+													"reason":    map[string]interface{}{"type": "string"},
+													"builtin":   map[string]interface{}{"type": "boolean"},
+													"bundle":    map[string]interface{}{"type": "string"},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+					"401": map[string]interface{}{"description": "未授权"},
+				},
+			},
+		},
 		"/api/eino-agent": map[string]interface{}{
 			"post": map[string]interface{}{
 				"tags":        []string{"对话交互"},

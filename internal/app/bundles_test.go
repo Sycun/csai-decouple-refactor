@@ -6,6 +6,7 @@ import (
 	"sort"
 	"testing"
 
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/agents"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/plugin"
@@ -116,8 +117,8 @@ func TestExampleBundlesInstallAlongsideShippedCapabilities(t *testing.T) {
 		}
 	}
 	if len(added) < 55 {
-		t.Fatalf("the shipped catalogue delivers only %d units (measured 59 across 16 packs); the "+
-			"professional content has gone thin or lost a pack", len(added))
+		t.Fatalf("the shipped catalogue delivers only %d units (measured 62 across 16 packs: 59 content "+
+			"units plus the 3 mode declarations); the professional content has gone thin or lost a pack", len(added))
 	}
 	// The catalogue is where the professional content lives now: these identities left the factory
 	// tree on purpose, so a pack has to carry each of them.
@@ -171,13 +172,15 @@ func TestExampleBundlesInstallAlongsideShippedCapabilities(t *testing.T) {
 	// just present in the table: a pack whose agent does not parse, or whose tool recipe has no
 	// enforceable capability manifest, is a content bug that only shows up as a silent absence
 	// (or a fail-closed execution) long after the install said "ok".
-	var agentPaths, toolPaths []string
+	var agentPaths, toolPaths, modePaths []string
 	for _, u := range addedUnits {
 		switch u.Kind {
 		case plugin.KindAgent:
 			agentPaths = append(agentPaths, u.Path)
 		case plugin.KindTool:
 			toolPaths = append(toolPaths, u.Path)
+		case plugin.KindMode:
+			modePaths = append(modePaths, u.Path)
 		}
 	}
 	if len(agentPaths) > 0 {
@@ -215,6 +218,19 @@ func TestExampleBundlesInstallAlongsideShippedCapabilities(t *testing.T) {
 		}
 	}
 
+	// Mode declarations are read by the kernel's own loader too: the catalog activates modes by
+	// unit name and would serve a name whose file never parsed, so each declaration has to pass
+	// the same read the boot verifier (verifyModeUnits) runs.
+	if len(modePaths) < 3 {
+		t.Fatalf("the catalogue delivers only %d mode declarations (measured 3: the three multi-agent "+
+			"modes deep / plan_execute / supervisor)", len(modePaths))
+	}
+	for _, p := range modePaths {
+		if _, err := agentmode.ReadDeclarationFile(p); err != nil {
+			t.Fatalf("the kernel's mode loader cannot read %s: %v", p, err)
+		}
+	}
+
 	for _, dir := range dirs {
 		m, err := plugin.LoadManifestDir(dir)
 		if err != nil {
@@ -229,7 +245,7 @@ func TestExampleBundlesInstallAlongsideShippedCapabilities(t *testing.T) {
 	}
 
 	after := map[string]bool{}
-	for _, kind := range []plugin.Kind{plugin.KindRole, plugin.KindTool, plugin.KindAgent, plugin.KindSkill} {
+	for _, kind := range []plugin.Kind{plugin.KindRole, plugin.KindTool, plugin.KindAgent, plugin.KindSkill, plugin.KindMode} {
 		for _, u := range table.Units(kind) {
 			after[u.ID] = true
 		}

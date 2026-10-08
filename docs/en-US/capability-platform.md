@@ -211,8 +211,8 @@ table (noted in `config.go`).
 
 ## 12. Capability units and hot-plug
 
-Six kinds of extension - roles, skills, markdown agents, tool recipes, MCP declarations and plugin
-binaries - each used to have their own lifecycle, and **none of them could change without a
+Seven kinds of extension - roles, skills, markdown agents, tool recipes, MCP declarations, chat modes
+and plugin binaries - each used to have their own lifecycle, and **none of them could change without a
 restart**. They now share
 one identity scheme and one live table:
 
@@ -233,6 +233,14 @@ one identity scheme and one live table:
   `destructive`. Installing declares nothing and starts nothing, and a switch is never replayed as
   "on" after a restart so that an updated pack cannot run code nobody re-approved. Directory shape
   and the full rule set are in `bundles/README.md`.
+- A `mode` unit activates a conversation mode the kernel **already knows how to run**: the
+  declaration carries an `id` only (matching its file name), because runner and orchestration are
+  kernel knowledge (`internal/agentmode`). An unknown id is refused at install, and `eino_single`
+  is a builtin floor no unit may override. The `multi-agent-orchestration` pack (1.1.0) ships three
+  declarations (deep / plan_execute / supervisor): install it and the modes enter the
+  `GET /api/agent-modes` catalogue and every selector; uninstall it and they leave it ("不点不存在"),
+  while requests carrying a stale mode are refused fail-closed at the chat, robot, batch and
+  workflow entry points with the reason named.
 - A pack plugin's capabilities **do reach the MCP tool surface**: they have no recipe, so each
   rebuild composes them from the capability table, and it runs *after* the shipped registrations, so a
   pack may add an entry point but can never take over a name the binary already answers to. Switching a
@@ -341,7 +349,7 @@ one identity scheme and one live table:
   detach name what they forget. MCP is the deliberate exception: start-up re-declares those servers
   disabled regardless of any row, so that one switch answers `switch_persisted:false` and points at
   `config.yaml`, where a server that must survive restarts belongs.
-- `served:false` only tells the truth. Every one of the six kinds either reads the table on its run
+- `served:false` only tells the truth. Every one of the seven kinds either reads the table on its run
   path or is deliberately "served by the switch", so
   `servedKinds` is the same size as `plugin.Kinds` and `TestEveryKindReportsItsActualServedState`
   pins both directions (drop a kind and it is red; add a kind to `plugin.Kinds` without wiring it and

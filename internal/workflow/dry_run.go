@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"cyberstrike-ai/internal/agentmode"
 )
 
 type DryRunResult struct {
@@ -143,7 +145,7 @@ func dryRunNode(node graphNode, state *WorkflowLocalState) (map[string]any, bool
 		}
 		return toolOutputMap(node, "[dry-run] tool call skipped", cfgString(node.Config, "tool_name"), args, "dry-run", false), true, "simulated", ""
 	case "agent":
-		mode := firstNonEmpty(cfgString(node.Config, "agent_mode"), "eino_single")
+		mode := firstNonEmpty(cfgString(node.Config, "agent_mode"), agentmode.DefaultID)
 		response := "[dry-run] agent execution skipped"
 		if key := cfgString(node.Config, "output_key"); key != "" {
 			state.Outputs[key] = response

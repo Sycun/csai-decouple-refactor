@@ -3058,13 +3058,10 @@ function formatProjectConversationPreviewAge(value) {
 
 function getProjectConversationModeLabel(conversation) {
     const mode = String(conversation?.agentMode || conversation?.agent_mode || '').trim().toLowerCase();
-    const labels = {
-        eino_single: ['chat.agentModeEinoSingle', 'Eino 单代理（ADK）'],
-        deep: ['chat.agentModeDeep', 'Deep（DeepAgent）'],
-        plan_execute: ['chat.agentModePlanExecuteLabel', 'Plan-Execute'],
-        supervisor: ['chat.agentModeSupervisorLabel', 'Supervisor（专家路由）'],
-    };
-    if (labels[mode]) return tpFmt(labels[mode][0], labels[mode][1]);
+    // 模式文案以目录为准（与对话页同一份）；目录不认识的（旧数据/已卸载模式）回落原预览文案。
+    if (mode && window.csaiAgentModes && window.csaiAgentModes.entry(mode)) {
+        return window.csaiAgentModes.label(mode);
+    }
     return clampProjectPreviewText(
         conversation?.roleName || conversation?.role_name || pickerMessage(tp, 'chat.conversationPreviewDefaultMode', '默认'),
         80
@@ -3073,10 +3070,9 @@ function getProjectConversationModeLabel(conversation) {
 
 function getProjectConversationModeIconClass(conversation) {
     const mode = String(conversation?.agentMode || conversation?.agent_mode || '').trim().toLowerCase();
-    if (mode === 'eino_single') return 'eino';
-    if (mode === 'deep') return 'deep';
-    if (mode === 'plan_execute') return 'plan';
-    if (mode === 'supervisor') return 'supervisor';
+    if (mode && window.csaiAgentModes && window.csaiAgentModes.entry(mode)) {
+        return mode.replace(/_/g, '-');
+    }
     return 'default';
 }
 

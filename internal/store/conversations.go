@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/sqltime"
 	"cyberstrike-ai/internal/storage"
 
@@ -395,15 +396,11 @@ func NormalizeConversationRoleName(roleName string) string {
 	return roleName
 }
 
+// NormalizeConversationAgentMode 把任意输入收敛到规范模式 id；未知值回落 eino_single。
+// 身份与别名的定义在 internal/agentmode——这里曾是第二份实现，它比其它入口少认
+// pe/sv 与中文别名，同一个 "pe" 走这条路径会静默变成 eino_single。
 func NormalizeConversationAgentMode(agentMode string) string {
-	agentMode = strings.ToLower(strings.TrimSpace(agentMode))
-	agentMode = strings.ReplaceAll(agentMode, "-", "_")
-	switch agentMode {
-	case "deep", "plan_execute", "supervisor":
-		return agentMode
-	default:
-		return "eino_single"
-	}
+	return agentmode.ResolveWithDefault(agentMode, agentmode.DefaultID)
 }
 
 func (c *Conversations) SetConversationRoleName(id, roleName string) error {

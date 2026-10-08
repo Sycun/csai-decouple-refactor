@@ -3580,6 +3580,64 @@ agents=∅、skills=5 个点名、tools≥90、总数下限 96），并新增反
 `store` 侧 `TestInstalledBundlesRoundTrip` 与坏 id 拒绝（`../evil` 不得被 join）。
 真机点验记录见 `bundles/README.md`「生效时机」。
 
+### 对话模式能力化 —— 完成（2026-10-08）
+
+**做什么**：把「对话模式」（eino_single | deep | plan_execute | supervisor）从散落的五份平行实现
+收成单一来源，并作为第七类能力单元（`kind: mode`）接入能力平台：
+
+- 新增 `internal/agentmode`（零依赖）：模式身份 / 别名 union / runner 绑定 / requires 的唯一声明；
+  `config.NormalizeAgentMode`、`config.NormalizeMultiAgentOrchestration`、`store.NormalizeConversationAgentMode`、
+  `handler.parseRobotAgentMode`、`workflow/nodes.go` 内联，五份解析全部派生自它。顺带修复别名不一致：
+  `"pe"` / `"planexecute"` 走会话路径会静默变成 eino_single（store 那份缺别名），机器人路径却是 plan_execute。
+- 能力体系第七类 `kind: mode`：「多代理编排包」1.1.0 携带 deep / plan_execute / supervisor 三份
+  激活声明（`modes/*.yaml` 只写 id，执行绑定是内核知识、声明改不了）；`eino_single` 是内核内置底线
+  （恒在、不可被单元覆盖/停用）。装入路径 `checkModeUnits` 在写任何东西之前校验声明；启动重放路径
+  `verifyModeUnits` 读文件核对——重放走通用 `InstallBundle` 不读文件、目录读取只按单元名合并，
+  这是唯一能抓住「文件被换过」的地方，坏声明当场停用并点名。
+- 执行入口 fail-closed：robot、批量队列、`/api/multi-agent/stream` 在模式不可用（包未安装 / 单元停用 /
+  引擎未启用）时明确报错并指名原因，不再静默换模式；workflow 节点与 batch 分派改走 runner 绑定，
+  handler 里的模式名 switch 全部消失。
+- 运行时目录 `GET /api/agent-modes`（id / label / labelKey / hintKey / runner / available / reason）；
+  前端五处副本（chat.js、webshell.js、tasks.js、settings.js 与模板里对话面板 + 设置页 + 建队表单
+  三处静态 option）收口为目录消费，面板动态渲染，装/卸包经 `csai-agent-modes-changed` 即时刷新。
+- HTTP 面落 `AgentModeHandler` 协作类型——`TestHandlerSizesOnlyShrink` 当场红过一次（+1 方法 +1 文件），
+  按棘轮规矩新能力做协作类型，而不是调上限。
+
+**门禁**（各配双向探针，注入即红/撤销即绿）：
+- `TestAgentModeIdentityLiteralsOnlyShrink`（internal/layering）：`"eino_single"` / `"plan_execute"`
+  字符串字面量只允许在 `internal/agentmode`（声明）与 `internal/multiagent`（引擎实现）；账本上限
+  = 收口当天实测（OpenAPI 6 + markdown 4），未列出的文件必须为 0。
+- `web/static/js/agent-mode-ratchet.test.cjs`：JS 与模板同口径（monitor/chat/webshell 留账，新文件出现即红）。
+- `TestEveryAgentModeHasI18nLabels`（handler）：labelKey / hintKey 在 zh-CN / en-US 双侧存在且 chat. 前缀。
+- `TestAgentModesFollowActivatedUnits` / `TestCheckModeUnitsRefusesBrokenDeclarations`（handler）、
+  `TestVerifyModeUnitsDisablesBadDeclarations`（app）：装卸跟随、装前拒绝、启动停用。
+- 契约全接：`Kinds` / `ScanDir` / `servedKinds` / `plugins.kind.mode` 双侧 i18n / routes 与
+  openapi-operations 两处 golden 重新生成 / 别名 union 特征测试（每个历史别名解析到同一 id）。
+- 复现：`make js-check`（227 条）、`make wiring-check`、`make layering-check`、
+  `go test ./internal/agentmode/ ./internal/layering/ -count=1`。
+
+**真机点验（2026-10-08，隔离树 + 18080 端口，2026-10-08 当日实跑）**：
+- `git archive HEAD` 出的干净树（不进测试版——它正被另一条线使用）+ 示例配置起真二进制；
+  新库启动打印一次性 admin 密码。
+- 装包前 `GET /api/agent-modes` 只有内置单代理；安装「多代理编排包」后立刻 4 条
+  （deep / plan_execute / supervisor 带 `bundle: multi-agent-orchestration`、`runner: multi_agent`）；
+  带 `orchestration=deep` 的流式请求通过模式门进入 runner（在 LLM 凭证处失败，属本实例未配 key）。
+- 卸载后目录立刻回到 1 条（无需重启）；带 deep 的请求得到
+  `对话模式 Deep 未安装：多代理编排包未安装，或该模式单元已被停用`——fail-closed 指名。
+- headless Chrome（CDP，`--ignore-certificate-errors`）真渲染：装态面板 4 项、label 为 i18n 中文
+  （Eino 单代理（ADK）/ Deep（DeepAgent）/ Plan-Execute / Supervisor（专家路由））、默认选中单代理、
+  hint 全渲染；卸载态 1 项。「不点不存在」在前端实证（`uncaughtCount: 0`）。
+- **真机抓出的缺陷**：`/api/agent-modes` 漏登记 RBAC 权限映射——编译过、单测绿，运行时所有角色
+  403「未配置访问权限」。修复（归入对话域 `agent:execute`）的同时补门禁
+  `TestEveryProtectedRouteHasAPermission`（遍历 routes.Extract 的 protected 组逐条要求映射非空 +
+  反空地板 200 条；探针验证注入即红、撤销即绿）。
+
+**与「出厂极简」承诺的关系**（本刀的交易，明说）：§11「出厂极简与安装记录」里的
+「不装也能跑——编排回落到内置提示」指编排**提示**的回落（包缺 orchestrator.md 时仍用内置提示，
+这部分仍在）；但「多代理编排包未安装」现在意味着三个模式不出现在目录、带旧模式的执行请求被
+fail-closed 挡住并指名「未安装」。未装包的出厂状态只有 Eino 单代理可选，机器人「模式」命令与
+批量队列列出的也是目录而非固定四行。
+
 ## 附录 A：如何复现本报告的关键数字
 
 ```bash
