@@ -84,6 +84,7 @@
     "availableTitle": "可安装的能力包",
     "nothingAvailable": "能力包目录里没有尚未安装的包",
     "installedTitle": "已安装的能力包",
+    "tabsAria": "可安装与已安装的能力包",
     "nothingInstalled": "还没有安装任何能力包",
     "standaloneTitle": "内置目录登记的能力单元",
     "nothingStandalone": "能力表里没有独立单元（内置目录未被扫描）",
