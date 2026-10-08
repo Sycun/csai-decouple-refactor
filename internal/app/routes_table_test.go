@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"cyberstrike-ai/internal/routes"
+	"cyberstrike-ai/internal/security"
 )
 
 // registrarPattern matches the per-domain registrar signature.
@@ -111,4 +112,29 @@ func diffSets(want, got []string) ([]string, []string) {
 		}
 	}
 	return missing, extra
+}
+
+// TestEveryProtectedRouteHasAPermission —— 挂在 protected 组（AuthMiddleware + RBAC 中间件）
+// 上的每条路由都必须在 permissionForRequest 里有映射。漏一条的代价不是编译错，是运行时
+// 403「未配置访问权限」：编译过、单测绿，直到真机点验才现形（/api/agent-modes 就是这么
+// 被抓出来的）。这里把它变成编译期近邻的判据。
+func TestEveryProtectedRouteHasAPermission(t *testing.T) {
+	table, err := routes.Extract(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	protectedCount := 0
+	for _, entry := range table.Sorted() {
+		if entry.Receiver != "protected" {
+			continue
+		}
+		protectedCount++
+		if security.RoutePermission(entry.Method, entry.GinPath) == "" {
+			t.Errorf("protected 路由 %s %s 没有 RBAC 权限映射：所有角色都会收到 403「未配置访问权限」",
+				entry.Method, entry.GinPath)
+		}
+	}
+	if protectedCount < 200 {
+		t.Fatalf("只识别出 %d 条 protected 路由——提取器口径变了，这道门禁会变成空断言", protectedCount)
+	}
 }

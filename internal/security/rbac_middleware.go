@@ -91,6 +91,12 @@ func permissionAlternativesForRequest(method, path string) []string {
 	}
 }
 
+// RoutePermission 是 permissionForRequest 的导出视图：给「每条 protected 路由都必须有
+// 权限映射」的门禁用（internal/app 的路由表测试）。
+func RoutePermission(method, fullPath string) string {
+	return permissionForRequest(method, fullPath)
+}
+
 func permissionForRequest(method, fullPath string) string {
 	path := strings.TrimPrefix(fullPath, "/api")
 	switch {
@@ -109,7 +115,8 @@ func permissionForRequest(method, fullPath string) string {
 		return "robot:read"
 	case strings.HasPrefix(path, "/robot"):
 		return "robot:write"
-	case strings.HasPrefix(path, "/eino-agent"), strings.HasPrefix(path, "/multi-agent"):
+	case strings.HasPrefix(path, "/eino-agent"), strings.HasPrefix(path, "/multi-agent"), path == "/agent-modes":
+		// 模式目录与两条对话流同属对话域：能发对话的人才能读选择器目录。
 		if strings.Contains(path, "/markdown-agents") {
 			return crudPermission(method, "agents")
 		}
