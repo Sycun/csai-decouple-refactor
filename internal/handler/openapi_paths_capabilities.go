@@ -821,8 +821,8 @@ func openAPIPathsCapabilities() map[string]interface{} {
 		"/api/plugins/install": map[string]interface{}{
 			"post": map[string]interface{}{
 				"tags":        []string{"能力插件"},
-				"summary":     "安装能力包（一键扩展）",
-				"description": "按 bundles 根目录下的包名安装能力包，安装后立即对后续请求生效，不需要重启；只能引用 <configDir>/bundles 之内的目录，越界路径返回 400；与已存在的身份冲突时返回 409 并指名当前持有者",
+				"summary":     "安装能力包（整包，或按单元挑选）",
+				"description": "按 bundles 根目录下的包名安装能力包，安装后立即对后续请求生效，不需要重启；只能引用 <configDir>/bundles 之内的目录，越界路径返回 400；与已存在的身份冲突时返回 409 并指名当前持有者。带 units 时它表达该包的期望状态：新列出的单元进表、没列出的从这个包里摘掉（文件不删），重发同一请求是幂等的；units 里的身份包不声明、或显式给了空数组，返回 400 并点名。",
 				"operationId": "installPluginBundle",
 				"requestBody": map[string]interface{}{
 					"required": true,
@@ -834,6 +834,15 @@ func openAPIPathsCapabilities() map[string]interface{} {
 									"bundle": map[string]interface{}{
 										"type":        "string",
 										"description": "bundles 根目录下的能力包名或其路径",
+									},
+									"units": map[string]interface{}{
+										"type":        "array",
+										"items":       map[string]interface{}{"type": "string"},
+										"description": "只想装入/保留的单元身份（如 skill/sink-driven-audit）。省略＝整包（跟随目录，版本升级带来的新单元照旧装入）；给出即把该包的选择对齐为这组单元",
+									},
+									"from_version": map[string]interface{}{
+										"type":        "string",
+										"description": "回滚：恢复 bundles/.previous/<id>/<version> 快照后安装",
 									},
 								},
 							},
@@ -889,8 +898,8 @@ func openAPIPathsCapabilities() map[string]interface{} {
 		"/api/plugins/units/{kind}/{name}": map[string]interface{}{
 			"delete": map[string]interface{}{
 				"tags":        []string{"能力插件"},
-				"summary":     "从能力表摘除一个扫描得到的能力单元",
-				"description": "只作用于目录扫描登记的单元；能力包拥有的单元由能力表拒绝并返回 409。不删除文件",
+				"summary":     "从包里摘掉一个能力单元（或从表里摘掉扫描所得的单元）",
+				"description": "包拥有的单元：从该包的选择里移除并回写安装记录（摘掉最后一个单元＝整包卸载）；扫描登记的单元：摘表，文件不动、重启后按目录重新登记。不删除文件",
 				"operationId": "detachPluginUnit",
 				"parameters": []map[string]interface{}{
 					{
