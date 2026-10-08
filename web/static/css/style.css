@@ -46743,6 +46743,31 @@ html[data-theme="dark"] { --tool-blocked-color: #f4bc62; }
     gap: 8px;
 }
 
+/* 按单元挑选：勾选列只占一个复选框的宽度；类型筛选与分类筛选同排；启停与摘除并排。 */
+.plugin-unit-check-cell {
+    width: 28px;
+}
+
+.plugin-selection-actions {
+    align-items: center;
+}
+
+.plugin-unit-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.plugin-filter-kinds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.plugin-chip.is-active {
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
 .plugin-table {
     width: 100%;
     border-collapse: collapse;

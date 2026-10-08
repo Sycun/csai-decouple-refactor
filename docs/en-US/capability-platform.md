@@ -317,6 +317,26 @@ one identity scheme and one live table:
   `CheckProvenance` match; `GET /api/plugins` also carries the `revocations` view (source plus
   entry counts) and each bundle's `rollbacks`. All of it is read-only: none of it changes what may
   run.
+- **Picking units one by one** (2026-10-08): a pack is a way to ship units together, not a rule that
+  they must be installed together. `POST /api/plugins/install` takes an optional `units` list (e.g.
+  `["skill/sink-driven-audit"]`) which is the **desired state** of that pack: units newly listed go
+  in, units left out leave the table, **no file is ever deleted**, and re-sending the same request
+  changes nothing. Omitted - or every unit ticked with no conflict in sight - stays the whole-pack
+  shape (the server normalises it to "follow the directory"). An unknown unit id and an explicitly
+  empty selection are refused with 400 and named, never half-installed. The install record
+  `installed_bundles.units` carries the selection (NULL = whole pack) and start-up replays exactly
+  that subset; a recorded unit the directory no longer ships narrows the row instead of warning at
+  every boot, and a row whose units are all gone is forgotten. `DELETE
+  /api/plugins/units/{kind}/{name}` no longer answers 409 for a pack-owned unit: it means "take this
+  one out of the pack's selection" (the record follows, so a restart does not bring it back), and
+  removing the last unit is performed as the uninstall it is. Only the units **arriving** in a call
+  are declared, so a reconcile no longer re-declares - and thereby stops - an MCP server or plugin
+  the operator had switched on. The unit view gained `installed` (a manifest entry is not
+  necessarily in the table) and `conflict` (who holds an identity: named, with the checkbox
+  disabled, instead of a failing click). On the page the shelf card *is* the checklist - packs that
+  were never installed default to every unit ticked, installed packs to what is installed - with
+  kind chips and a search that also matches unit names, and both the card and the confirm dialog
+  state "n to install / these to remove".
 - For MCP the missing piece was **identity**, not liveness (adding, removing, starting and
   stopping an external server was already hot). `ExternalMCPManager` now reports each server's
   real tool inventory to `internal/app/remote_capabilities.go`, which registers, replaces and

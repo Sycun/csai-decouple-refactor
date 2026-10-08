@@ -22,6 +22,7 @@ type installedFake struct {
 	rows     []store.InstalledBundle
 	allError error
 	writes   []store.InstalledBundle
+	forgot   []string
 }
 
 func (f *installedFake) All() ([]store.InstalledBundle, error) {
@@ -31,8 +32,13 @@ func (f *installedFake) All() ([]store.InstalledBundle, error) {
 	return f.rows, nil
 }
 
-func (f *installedFake) Record(bundleID, version string) error {
-	f.writes = append(f.writes, store.InstalledBundle{ID: bundleID, Version: version})
+func (f *installedFake) Record(bundleID, version string, units []string) error {
+	f.writes = append(f.writes, store.InstalledBundle{ID: bundleID, Version: version, Units: units})
+	return nil
+}
+
+func (f *installedFake) Forget(bundleID string) error {
+	f.forgot = append(f.forgot, bundleID)
 	return nil
 }
 
@@ -96,7 +102,7 @@ func TestBundlesOnDiskAreReinstalledAtBoot(t *testing.T) {
 		// pack), and the boot reports it rather than silently dropping it.
 		"ghost-pack": "1.0.0",
 	} {
-		if err := installs.Record(id, version); err != nil {
+		if err := installs.Record(id, version, nil); err != nil {
 			t.Fatalf("Record %s: %v", id, err)
 		}
 	}
@@ -240,5 +246,130 @@ func writeFileAt(t *testing.T, path, body string) {
 	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A partial install is a recorded decision like any other, so the boot path has to replay the
+// selection: install the units that were chosen and leave the rest of the manifest on the shelf.
+func TestBootReplaysARecordedUnitSelection(t *testing.T) {
+	root := t.TempDir()
+	writeFileAt(t, filepath.Join(root, "bundles", "part-pack", "roles", "半包角色.yaml"),
+		"name: 半包角色\nuser_prompt: 只装了角色\nenabled: true\n")
+	writeFileAt(t, filepath.Join(root, "bundles", "part-pack", "skills", "半包技能", "SKILL.md"),
+		"---\nname: 半包技能\n---\n\n## 步骤\n")
+	writeFileAt(t, filepath.Join(root, "bundles", "part-pack", plugin.ManifestFileName),
+		"id: part-pack\nversion: 1.0.0\nunits:\n"+
+			"  - kind: role\n    path: roles/半包角色.yaml\n"+
+			"  - kind: skill\n    path: skills/半包技能\n")
+	writeFileAt(t, filepath.Join(root, "bundles", "whole-pack", "roles", "整包角色.yaml"),
+		"name: 整包角色\nuser_prompt: 整包装的\nenabled: true\n")
+	writeFileAt(t, filepath.Join(root, "bundles", "whole-pack", "skills", "整包技能", "SKILL.md"),
+		"---\nname: 整包技能\n---\n\n## 步骤\n")
+	writeFileAt(t, filepath.Join(root, "bundles", "whole-pack", plugin.ManifestFileName),
+		"id: whole-pack\nversion: 1.0.0\nunits:\n"+
+			"  - kind: role\n    path: roles/整包角色.yaml\n"+
+			"  - kind: skill\n    path: skills/整包技能\n")
+
+	db := openBootTestDB(t)
+	installs := store.NewInstalledBundles(db)
+	if err := installs.EnsureSchema(); err != nil {
+		t.Fatalf("EnsureSchema: %v", err)
+	}
+	if err := installs.Record("part-pack", "1.0.0", []string{"role/半包角色"}); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+	if err := installs.Record("whole-pack", "1.0.0", nil); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
+
+	table := plugin.NewTable()
+	installed, refused := installBundlesFromDisk(table, filepath.Join(root, "bundles"), installs, zap.NewNop())
+	if installed != 2 || len(refused) != 0 {
+		t.Fatalf("installed=%d refused=%v", installed, refused)
+	}
+	if _, ok := table.Unit("role/半包角色"); !ok {
+		t.Fatalf("the recorded unit did not come back")
+	}
+	if _, ok := table.Unit("skill/半包技能"); ok {
+		t.Fatalf("a unit that was not selected became live at boot")
+	}
+	// A row without a selection keeps meaning the whole pack: its units install as a set.
+	if _, ok := table.Unit("role/整包角色"); !ok {
+		t.Fatalf("the whole-pack role is missing")
+	}
+	if _, ok := table.Unit("skill/整包技能"); !ok {
+		t.Fatalf("the whole-pack skill is missing; nil must keep meaning every unit")
+	}
+}
+
+// The directory moves on and drops a unit the row named: what installs is what exists, and the row
+// is narrowed to match - otherwise every boot would warn about a unit nobody can supply.
+func TestBootNarrowsARecordWhoseUnitsAreGone(t *testing.T) {
+	root := t.TempDir()
+	writeFileAt(t, filepath.Join(root, "bundles", "moved-pack", "roles", "仍在角色.yaml"),
+		"name: 仍在角色\nenabled: true\n")
+	writeFileAt(t, filepath.Join(root, "bundles", "moved-pack", plugin.ManifestFileName),
+		"id: moved-pack\nversion: 1.0.0\nunits:\n  - kind: role\n    path: roles/仍在角色.yaml\n")
+
+	db := openBootTestDB(t)
+	installs := store.NewInstalledBundles(db)
+	if err := installs.EnsureSchema(); err != nil {
+		t.Fatal(err)
+	}
+	if err := installs.Record("moved-pack", "1.0.0", []string{"role/仍在角色", "skill/已移除"}); err != nil {
+		t.Fatal(err)
+	}
+	table := plugin.NewTable()
+	installed, refused := installBundlesFromDisk(table, filepath.Join(root, "bundles"), installs, zap.NewNop())
+	if installed != 1 || len(refused) != 0 {
+		t.Fatalf("installed=%d refused=%v", installed, refused)
+	}
+	if _, ok := table.Unit("role/仍在角色"); !ok {
+		t.Fatalf("the surviving unit did not install")
+	}
+	rows, err := installs.All()
+	if err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	if len(rows) != 1 || len(rows[0].Units) != 1 || rows[0].Units[0] != "role/仍在角色" {
+		t.Fatalf("the row was not narrowed to what exists: %+v", rows)
+	}
+}
+
+// A row whose units are all gone names the pack and the units and is forgotten: keeping it would
+// promise a restore that can never happen, and installing nothing under a row that says
+// "installed" is not a state this model has.
+func TestBootForgetsARecordWhoseUnitsAreAllGone(t *testing.T) {
+	root := t.TempDir()
+	writeFileAt(t, filepath.Join(root, "bundles", "empty-pack", "roles", "别的角色.yaml"),
+		"name: 别的角色\nenabled: true\n")
+	writeFileAt(t, filepath.Join(root, "bundles", "empty-pack", plugin.ManifestFileName),
+		"id: empty-pack\nversion: 1.0.0\nunits:\n  - kind: role\n    path: roles/别的角色.yaml\n")
+
+	db := openBootTestDB(t)
+	installs := store.NewInstalledBundles(db)
+	if err := installs.EnsureSchema(); err != nil {
+		t.Fatal(err)
+	}
+	if err := installs.Record("empty-pack", "1.0.0", []string{"skill/已移除"}); err != nil {
+		t.Fatal(err)
+	}
+	table := plugin.NewTable()
+	installed, refused := installBundlesFromDisk(table, filepath.Join(root, "bundles"), installs, zap.NewNop())
+	if installed != 0 {
+		t.Fatalf("installed=%d, want nothing", installed)
+	}
+	if len(refused) != 1 || !strings.Contains(refused[0], "skill/已移除") {
+		t.Fatalf("the refusal does not name the missing unit: %v", refused)
+	}
+	if _, ok := table.Unit("role/别的角色"); ok {
+		t.Fatalf("a unit nobody selected became live because the row could not be honoured")
+	}
+	rows, err := installs.All()
+	if err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("the unusable row survived: %+v", rows)
 	}
 }

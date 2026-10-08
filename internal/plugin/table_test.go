@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -75,6 +76,21 @@ func installSample(t *testing.T, table *Table, id, version string) *Bundle {
 
 // TestInstallTakesEffectWithoutAProcessRestart is the whole point of the package: four
 // different kinds of capability become readable from one table the moment a bundle lands.
+// resolveSample builds a bundle from a fixture directory without installing it, for the tests whose
+// subject is the install call itself.
+func resolveSample(t *testing.T, id, version string) *Bundle {
+	t.Helper()
+	m, err := LoadManifestDir(sampleBundleDir(t, id, version))
+	if err != nil {
+		t.Fatalf("LoadManifestDir: %v", err)
+	}
+	b, err := m.Resolve()
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	return b
+}
+
 func TestInstallTakesEffectWithoutAProcessRestart(t *testing.T) {
 	table := NewTable()
 	if got := table.Units(KindRole); len(got) != 0 {
@@ -486,5 +502,127 @@ func TestDriftedReportsAnEditedSource(t *testing.T) {
 	got = table.Drifted()
 	if len(got) != 1 || !strings.Contains(got[0], "unreadable") {
 		t.Fatalf("deleted role not reported as drift: %v", got)
+	}
+}
+
+// Installing a subset is what makes "a pack ships units together" not mean "they must go in
+// together". The manifest stays whole - the console lists a pack's units from it, including the
+// ones that were not taken - while the table holds only the chosen ones.
+func TestInstallBundleSelectionInstallsOnlyTheNamedUnits(t *testing.T) {
+	table := NewTable()
+	dir := sampleBundleDir(t, "picked", "1.0.0")
+	m, err := LoadManifestDir(dir)
+	if err != nil {
+		t.Fatalf("LoadManifestDir: %v", err)
+	}
+	b, err := m.Resolve()
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if len(b.Units) < 4 {
+		t.Fatalf("fixture too small: %d units", len(b.Units))
+	}
+	want := []string{"role/picked-lead", "skill/picked-triage"}
+	if err := table.InstallBundleSelection(b, want); err != nil {
+		t.Fatalf("InstallBundleSelection: %v", err)
+	}
+	if got := len(table.Units(KindRole)) + len(table.Units(KindSkill)) + len(table.Units(KindTool)) + len(table.Units(KindAgent)) + len(table.Units(KindMode)) + len(table.Units(KindPlugin)); got != len(want) {
+		t.Fatalf("table holds %d units, want the %d selected ones", got, len(want))
+	}
+	for _, id := range want {
+		if _, ok := table.Unit(id); !ok {
+			t.Fatalf("%s was not installed", id)
+		}
+	}
+	if _, ok := table.Unit("tool/picked-scan"); ok {
+		t.Fatalf("an unselected unit was installed")
+	}
+	// The bundle entry keeps the full manifest: it is where the console reads "what else does this
+	// pack offer", and a copy narrowed at install time would leave no way to add the rest later.
+	full, ok := table.Bundle("picked")
+	if !ok {
+		t.Fatalf("the pack is not installed")
+	}
+	if len(full.Units) != len(b.Units) {
+		t.Fatalf("the installed pack lost manifest units: %d, want %d", len(full.Units), len(b.Units))
+	}
+	// And the per-unit state is readable from the table, which is what the console marks choices by.
+	recorded := table.RecordedUnits("picked")
+	if len(recorded) != len(want) {
+		t.Fatalf("RecordedUnits = %v, want the two selected", recorded)
+	}
+}
+
+func TestInstallBundleSelectionRefusesUnknownAndEmptySelections(t *testing.T) {
+	table := NewTable()
+	b := resolveSample(t, "guarded", "1.0.0")
+	if err := table.InstallBundleSelection(b, []string{"role/guarded-lead", "skill/不存在"}); err == nil {
+		t.Fatalf("an unknown unit id was accepted; the install would report success over a subset")
+	} else if !strings.Contains(err.Error(), "skill/不存在") {
+		t.Fatalf("the refusal does not name the unit: %v", err)
+	}
+	if err := table.InstallBundleSelection(b, nil); err == nil {
+		t.Fatalf("an empty selection was accepted; that state is an uninstall, not an install of nothing")
+	}
+	// Nothing was published by either refusal: the running set is exactly what it was.
+	if _, ok := table.Unit("role/guarded-lead"); ok {
+		t.Fatalf("a refused selection changed the table")
+	}
+}
+
+// Re-sending a narrower selection is the ordinary way to take one unit back out: the same call both
+// installs and uninstalls, and the pack itself stays installed.
+func TestInstallBundleSelectionReplacesThePreviousSelection(t *testing.T) {
+	table := NewTable()
+	b := installSample(t, table, "narrowed", "1.0.0")
+	if err := table.InstallBundleSelection(b, []string{"role/narrowed-lead", "agent/narrowed", "skill/narrowed-triage"}); err != nil {
+		t.Fatalf("first selection: %v", err)
+	}
+	if err := table.InstallBundleSelection(b, []string{"skill/narrowed-triage"}); err != nil {
+		t.Fatalf("second selection: %v", err)
+	}
+	if _, ok := table.Unit("role/narrowed-lead"); ok {
+		t.Fatalf("a unit that left the selection stayed in the table")
+	}
+	if _, ok := table.Unit("skill/narrowed-triage"); !ok {
+		t.Fatalf("the selected unit is missing")
+	}
+	if _, ok := table.Bundle("narrowed"); !ok {
+		t.Fatalf("narrowing the selection uninstalled the pack")
+	}
+	// A selection that stays the same is a no-op, not an error: the endpoint is idempotent.
+	if err := table.InstallBundleSelection(b, []string{"skill/narrowed-triage"}); err != nil {
+		t.Fatalf("re-sending the same selection: %v", err)
+	}
+	if _, ok := table.Unit("skill/narrowed-triage"); !ok {
+		t.Fatalf("idempotent re-install dropped the unit")
+	}
+}
+
+// Selecting the units an identity conflict lives in must be refused by name - and the units that
+// were not selected must not be able to refuse the install of the ones that were.
+func TestInstallBundleSelectionChecksIdentityOnlyForChosenUnits(t *testing.T) {
+	table := NewTable()
+	b := resolveSample(t, "clash", "1.0.0")
+	squatter, err := NewUnit(KindTool, "clash-scan", "/shipped/tools/clash-scan.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := table.PutLocal(squatter); err != nil {
+		t.Fatalf("PutLocal: %v", err)
+	}
+	if err := table.InstallBundleSelection(b, []string{"role/clash-lead"}); err != nil {
+		t.Fatalf("a conflict on an unselected unit refused the install: %v", err)
+	}
+	if _, ok := table.Unit("role/clash-lead"); !ok {
+		t.Fatalf("the selected unit was not installed")
+	}
+	err = table.InstallBundleSelection(b, []string{"role/clash-lead", "tool/clash-scan"})
+	if err == nil {
+		t.Fatalf("installing over an identity somebody else holds was accepted")
+	}
+	var conflict *ErrConflict
+	if !errors.As(err, &conflict) || conflict.ID != "tool/clash-scan" {
+		t.Fatalf("refusal is not a named conflict: %v", err)
 	}
 }

@@ -52,7 +52,7 @@ func TestPersistedSwitchesAreReappliedAtBoot(t *testing.T) {
 	if err := installs.EnsureSchema(); err != nil {
 		t.Fatalf("EnsureSchema (installs): %v", err)
 	}
-	if err := installs.Record("switch-pack", "1.0.0"); err != nil {
+	if err := installs.Record("switch-pack", "1.0.0", nil); err != nil {
 		t.Fatalf("Record: %v", err)
 	}
 

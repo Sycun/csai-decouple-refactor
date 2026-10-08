@@ -91,6 +91,44 @@ changelog: |
 
 每条规则都有测试，`internal/plugin/table_test.go`。
 
+## 按单元挑选（包不必整包装）
+
+一个包是"把单元一起发货"的方式，不是"必须一起装"的规则：想要包里那一个技能，不必连角色、
+子代理和配方一起收下。装什么由安装请求的 `units` 决定，而它表达的是**期望状态**：
+
+```json
+POST /api/plugins/install
+{"bundle": "source-code-audit", "units": ["skill/sink-driven-audit", "role/源码与供应链审计"]}
+```
+
+- **对齐语义**：新列出的进表、没列出的从这个包里摘掉（别的包一个都不动）、**文件一个都不删**；
+  同一个请求重发是幂等的。省略 `units`，或勾满且没有冲突项，仍是整包形状——服务端把它归一成
+  "跟随目录"，好让版本升级带来的新单元照旧装入。
+- **拒绝并指名**：`units` 里出现包不声明的身份、或显式给了空数组，一律 400 并点名；
+  不装成"你要的子集"，也不把空选择读成"卸载"（那是卸载接口的事）。
+- **跨重启保留**：安装记录 `installed_bundles.units` 承载这次选择（NULL = 整包），
+  启动重放按记录的子集装入。记录里有、包里已经没有的单元按现有单元收窄并写回（写明缺了谁）；
+  记录里的单元全都不存在，则清掉该记录——"装了，但一个单元都没有"不是这套模型里的状态。
+- **逐单元摘除**：`DELETE /api/plugins/units/{kind}/{name}` 对包拥有的单元不再 409，
+  那是"从该包的选择里移除"（回写记录，重启不会复活）；摘掉最后一个单元等于整包卸载，
+  按卸载执行并回收记录。内置目录扫出来的单元走原来的语义（摘表；文件在，重启后重新登记）。
+- **只声明新到的**：一次调用里只有**新进表**的 mcp/plugin 单元会被写进活层并置为停用，
+  所以"给这个包补一个技能"不会把运维者已经启动的某个服务器重新声明成停用。
+  卸载只回收真正在表里的单元，没装过的单元不会产生幻影移除。
+- **两个新字段**（`GET /api/plugins`、`GET /api/plugins/available` 的单元视图）：
+  `installed`——清单里的未必在表里（部分安装让"声明"与"已装"分家）；
+  `conflict`——身份被别人占着时点名持有者，控制台据此禁用那个勾选框，而不是让点击失败。
+
+门禁：`TestInstallBundleSelection*`（子集只装命名单元 / 未知与空选择拒绝 / 重发替换上一次选择 /
+冲突只对选中单元判定）、`TestInstalledBundlesRoundTripKeepsUnitSelection` 与迁移测试
+（旧库补列、NULL 与显式清单互不混淆）、`TestBootReplaysARecordedUnitSelection` /
+`TestBootNarrowsARecordWhoseUnitsAreGone` / `TestBootForgetsARecordWhoseUnitsAreAllGone`、
+`TestPluginInstallInstallsAChosenSubsetOfAPack`（含"未选中的 tool 单元不触发工具层重建"）、
+`TestPluginReconcileKeepsAnAlreadyInstalledServerDeclared`、
+`TestPluginUninstallAfterAPartialInstallOnlyUnwindsWhatWasInstalled`、
+`TestPluginUnitDetachNarrowsAPackSelection`（摘到最后一个＝卸载）、
+`TestAvailableCatalogueNamesAConflictingHolder`。
+
 ## 升级、回滚与快照（`bundles/.previous/`）
 
 - **升级是可见的**：目录版本 ≠ 已装版本时，卡片给出「已装 vX → 目录 vY」与单元级差异
@@ -319,24 +357,30 @@ enabled: true          # 读得到，但装包时不生效——开关是单元�
 
 | 方法 | 路径 | 作用 |
 |---|---|---|
-| GET | `/api/plugins` | 已装包 + 独立单元 + `generation` + `drift` + 每单元的 `served` |
-| GET | `/api/plugins/available` | 能力包目录里**可安装**的包（含每个包声明的单元与是否已装） |
-| POST | `/api/plugins/install` | `{"bundle":"<包名>"}` → 装入并立刻生效 |
+| GET | `/api/plugins` | 已装包 + 独立单元 + `generation` + `drift` + 每单元的 `served`/`installed` |
+| GET | `/api/plugins/available` | 能力包目录里**可安装**的包（含每个包声明的单元、`installed` 与 `conflict`） |
+| POST | `/api/plugins/install` | `{"bundle":"<包名>"}` 整包；带 `"units":["role/x","skill/y"]` 则按选择对齐（见「按单元挑选」） |
 | DELETE | `/api/plugins/bundles/{id}` | 卸载（只摘表，不删文件） |
 | POST | `/api/plugins/units/{kind}/{name}/enabled` | 启停单个单元 |
-| DELETE | `/api/plugins/units/{kind}/{name}` | 摘掉一个**扫描得到**的单元（包拥有的会 409） |
+| DELETE | `/api/plugins/units/{kind}/{name}` | 从包里摘掉一个单元（最后一个＝整包卸载）；扫描所得的单元摘表 |
 
 `identity` 里带斜杠（`role/CTF`），所以路由拆成 `:kind/:name` 两段 —— 单段会被 gin 在匹配前
 就解掉转义而命中不到。
 
 ## 前端页面
 
-「平台管理 → 能力包」（`web/static/js/plugins.js`）就是这张表的界面：可安装的包一排「安装」按钮，
-已装的包列出每个单元并带 `已生效 / 未生效` 标记（未生效的原因放在悬浮提示里），
-启停与卸载都在同一页完成。**这一页是点出来的，不是推出来的**：真机点验抓到过两个单测抓不到的缺陷 ——
+「平台管理 → 能力包」（`web/static/js/plugins.js`）就是这张表的界面，「能力货架」标签页上每张包卡
+就是**一张勾选表**：勾了什么就发什么（全选 / 清空 / 安装 n/m），已装的包也留在架上——那张卡就是
+"调整选择"的入口，补装或减装都在同一处完成，默认勾选是"未装过的包全勾、已装的包按已装勾"。
+类型 chips（角色 / 子代理 / 技能 / 工具配方 / MCP / 对话模式 / 插件）与搜索框（同时匹配单元名）
+用来在十几个包里找到"那一个技能"；身份被别人占着的单元点名持有者并禁用勾选；确认框与卡片都写明
+"将新装 n 个 / 将移除 …"。「已安装」标签页只列真正在表里的单元，带 `已生效 / 未生效` 标记
+（未生效的原因放在悬浮提示里）、逐单元「摘除」与整包「卸载」，并提示包内还有多少个单元未装入、
+到哪里补装。**这一页是点出来的，不是推出来的**：真机点验抓到过两个单测抓不到的缺陷 ——
 调一个页面上并不存在的 toast 助手（安装其实成功了，界面却写「安装失败」），
 以及启停按钮把三个参数当成一个 JSON 数组发出去（服务端收到 `/units/tool,semgrep,false/undefined/enabled`）。
-所以 `plugins-ui.test.cjs` 现在**执行**渲染出来的 `onclick` 文本，而不是只解析它。
+所以 `plugins-ui.test.cjs` 现在**执行**渲染出来的 `onclick` 文本，而不是只解析它——
+按单元挑选取的用例（勾选决定请求体、空选择不可装、勾满＝整包形状、摘除、类型筛选）同样如此。
 
 两点不装作已完成：
 

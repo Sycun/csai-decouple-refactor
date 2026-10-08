@@ -152,8 +152,63 @@ func (e *ErrConflict) Error() string {
 // been checked, so a bundle that conflicts halfway through leaves the running set exactly
 // as it was.
 func (t *Table) InstallBundle(b *Bundle) error {
+	return t.installBundle(b, nil)
+}
+
+// InstallBundleSelection installs only the named units of a bundle.
+//
+// This is the "pick what you want out of the pack" path: a pack is a way to ship units together,
+// not a rule that they must go in together, so an operator who wants one skill should not have to
+// take a role, three agents and a recipe with it. Ownership does not change - the units still
+// belong to the bundle and are still removed with it - only membership does.
+//
+// The selection must name units the bundle actually declares; anything else is refused before the
+// snapshot is touched, because a name that matches nothing would otherwise install "everything
+// except what you asked for" while reporting success. An empty selection is refused too: that state
+// is an uninstall, and it has its own call.
+func (t *Table) InstallBundleSelection(b *Bundle, ids []string) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("bundle %q: 单元选择为空（要全部装入请用整包安装；要卸载请用卸载）", b.ID)
+	}
+	return t.installBundle(b, ids)
+}
+
+// installBundle is the one writer both entry points go through, so a change to the all-or-nothing
+// rule or the same-id replacement cannot apply to one of them and not the other. A nil selection
+// means "every unit the manifest declares"; a non-nil one is checked against the manifest first.
+func (t *Table) installBundle(b *Bundle, ids []string) error {
 	if err := b.Validate(); err != nil {
 		return err
+	}
+	selected := b.Units
+	if ids != nil {
+		byID := make(map[string]Unit, len(b.Units))
+		for _, u := range b.Units {
+			byID[u.ID] = u
+		}
+		var unknown []string
+		selected = make([]Unit, 0, len(ids))
+		seen := map[string]bool{}
+		for _, raw := range ids {
+			id := strings.TrimSpace(raw)
+			if id == "" || seen[id] {
+				continue
+			}
+			u, ok := byID[id]
+			if !ok {
+				unknown = append(unknown, id)
+				continue
+			}
+			seen[id] = true
+			selected = append(selected, u)
+		}
+		if len(unknown) > 0 {
+			sort.Strings(unknown)
+			return fmt.Errorf("bundle %q 不声明这些单元：%s", b.ID, strings.Join(unknown, "、"))
+		}
+		if len(selected) == 0 {
+			return fmt.Errorf("bundle %q: 单元选择为空（要全部装入请用整包安装；要卸载请用卸载）", b.ID)
+		}
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -161,25 +216,43 @@ func (t *Table) InstallBundle(b *Bundle) error {
 	cur := t.cur.Load()
 	next := cloneSnapshot(cur)
 
-	// Drop this bundle's old units first: an upgrade that renames or removes a role must
-	// actually remove it, not leave the previous version installed alongside.
+	// Drop this bundle's old units first: an upgrade that renames, removes - or simply no longer
+	// selects - a unit must actually remove it, not leave the previous version installed alongside.
 	for id, u := range next.units {
 		if u.Bundle == b.ID {
 			delete(next.units, id)
 		}
 	}
 
-	for _, u := range b.Units {
+	for _, u := range selected {
 		if prev, ok := next.units[u.ID]; ok && prev.Bundle != b.ID {
 			return &ErrConflict{ID: u.ID, Owner: prev.Bundle, Incoming: b.ID}
 		}
 		next.units[u.ID] = u
 	}
 
+	// The bundle keeps its full manifest even when only part of it went in: the manifest is what the
+	// console lists the pack's units from, and a copy that had already forgotten the unselected ones
+	// would leave the operator no way to add them later.
 	next.bundles[b.ID] = b
 	next.gen = cur.gen + 1
 	t.cur.Store(next)
 	return nil
+}
+
+// RecordedUnits lists the units of one bundle that are actually in the table, sorted. Callers that
+// have to state what a selection currently is (the install record, the console's "n of m") read it
+// from here rather than from the manifest, which also lists what was never installed.
+func (t *Table) RecordedUnits(bundleID string) []Unit {
+	snap := t.cur.Load()
+	var out []Unit
+	for _, u := range snap.units {
+		if u.Bundle == bundleID {
+			out = append(out, u)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 // UninstallBundle detaches every unit the bundle installed and nothing else.

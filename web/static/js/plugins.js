@@ -15,6 +15,15 @@ let pluginConsoleCatalog = null;
 let pluginConsoleBusy = false;
 // 筛选词留在模块级：一次变更会整页重渲染，输入框重建后仍要显示同一个词。
 let pluginConsoleFilter = '';
+// The operator's pending unit choices, keyed "<pack>|<unit>". Module-level for the same reason the
+// filter word is: a re-render rebuilds every checkbox, and what the operator ticked has to survive
+// that. Keyed by identity rather than by row position so a card that moves cannot carry one pack's
+// choice onto another's unit. Cleared on every successful fetch: once the server has answered, the
+// installed/not-installed facts in it are the truth and a stale tick would contradict them.
+let pluginUnitChoices = {};
+// Kind filter for the unit rows ("skill" shows only skill rows). Kept separate from the text filter
+// so "只看技能" and a search word can be combined.
+let pluginKindFilter = '';
 // 当前标签（可安装 / 已安装）同样留在模块级：变更后的重渲染要落回用户点开的那一页。
 let pluginConsoleTab = 'available';
 
@@ -55,6 +64,10 @@ async function fetchPluginConsole() {
         }
         pluginConsoleState = await stateResp.json();
         pluginConsoleCatalog = await catalogResp.json();
+        // The fresh answer is the truth about which units are installed; a tick left over from
+        // before the mutation would draw a checkbox that disagrees with the table it was just
+        // read from.
+        pluginUnitChoices = {};
         renderPluginConsole();
     } catch (err) {
         listEl.innerHTML = '<div class="empty-state">' +
@@ -89,7 +102,9 @@ function renderPluginConsole() {
 
     const parts = [];
     parts.push(renderPluginSummary(state));
-    parts.push(renderPluginFilterBar(catalog));
+    // The bar carries an id so a filter keystroke can repaint it (the active kind chip changes)
+    // without rebuilding the text input and dropping the caret mid-word.
+    parts.push('<div id="plugin-filter-bar">' + renderPluginFilterBar(catalog) + '</div>');
 
     const sections = pluginSectionsHtml();
     // 行为对齐系统设置：两个列表是标签，点哪个显示哪个，默认停在「可安装」。
@@ -128,25 +143,26 @@ function pluginSectionsHtml() {
     const catalogById = new Map(catalog.map(b => [b.id, b]));
 
     const visibleCatalog = catalog.filter(pluginMatchesFilter);
-    const installables = visibleCatalog.filter(b => {
-        const installed = installedById.get(b.id);
-        return !installed || packVersionDiffers(b, installed);
-    });
-    const availableHtml = installables.length
-        ? installables.map(b => renderPluginAvailableCard(b, installedById.get(b.id))).join('')
-        : '<div class="empty-state">' + escapeHtml(pluginConsoleFilter ? pluginsT('filterEmpty') : pluginsT('nothingAvailable')) + '</div>';
+    // 货架列的是目录里的一切：未装的包是"可安装"，已装的包是"可调整选择"（补装、减装、勾到只剩
+    // 一个单元都在同一张卡上完成）。旧的过滤把已装的包从这里藏起来，于是"想从包里再补一个技能"
+    // 没有任何入口——按单元挑的前提是那张卡一直看得见。
+    const availableHtml = visibleCatalog.length
+        ? visibleCatalog.map(b => renderPluginAvailableCard(b, installedById.get(b.id))).join('')
+        : '<div class="empty-state">' + escapeHtml(pluginConsoleFilter || pluginKindFilter ? pluginsT('filterEmpty') : pluginsT('nothingAvailable')) + '</div>';
 
     const visibleInstalled = (state.bundles || []).filter(pluginMatchesFilter);
     const installedHtml = visibleInstalled.length
         ? visibleInstalled.map(b => renderPluginInstalledCard(b, catalogById.get(b.id))).join('')
-        : '<div class="empty-state">' + escapeHtml(pluginConsoleFilter ? pluginsT('filterEmpty') : pluginsT('nothingInstalled')) + '</div>';
+        : '<div class="empty-state">' + escapeHtml(pluginConsoleFilter || pluginKindFilter ? pluginsT('filterEmpty') : pluginsT('nothingInstalled')) + '</div>';
 
     return { available: availableHtml, installed: installedHtml };
 }
 
-function pluginMatchesFilter(pack) {
-    if (!pluginConsoleFilter) return true;
-    if (!pack) return false;
+// The canonical kind order, so the filter chips read the same way as the bundle kinds do
+// everywhere else (roles, agents, skills, recipes, MCP, modes, plugins).
+const pluginKindOrder = ['role', 'agent', 'skill', 'tool', 'mcp', 'mode', 'plugin'];
+
+function packMatchesText(pack) {
     const hay = [
         pack.id, pack.name, pack.description, pack.author,
         (pack.categories || []).join(' '),
@@ -154,43 +170,101 @@ function pluginMatchesFilter(pack) {
     return hay.indexOf(pluginConsoleFilter.toLowerCase()) >= 0;
 }
 
+function unitMatchesText(unit) {
+    const hay = [unit.name, unit.id, unit.kind, unitKindLabel(unit.kind)]
+        .filter(Boolean).join(' ').toLowerCase();
+    return hay.indexOf(pluginConsoleFilter.toLowerCase()) >= 0;
+}
+
+// pluginMatchesFilter decides whether a card is listed at all: the kind filter needs something to
+// show inside it, and the word has to match the pack or one of its units - typing a skill's name
+// should find the pack that ships it, not only the pack whose title happens to contain the word.
+function pluginMatchesFilter(pack) {
+    if (!pack) return false;
+    if (pluginKindFilter && !(pack.units || []).some(u => u.kind === pluginKindFilter)) return false;
+    if (!pluginConsoleFilter) return true;
+    if (packMatchesText(pack)) return true;
+    return (pack.units || []).some(unitMatchesText);
+}
+
+// pluginVisibleUnits narrows the rows inside a card. A word that matched the pack keeps every row
+// (the operator is looking for the pack); a word that matched a unit keeps only those rows, so the
+// one skill it names is not buried under the rest of the manifest.
+function pluginVisibleUnits(pack) {
+    const units = (pack && pack.units) || [];
+    const kindOk = u => !pluginKindFilter || u.kind === pluginKindFilter;
+    if (!pluginConsoleFilter || packMatchesText(pack)) return units.filter(kindOk);
+    return units.filter(u => kindOk(u) && unitMatchesText(u));
+}
+
 // applyPluginFilter is the input handler: it re-renders only the two list sections, so the text
 // field keeps its focus and the operator can keep typing.
 function applyPluginFilter(query) {
     pluginConsoleFilter = String(query == null ? '' : query).trim();
-    const listEl = document.getElementById('plugin-console');
-    if (!listEl || !pluginConsoleState) return;
-    const sections = pluginSectionsHtml();
-    const available = document.getElementById('plugin-section-available');
-    const installed = document.getElementById('plugin-section-installed');
-    if (available) {
-        available.innerHTML = sections.available;
-    }
-    if (installed) {
-        installed.innerHTML = sections.installed;
-    }
-    if (typeof window.applyRBACToUI === 'function') {
-        window.applyRBACToUI(listEl);
-    }
+    rerenderPluginLists();
 }
 
 function renderPluginFilterBar(catalog) {
     const categories = [];
+    const kinds = [];
     catalog.forEach(b => {
         (b && b.categories ? b.categories : []).forEach(c => {
             if (categories.indexOf(c) < 0) categories.push(c);
         });
+        ((b && b.units) || []).forEach(u => {
+            if (kinds.indexOf(u.kind) < 0) kinds.push(u.kind);
+        });
     });
+    kinds.sort((a, b) => pluginKindOrder.indexOf(a) - pluginKindOrder.indexOf(b));
     const chips = categories.length
         ? '<div class="plugin-filter-categories">' + categories.map(c =>
             '<button type="button" class="plugin-chip plugin-filter-chip" onclick="applyPluginFilter(' +
             escapeAttr(JSON.stringify(c)) + ')">' + escapeHtml(c) + '</button>').join('') + '</div>'
         : '';
+    // The kind chips are the "just show me the skills" control: with a shelf of seventeen packs,
+    // finding the one skill among them is the difference between browsing and searching.
+    const kindChips = kinds.length
+        ? '<div class="plugin-filter-kinds">' +
+            renderPluginKindChip('', pluginsT('kindFilterAll')) +
+            kinds.map(k => renderPluginKindChip(k, unitKindLabel(k))).join('') + '</div>'
+        : '';
     return '<div class="plugin-filter">' +
         '<input id="plugin-filter-input" type="text" class="plugin-filter-input" placeholder="' +
         escapeAttr(pluginsT('filterPlaceholder')) + '" value="' + escapeAttr(pluginConsoleFilter) +
         '" oninput="applyPluginFilter(this.value)">' +
-        chips + '</div>';
+        chips + kindChips + '</div>';
+}
+
+function renderPluginKindChip(kind, label) {
+    const active = pluginKindFilter === kind;
+    return '<button type="button" class="plugin-chip plugin-filter-chip' + (active ? ' is-active' : '') +
+        '" onclick="applyPluginKindFilter(' + escapeAttr(JSON.stringify(kind)) + ')">' +
+        escapeHtml(label) + '</button>';
+}
+
+// applyPluginKindFilter re-renders the two lists exactly as the text filter does, so a chip click
+// and a keystroke cannot produce two different pictures of the same state.
+function applyPluginKindFilter(kind) {
+    pluginKindFilter = String(kind == null ? '' : kind);
+    rerenderPluginLists();
+}
+
+// rerenderPluginLists repaints the filter bar and both lists from the state already in memory. No
+// request goes out: what changed is what is on screen, not what is installed.
+function rerenderPluginLists() {
+    const listEl = document.getElementById('plugin-console');
+    if (!listEl || !pluginConsoleState) return;
+    const catalog = (pluginConsoleCatalog && pluginConsoleCatalog.bundles) || [];
+    const bar = document.getElementById('plugin-filter-bar');
+    if (bar) bar.innerHTML = renderPluginFilterBar(catalog);
+    const sections = pluginSectionsHtml();
+    const available = document.getElementById('plugin-section-available');
+    const installed = document.getElementById('plugin-section-installed');
+    if (available) available.innerHTML = sections.available;
+    if (installed) installed.innerHTML = sections.installed;
+    if (typeof window.applyRBACToUI === 'function') {
+        window.applyRBACToUI(listEl);
+    }
 }
 
 function renderPluginSummary(state) {
@@ -292,9 +366,12 @@ function pluginRuntimeNote(unit) {
 // published it (executable kinds), and whether the block list currently refuses it. Rendered only
 // for pack-owned units - the built-in tables are ours and a digest chip on all 142 rows would bury
 // the third-party ones this exists for.
-function unitTrustNote(unit) {
+function unitTrustNote(unit, opts) {
     const chips = [];
-    if (unit.bundle && unit.digest) {
+    // 货架卡上未装的单元不显示摘要：那是"装进来的那份内容"的指纹，在装之前它不指向任何东西，
+    // 却会在每一行上占一格。已装卡与已装单元照旧（那里正是要对照审阅的地方）。
+    const showDigest = !opts || opts.digest !== false;
+    if (showDigest && unit.bundle && unit.digest) {
         chips.push('<code class="plugin-chip plugin-chip-digest" title="' + escapeAttr(pluginsT('digestTitle')) +
             '">' + escapeHtml(String(unit.digest).slice(0, 12)) + '…</code>');
     }
@@ -425,12 +502,105 @@ function diffSummaryText(diff) {
     return bits.join(' · ');
 }
 
+// ---- unit choices ------------------------------------------------------------------------
+//
+// A pack is a way to ship units together, not a rule that they must be installed together, so the
+// shelf card is a checklist: tick the units this machine should have and the same button installs,
+// adds or takes away exactly that set. The server treats the ticked list as the desired state, so
+// re-sending an unchanged selection changes nothing.
+
+function unitChoiceKey(packID, unitID) { return packID + '|' + unitID; }
+
+// unitChoiceIsOn is what a checkbox shows when the operator has not touched it. A pack nobody
+// installed defaults to every unit ticked, so a plain click still means "the whole pack"; a pack
+// that is installed defaults to the units the server says are in the table, so opening the card
+// cannot quietly widen what is installed.
+function unitChoiceIsOn(pack, unit, installed) {
+    const key = unitChoiceKey(pack.id, unit.id);
+    if (Object.prototype.hasOwnProperty.call(pluginUnitChoices, key)) {
+        return !!pluginUnitChoices[key];
+    }
+    return installed ? unit.installed !== false : true;
+}
+
+// chosenUnitIDs is the selection this card would send. A unit whose identity another holder owns is
+// never included: installing it is refused by name, so ticking it for the operator would only
+// produce a failure they did not ask for.
+function chosenUnitIDs(pack, installed) {
+    const out = [];
+    (pack.units || []).forEach(u => {
+        if (u.conflict) return;
+        if (unitChoiceIsOn(pack, u, installed)) out.push(u.id);
+    });
+    return out;
+}
+
+function installedUnitIDs(installedPack) {
+    return ((installedPack && installedPack.units) || [])
+        .filter(u => u.installed !== false)
+        .map(u => u.id);
+}
+
+function selectableUnitCount(pack) {
+    return (pack.units || []).filter(u => !u.conflict).length;
+}
+
+function unitConflictNote(unit) {
+    if (!unit.conflict) return '';
+    return '<div class="plugin-unit-trust"><span class="plugin-chip plugin-chip-danger">' +
+        escapeHtml(unit.conflict) + '</span></div>';
+}
+
+function renderUnitChoiceTable(pack, visible, chosen) {
+    if (!visible.length) {
+        return '<div class="empty-state">' + escapeHtml(pluginsT('filterEmpty')) + '</div>';
+    }
+    const rows = visible.map(u => {
+        const on = !!u.conflict || chosen.indexOf(u.id) >= 0;
+        const box = '<input type="checkbox" class="plugin-unit-check"' + (on ? ' checked' : '') +
+            (u.conflict ? ' disabled' : '') + ' data-require-permission="plugins:install" ' +
+            'onchange="togglePluginUnitChoice(' + escapeAttr(JSON.stringify(pack.id)) + ',' +
+            escapeAttr(JSON.stringify(u.id)) + ',this.checked)">';
+        return '<tr' + (u.conflict ? ' class="plugin-unit-conflict"' : '') + '>' +
+            '<td class="plugin-unit-check-cell">' + box + '</td>' +
+            '<td><span class="plugin-kind">' + escapeHtml(unitKindLabel(u.kind)) + '</span>' +
+            pluginRuntimeNote(u) + '</td>' +
+            '<td><code>' + escapeHtml(u.name) + '</code>' + unitTrustNote(u, { digest: !!u.installed }) + unitConflictNote(u) + '</td>' +
+            '<td>' + (u.installed
+                ? '<span class="plugin-chip plugin-chip-served">' + escapeHtml(pluginsT('unitInstalled')) + '</span>'
+                : '<span class="plugin-chip">' + escapeHtml(pluginsT('unitNotInstalled')) + '</span>') + '</td>' +
+            '</tr>';
+    }).join('');
+    return '<table class="plugin-table plugin-choice-table"><thead><tr>' +
+        '<th class="plugin-unit-check-cell"></th>' +
+        '<th>' + escapeHtml(pluginsT('colKind')) + '</th>' +
+        '<th>' + escapeHtml(pluginsT('colName')) + '</th>' +
+        '<th>' + escapeHtml(pluginsT('colUnitState')) + '</th>' +
+        '</tr></thead><tbody>' + rows + '</tbody></table>';
+}
+
+// selectionDeltaLine states what clicking would change, before it is clicked: the units that would
+// arrive and the ones that would leave. A reconcile that quietly drops a unit is the one outcome
+// the console must not hide.
+function selectionDeltaLine(toAdd, toDrop) {
+    if (!toAdd.length && !toDrop.length) return '';
+    const bits = [];
+    if (toAdd.length) bits.push(pluginsT('willInstallPrefix') + toAdd.length + pluginsT('willInstallSuffix'));
+    if (toDrop.length) bits.push(pluginsT('willRemovePrefix') + toDrop.join('、') + pluginsT('willRemoveSuffix'));
+    return '<p class="plugin-card-meta-line">' + escapeHtml(bits.join(' · ')) + '</p>';
+}
+
 function renderPluginAvailableCard(pack, installed) {
     const units = pack.units || [];
     const kinds = {};
     units.forEach(u => { kinds[u.kind] = (kinds[u.kind] || 0) + 1; });
     const kindText = Object.keys(kinds).sort().map(k => unitKindLabel(k) + ' × ' + kinds[k]).join('、');
     const upgrade = packVersionDiffers(pack, installed);
+    const chosen = chosenUnitIDs(pack, installed);
+    const live = installedUnitIDs(installed);
+    const count = selectableUnitCount(pack);
+    const toAdd = chosen.filter(id => live.indexOf(id) < 0);
+    const toDrop = live.filter(id => chosen.indexOf(id) < 0);
     const broken = pack.error
         ? '<div class="plugin-error">' + escapeHtml(pluginsT('manifestBroken')) + ': ' +
           escapeHtml(pack.error) + '</div>'
@@ -450,6 +620,12 @@ function renderPluginAvailableCard(pack, installed) {
             diffLine = '<p class="plugin-card-meta-line">' + escapeHtml(pluginsT('differencesLabel') + text) + '</p>';
         }
     }
+    const installedState = installed
+        ? '<p class="plugin-card-meta-line">' + escapeHtml(
+            pluginsT('installedUnitsPrefix') + live.length + '/' + units.length) + '</p>'
+        : '';
+    const buttonLabel = (installed ? (upgrade ? pluginsT('upgrade') : pluginsT('applySelection'))
+        : pluginsT('install')) + ' (' + chosen.length + '/' + count + ')';
     return '<article class="plugin-card' + (pack.error ? ' plugin-card-broken' : '') + '">' +
         '<header class="plugin-card-head">' +
         '<h4>' + escapeHtml(pack.name || pack.id) + '</h4>' +
@@ -459,23 +635,42 @@ function renderPluginAvailableCard(pack, installed) {
         renderCatalogueMeta(pack) +
         (kindText ? '<p class="plugin-card-units">' + escapeHtml(kindText) + '</p>' : '') +
         renderPreviewBadges(pack.preview) +
-        upgradeLine + diffLine +
+        upgradeLine + diffLine + installedState +
         broken +
         (pack.error ? '' :
-            '<div class="plugin-card-actions">' +
+            renderUnitChoiceTable(pack, pluginVisibleUnits(pack), chosen) +
+            selectionDeltaLine(toAdd, toDrop) +
+            '<div class="plugin-card-actions plugin-selection-actions">' +
+            '<button class="btn-secondary btn-sm" data-require-permission="plugins:install" ' +
+            'onclick="selectAllPluginUnits(' + installArg + ',true)">' +
+            escapeHtml(pluginsT('selectAll')) + '</button>' +
+            '<button class="btn-secondary btn-sm" data-require-permission="plugins:install" ' +
+            'onclick="selectAllPluginUnits(' + installArg + ',false)">' +
+            escapeHtml(pluginsT('selectNone')) + '</button>' +
             '<button class="btn-primary btn-sm" data-require-permission="plugins:install" ' +
+            (chosen.length ? '' : 'disabled title="' + escapeAttr(pluginsT('selectAtLeastOne')) + '" ') +
             'onclick="installPluginBundle(' + installArg + ')">' +
-            escapeHtml(upgrade ? pluginsT('upgrade') : pluginsT('install')) + '</button></div>') +
+            escapeHtml(buttonLabel) + '</button></div>') +
         '</article>';
 }
 
 function renderPluginInstalledCard(pack, catalogEntry) {
-    const units = pack.units || [];
+    const all = pack.units || [];
+    // What is live, not what the manifest declares: since a pack can be installed partially, the
+    // bundle view lists units that were never taken. Showing them here would read as "installed".
+    const live = all.filter(u => u.installed !== false);
+    const units = pluginVisibleUnits(pack).filter(u => u.installed !== false);
+    const missing = all.length - live.length;
     const idArg = escapeAttr(JSON.stringify(pack.id));
     const upgradable = packVersionDiffers(catalogEntry, pack);
     const upgradeChip = upgradable
         ? '<p class="plugin-card-meta-line">' + escapeHtml(
             pluginsT('upgradeAvailablePrefix') + catalogEntry.version + pluginsT('upgradeAvailableSuffix')) + '</p>'
+        : '';
+    // 未装进来的单元不是没装过包，而是这个包还能补装：指路到货架那张卡，那里勾选。
+    const missingChip = missing > 0
+        ? '<p class="plugin-card-meta-line">' + escapeHtml(
+            pluginsT('unitsLeftOutPrefix') + missing + pluginsT('unitsLeftOutSuffix')) + '</p>'
         : '';
     // The installed version itself is not a rollback target: restoring what is already live would
     // rewrite the directory for no observable change.
@@ -488,29 +683,46 @@ function renderPluginInstalledCard(pack, catalogEntry) {
                 'onclick="rollbackPluginBundle(' + idArg + ',' + escapeAttr(JSON.stringify(v)) + ')">' +
                 escapeHtml(pluginsT('rollbackButton') + ' v' + v) + '</button>').join('') + '</div>';
     }
+    const rowsHtml = units.length
+        ? '<table class="plugin-table"><thead><tr>' +
+          '<th>' + escapeHtml(pluginsT('colKind')) + '</th>' +
+          '<th>' + escapeHtml(pluginsT('colName')) + '</th>' +
+          '<th>' + escapeHtml(pluginsT('colServed')) + '</th>' +
+          '<th>' + escapeHtml(pluginsT('colEnabled')) + '</th>' +
+          '</tr></thead><tbody>' +
+          units.map(u => '<tr>' + unitCells(u) + '<td>' +
+              '<div class="plugin-unit-actions">' + unitSwitch(u) + unitRemoveButton(u) + '</div></td></tr>').join('') +
+          '</tbody></table>'
+        : '<div class="empty-state">' + escapeHtml(pluginsT('filterEmpty')) + '</div>';
     return '<article class="plugin-card plugin-card-installed">' +
         '<header class="plugin-card-head">' +
         '<h4>' + escapeHtml(pack.name || pack.id) + '</h4>' +
         '<span class="plugin-card-meta">' + escapeHtml(pack.id) +
-        (pack.version ? ' · v' + escapeHtml(pack.version) : '') + '</span>' +
+        (pack.version ? ' · v' + escapeHtml(pack.version) : '') +
+        (pack.unitsTotal ? ' · ' + escapeHtml(pluginsT('installedUnitsPrefix') + live.length + '/' + pack.unitsTotal) : '') +
+        '</span>' +
         '</header>' +
         (pack.description ? '<p class="plugin-card-desc">' + escapeHtml(pack.description) + '</p>' : '') +
         renderCatalogueMeta(pack) +
-        upgradeChip +
-        '<table class="plugin-table"><thead><tr>' +
-        '<th>' + escapeHtml(pluginsT('colKind')) + '</th>' +
-        '<th>' + escapeHtml(pluginsT('colName')) + '</th>' +
-        '<th>' + escapeHtml(pluginsT('colServed')) + '</th>' +
-        '<th>' + escapeHtml(pluginsT('colEnabled')) + '</th>' +
-        '</tr></thead><tbody>' +
-        units.map(u => '<tr>' + unitCells(u) + '<td>' + unitSwitch(u) + '</td></tr>').join('') +
-        '</tbody></table>' +
+        upgradeChip + missingChip +
+        rowsHtml +
         rollbackHtml +
         '<div class="plugin-card-actions">' +
         '<button class="btn-secondary btn-sm" data-require-permission="plugins:install" ' +
         'onclick="unplugPluginBundle(' + idArg + ')">' +
         escapeHtml(pluginsT('unplug')) + '</button></div>' +
         '</article>';
+}
+
+// unitRemoveButton takes one unit out of an installed pack. It is the per-unit counterpart of the
+// unplug button and is deliberately worded as a removal from the pack, not a delete: the file stays
+// where it is and the card in the shelf can put the unit back.
+function unitRemoveButton(unit) {
+    const args = [unit.kind, unit.name]
+        .map(v => escapeAttr(JSON.stringify(v))).join(',');
+    return '<button class="btn-secondary btn-sm" data-require-permission="plugins:install" ' +
+        'onclick="removePluginUnit(' + args + ')">' +
+        escapeHtml(pluginsT('removeUnit')) + '</button>';
 }
 
 // renderRevocations shows what the client-enforced block list currently holds. Counts and the
@@ -544,7 +756,7 @@ function renderRevocations(revo) {
 // installConfirmText is the pre-click answer to "what will this do": units, classes, live code,
 // and the recipes that will be refused at call time. Every count comes from the preview the
 // server read off the pack's own files.
-function installConfirmText(pack, installed) {
+function installConfirmText(pack, installed, chosen) {
     const upgrade = packVersionDiffers(pack, installed);
     const lines = [];
     lines.push((upgrade ? pluginsT('confirmUpgradeHead') : pluginsT('confirmInstallHead')) +
@@ -553,6 +765,16 @@ function installConfirmText(pack, installed) {
         lines.push(pluginsT('confirmUpgradePrefix') + 'v' + installed.version + ' → v' + pack.version);
         const text = diffSummaryText(unitDiff(installed.units, pack.units));
         if (text) lines.push(pluginsT('differencesLabel') + text);
+    }
+    // 整包的选择不必再复述一遍"本次选择 3/3"；只有已经装过（这次是在调整）或者选的是子集时，
+    // 这句话才是新信息。
+    if (chosen && (installed || chosen.length !== selectableUnitCount(pack))) {
+        lines.push(pluginsT('confirmSelectionPrefix') + chosen.length + '/' + selectableUnitCount(pack) +
+            pluginsT('confirmSelectionSuffix'));
+        // A reconcile can take units away; naming them in the dialog is the difference between
+        // "install" and "install, minus something you forgot about".
+        const toDrop = installedUnitIDs(installed).filter(id => chosen.indexOf(id) < 0);
+        if (toDrop.length) lines.push(pluginsT('willRemovePrefix') + toDrop.join('、') + pluginsT('willRemoveSuffix'));
     }
     const preview = pack.preview || {};
     const classes = preview.classes || {};
@@ -599,12 +821,35 @@ async function runPluginRequest(method, url, body) {
 // of having to find the card that moved down the page. Counts come from the response's own bundle
 // view, so the sentence is the server's, not a guess from what the click asked for.
 function unitSummaryText(bundle) {
-    const units = (bundle && bundle.units) || [];
+    // 只数装进去的：包视图列的是清单，部分安装时未选中的单元也在里面，数上它们等于把"装了 2 个"
+    // 说成"装了 5 个"。
+    const units = ((bundle && bundle.units) || []).filter(u => u.installed !== false);
     if (!units.length) return '';
     const kinds = {};
     units.forEach(u => { kinds[u.kind] = (kinds[u.kind] || 0) + 1; });
     const text = Object.keys(kinds).sort().map(k => unitKindLabel(k) + ' × ' + kinds[k]).join('、');
     return text ? ' · ' + text : '';
+}
+
+// togglePluginUnitChoice is a checkbox handler: it records the tick and repaints the lists. No
+// request goes out - nothing about the machine has changed yet, and the click that does change it
+// is the install button.
+function togglePluginUnitChoice(packID, unitID, checked) {
+    pluginUnitChoices[unitChoiceKey(packID, unitID)] = !!checked;
+    rerenderPluginLists();
+}
+
+// selectAllPluginUnits is the "整包" / "全不选" pair. Conflicting units are skipped: they cannot be
+// installed, so a select-all that ticked them would only produce a failure.
+function selectAllPluginUnits(packID, on) {
+    const pack = ((pluginConsoleCatalog && pluginConsoleCatalog.bundles) || [])
+        .filter(b => b.id === packID)[0];
+    if (!pack) return;
+    (pack.units || []).forEach(u => {
+        if (u.conflict) return;
+        pluginUnitChoices[unitChoiceKey(packID, u.id)] = !!on;
+    });
+    rerenderPluginLists();
 }
 
 async function installPluginBundle(bundleId) {
@@ -613,22 +858,69 @@ async function installPluginBundle(bundleId) {
     const installed = pluginConsoleState &&
         (pluginConsoleState.bundles || []).filter(b => b.id === bundleId)[0];
     const upgrade = packVersionDiffers(pack, installed);
+    const chosen = pack ? chosenUnitIDs(pack, installed) : [];
+    if (pack && !chosen.length) {
+        notify(pluginsT('selectAtLeastOne'), 'error');
+        return;
+    }
     // Installing always asks first. Without catalogue data there is no preview to show, but
     // skipping the dialog would make "no information" look like "nothing to tell" - the same lie
     // the served flag exists to prevent.
     const text = pack
-        ? installConfirmText(pack, installed)
+        ? installConfirmText(pack, installed, chosen)
         : pluginsT('confirmInstallHead') + bundleId + pluginsT('confirmInstallTail');
     if (!window.confirm(text)) return;
     await withPluginBusy(async () => {
-        const data = await runPluginRequest('POST', '/api/plugins/install', { bundle: bundleId });
-        const base = upgrade
-            ? pluginsT('upgradeDone')
-            : (data.tools_rebuilt ? pluginsT('installWithTools') : pluginsT('installPlain'));
+        const body = { bundle: bundleId };
+        // 勾选随请求一起走，但"勾满且没有冲突项"时退回不带 units 的旧形状：那正是整包请求，
+        // 服务端也会把它记成"跟随目录"，少一个字段就少一种两边不一致的可能。没有目录信息时
+        // （catalog 读不到）同样退回旧形状。
+        if (pack && chosen.length && !selectionIsWholePack(pack, chosen)) body.units = chosen;
+        const data = await runPluginRequest('POST', '/api/plugins/install', body);
+        const base = upgrade ? pluginsT('upgradeDone')
+            : (installed ? pluginsT('applySelectionDone')
+                : (data.tools_rebuilt ? pluginsT('installWithTools') : pluginsT('installPlain')));
         notify(`${base} ${data.bundle && data.bundle.id ? data.bundle.id : bundleId}` +
-            `${unitSummaryText(data.bundle)}${serverNote(data)}`, 'success');
+            `${unitSummaryText(data.bundle)}${selectionDoneText(data)}${serverNote(data)}`, 'success');
         await reloadConsoleAfterMutation();
-    }, upgrade ? 'upgrade' : 'install');
+    }, upgrade ? 'upgrade' : (installed ? 'applySelection' : 'install'));
+}
+
+// selectionIsWholePack says whether the ticks cover every unit the pack declares and none of them is
+// in conflict. That is the whole-pack request, and spelling it as the absence of a selection keeps
+// the two spellings of one decision from drifting apart.
+function selectionIsWholePack(pack, chosen) {
+    const units = pack.units || [];
+    return chosen.length === units.length && selectableUnitCount(pack) === units.length;
+}
+
+// selectionDoneText states what the selection did, not just that the request succeeded: a reconcile
+// can take units out, and a toast that only says "done" would hide a unit leaving the table.
+function selectionDoneText(data) {
+    if (!data) return '';
+    const parts = [];
+    if (Array.isArray(data.units_removed) && data.units_removed.length) {
+        parts.push(pluginsT('willRemovePrefix') + data.units_removed.join('、') + pluginsT('willRemoveSuffix'));
+    }
+    if (typeof data.units_installed === 'number' && typeof data.units_total === 'number') {
+        parts.push(pluginsT('installedUnitsPrefix') + data.units_installed + '/' + data.units_total);
+    }
+    return parts.length ? ' · ' + parts.join(' · ') : '';
+}
+
+// removePluginUnit takes one unit out of a pack. The file stays on disk: the unit leaves the
+// capability table and the install record, and the shelf card is where it can be put back. Removing
+// the pack's last unit is performed as the uninstall it is, and the response says so.
+async function removePluginUnit(kind, name) {
+    const text = pluginsT('confirmRemoveUnitHead') + kind + '/' + name + pluginsT('confirmRemoveUnitTail');
+    if (!window.confirm(text)) return;
+    await withPluginBusy(async () => {
+        const data = await runPluginRequest('DELETE',
+            '/api/plugins/units/' + encodeURIComponent(kind) + '/' + encodeURIComponent(name));
+        const tail = data.bundle_uninstalled ? ' · ' + pluginsT('removeUnitUninstalled') : '';
+        notify(pluginsT('removeUnitDone') + tail + serverNote(data), 'success');
+        await reloadConsoleAfterMutation();
+    }, 'removeUnit');
 }
 
 // rollbackPluginBundle restores a snapshot the install path kept. The confirm names both the pack
@@ -713,4 +1005,8 @@ window.unplugPluginBundle = unplugPluginBundle;
 window.setPluginUnitEnabled = setPluginUnitEnabled;
 window.rollbackPluginBundle = rollbackPluginBundle;
 window.applyPluginFilter = applyPluginFilter;
+window.applyPluginKindFilter = applyPluginKindFilter;
+window.togglePluginUnitChoice = togglePluginUnitChoice;
+window.selectAllPluginUnits = selectAllPluginUnits;
+window.removePluginUnit = removePluginUnit;
 window.switchPluginTab = switchPluginTab;

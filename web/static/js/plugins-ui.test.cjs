@@ -137,7 +137,13 @@ function harness(state, catalog, options = {}) {
     vm.runInContext(source, sandbox);
     vm.runInContext(`
         this.api = { loadPluginConsole, installPluginBundle, unplugPluginBundle, setPluginUnitEnabled,
-                     rollbackPluginBundle, applyPluginFilter, switchPluginTab };
+                     rollbackPluginBundle, applyPluginFilter, switchPluginTab, togglePluginUnitChoice,
+                     selectAllPluginUnits, applyPluginKindFilter,
+                     chosenFor: packID => {
+                         const pack = (pluginConsoleCatalog.bundles || []).filter(b => b.id === packID)[0];
+                         const installed = (pluginConsoleState.bundles || []).filter(b => b.id === packID)[0];
+                         return chosenUnitIDs(pack, installed);
+                     } };
         this.pluginConsoleBusyReset = () => { pluginConsoleBusy = false; };
         this.pluginTabState = () => pluginConsoleTab;
     `, sandbox);
@@ -186,7 +192,14 @@ const sampleState = {
 const sampleCatalog = {
     bundlesRoot: '/srv/csai/bundles',
     bundles: [
-        { id: 'mobile-app-security', name: '移动端安全测试角色包', version: '1.0.0', installed: true, units: [{ kind: 'role', name: '移动端安全测试' }] },
+        {
+            id: 'mobile-app-security', name: '移动端安全测试角色包', version: '1.0.0', installed: true,
+            units: [
+                { id: 'role/移动端安全测试', kind: 'role', name: '移动端安全测试', installed: true, digest: '1111222233334444' },
+                { id: 'mcp/示例', kind: 'mcp', name: '示例', installed: false, digest: '5555666677778888' },
+                { id: 'plugin/acme', kind: 'plugin', name: 'acme', installed: false, digest: 'aaaa000011112222', publisher: 'acme' },
+            ],
+        },
         {
             id: 'ai-app-redteam',
             name: 'AI 应用红队角色包',
@@ -200,9 +213,9 @@ const sampleCatalog = {
             categories: ['红队', 'AI'],
             preview: { classes: { readonly: 1, destructive: 1 }, liveCodeUnits: 1, undeclaredUnits: 1, problemUnits: 0, units: [] },
             units: [
-                { id: 'role/AI应用红队测试', kind: 'role', name: 'AI应用红队测试', digest: 'aaa' },
-                { id: 'skill/llm-output-boundaries', kind: 'skill', name: 'llm-output-boundaries', digest: 'bbb' },
-                { id: 'tool/loose', kind: 'tool', name: 'loose', digest: 'ccc' },
+                { id: 'role/AI应用红队测试', kind: 'role', name: 'AI应用红队测试', installed: false, digest: 'aaa' },
+                { id: 'skill/llm-output-boundaries', kind: 'skill', name: 'llm-output-boundaries', installed: false, digest: 'bbb' },
+                { id: 'tool/loose', kind: 'tool', name: 'loose', installed: false, digest: 'ccc' },
             ],
         },
         {
@@ -214,9 +227,9 @@ const sampleCatalog = {
             categories: ['报告'],
             preview: { classes: { mutating: 1 }, liveCodeUnits: 0, undeclaredUnits: 0, problemUnits: 0, units: [] },
             units: [
-                { id: 'role/报告撰写', kind: 'role', name: '报告撰写', digest: 'newnewnewnew' },
-                { id: 'tool/pandoc', kind: 'tool', name: 'pandoc', digest: 'tooltooltool' },
-                { id: 'agent/report-analyst', kind: 'agent', name: 'report-analyst', digest: 'agentagentagent' },
+                { id: 'role/报告撰写', kind: 'role', name: '报告撰写', installed: true, digest: 'newnewnewnew' },
+                { id: 'tool/pandoc', kind: 'tool', name: 'pandoc', installed: true, digest: 'tooltooltool' },
+                { id: 'agent/report-analyst', kind: 'agent', name: 'report-analyst', installed: true, digest: 'agentagentagent' },
             ],
         },
         { id: 'broken-pack', name: 'broken-pack', version: '', installed: false, error: '解析配置文件失败', units: [] },
@@ -232,10 +245,13 @@ test('the console renders served state honestly and keeps the reason visible', a
     assert.match(html, /未生效/);
     assert.match(html, /title="外部 MCP 管理器已不再持有本包对该名称的声明（&quot;lab-server&quot; 由配置文件提供）"/,
         'the reason must travel with the not-live mark, quoted so it cannot close the attribute');
-    assert.match(html, /可安装的能力包/);
+    assert.match(html, /能力货架/);
     assert.match(html, /AI 应用红队角色包/);
-    assert.ok(!/onclick="installPluginBundle\(&quot;mobile-app-security/.test(html),
-        'an installed pack at the same version must not be offered for install again');
+    assert.match(html, /onclick="installPluginBundle\(&quot;mobile-app-security&quot;\)"/,
+        'an installed pack stays on the shelf: that card is where its selection is adjusted');
+    assert.match(html, /更新选择 \(1\/3\)/,
+        'the installed card must state the current selection and offer to change it');
+    assert.match(html, /未装/, 'units that are not installed must be marked as such');
     assert.match(html, /installPluginBundle\(&quot;ai-app-redteam&quot;\)/);
     assert.match(html, /清单不可用/);
     assert.ok(!/installPluginBundle\(&quot;broken-pack&quot;\)/.test(html),
@@ -583,7 +599,7 @@ test('the two lists are tabs: only the open one shows, and it survives re-render
     assert.match(before, /id="plugin-section-available" role="tabpanel" aria-labelledby="plugin-tab-available">/);
     assert.match(before, /id="plugin-section-installed" role="tabpanel" aria-labelledby="plugin-tab-installed" hidden>/,
         'the installed list must start hidden');
-    assert.match(before, /可安装的能力包/);
+    assert.match(before, /能力货架/);
     assert.match(before, /已安装的能力包/);
 
     // 跑一遍真实 onclick 文本，而不是直接调函数：参数形状错了照样在这里现形。
@@ -605,4 +621,88 @@ test('the two lists are tabs: only the open one shows, and it survives re-render
     const afterInstall = consoleHtml();
     assert.match(afterInstall, /class="dashboard-feed-tab is-active" role="tab" id="plugin-tab-installed"/,
         'a mutation re-render must land back on the tab the operator had open');
+});
+
+// 按单元挑选：货架卡就是一张勾选表，勾了什么就发什么，"更新选择"是同一张卡上的重发。
+test('the shelf card is a checklist: the ticks decide what the install sends', async () => {
+    const { sandbox, calls, confirms } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+
+    // 已装包默认按"已装"勾：mcp 与 plugin 两个单元没装过，因此不勾，也不会被一次点击顺手装进来。
+    assert.equal(sandbox.api.chosenFor('mobile-app-security').length, 1,
+        'an installed pack must default to what is installed, not to the whole manifest');
+
+    // 补装：这次只要 MCP 那个单元——勾上它、取消"已装的那个"，选择就只剩它一个。
+    sandbox.api.togglePluginUnitChoice('mobile-app-security', 'mcp/示例', true);
+    assert.deepEqual(Array.from(sandbox.api.chosenFor('mobile-app-security')), ['role/移动端安全测试', 'mcp/示例']);
+    sandbox.api.togglePluginUnitChoice('mobile-app-security', 'role/移动端安全测试', false);
+    assert.deepEqual(Array.from(sandbox.api.chosenFor('mobile-app-security')), ['mcp/示例']);
+
+    await sandbox.api.installPluginBundle('mobile-app-security');
+    const body = JSON.parse(calls.find(c => c.method === 'POST' && c.url === '/api/plugins/install').body);
+    assert.deepEqual(body, { bundle: 'mobile-app-security', units: ['mcp/示例'] },
+        'the ticked units must travel with the request');
+    assert.match(confirms[0], /本次选择 1\/3 个单元/);
+    assert.match(confirms[0], /将移除 role\/移动端安全测试/,
+        'the dialog must name the unit that would leave, not just the ones arriving');
+});
+
+// 全不选不是"装个空的"：按钮禁用，兜底调用也被挡在请求之前。
+test('an empty selection cannot be installed', async () => {
+    const { sandbox, calls, toasts } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+    sandbox.api.selectAllPluginUnits('ai-app-redteam', false);
+    assert.deepEqual(Array.from(sandbox.api.chosenFor('ai-app-redteam')), []);
+    await sandbox.api.installPluginBundle('ai-app-redteam');
+    assert.equal(calls.filter(c => c.method === 'POST' && c.url === '/api/plugins/install').length, 0,
+        'nothing may be sent for an empty selection');
+    assert.equal(toasts[toasts.length - 1].type, 'error');
+});
+
+// 全选回到整包形状：勾满且无冲突项时不带 units，服务端也按"跟随目录"记录。
+test('selecting every unit sends the whole-pack shape', async () => {
+    const { sandbox, calls } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+    sandbox.api.selectAllPluginUnits('ai-app-redteam', true);
+    await sandbox.api.installPluginBundle('ai-app-redteam');
+    const body = JSON.parse(calls.find(c => c.method === 'POST' && c.url === '/api/plugins/install').body);
+    assert.deepEqual(body, { bundle: 'ai-app-redteam' });
+});
+
+// 已装卡上的"摘除"走单元端点，并跑一遍真实 onclick 文本（形状错了在这里现形）。
+test('removing one unit from an installed pack runs the emitted handler', async () => {
+    const { sandbox, calls, toasts } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+    const html = sandbox.document.getElementById('plugin-console').innerHTML;
+    const decoded = s => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    const removes = (html.match(/onclick="removePluginUnit\([^"]*\)"/g) || [])
+        .map(a => decoded(a.slice('onclick="'.length, -1)));
+    assert.ok(removes.length >= 3, 'the installed card must offer a per-unit removal, got ' + removes.length);
+    assert.equal(removes[0], 'removePluginUnit("role","移动端安全测试")');
+    sandbox.pluginConsoleBusyReset();
+    vm.runInContext(removes[0], sandbox);
+    for (let i = 0; i < 6; i++) await new Promise(r => setImmediate(r));
+    const deletes = calls.filter(c => c.method === 'DELETE' && c.url.startsWith('/api/plugins/units/'));
+    assert.equal(deletes.length, 1, JSON.stringify(calls.map(c => c.method + ' ' + c.url)));
+    assert.equal(deletes[0].url, '/api/plugins/units/role/%E7%A7%BB%E5%8A%A8%E7%AB%AF%E5%AE%89%E5%85%A8%E6%B5%8B%E8%AF%95');
+    assert.match(toasts[toasts.length - 1].msg, /已从能力包的选择中移除/);
+});
+
+// 类型筛选是"只给我看技能"的那个开关：跑真实 onclick 文本，只看剩下的行。
+test('the kind filter narrows the rows to one kind', async () => {
+    const { sandbox } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+    const decoded = s => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    // 整个控制台的 HTML 在这里是字符串（harness 不解析 DOM），筛选条与两张列表都在其中。
+    const chips = (sandbox.document.getElementById('plugin-console').innerHTML
+        .match(/onclick="applyPluginKindFilter\([^"]*\)"/g) || []).map(a => decoded(a.slice('onclick="'.length, -1)));
+    const skillChip = chips.find(a => a.includes('"skill"'));
+    assert.ok(skillChip, 'the kind chips must include one per kind present: ' + chips.join(' | '));
+    vm.runInContext(skillChip, sandbox);
+    // 局部重渲染写进的是各面板节点，harness 不解析 DOM，所以整页重绘一次再读那张字符串。
+    sandbox.window.renderPluginConsole();
+    const html = sandbox.document.getElementById('plugin-console').innerHTML;
+    assert.match(html, /llm-output-boundaries/, 'the skill row must survive the filter');
+    assert.ok(!/报告撰写/.test(html), 'rows of other kinds must be filtered out');
+    assert.ok(!/移动端安全测试角色包/.test(html), 'a pack with nothing of that kind must disappear');
 });
