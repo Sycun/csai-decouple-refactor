@@ -1,7 +1,7 @@
 id: source-code-audit
 name: 源码与供应链审计角色包
 version: 1.0.0
-description: 按角色打包的一键扩展：装上"源码与供应链审计"角色、它的子代理、sink 驱动审计方法与 semgrep 配方。装完即生效，卸载即回到原状。
+description: 按角色打包的一键扩展：装上"源码与供应链审计"角色、它的子代理、sink 驱动审计方法、源码狩猎方法与 semgrep 配方。装完即生效，卸载即回到原状。
 units:
   - kind: role
     path: roles/源码与供应链审计.yaml
@@ -9,5 +9,7 @@ units:
     path: agents/sast-finding-triage.md
   - kind: skill
     path: skills/sink-driven-audit
+  - kind: skill
+    path: skills/source-code-hunting
   - kind: tool
     path: tools/semgrep.yaml

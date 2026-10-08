@@ -77,9 +77,15 @@ func TestShippedRolesScanWithTheSameIdentityAsTheLoader(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanDir: %v", err)
 	}
-	if len(units) < 13 {
-		t.Fatalf("only %d role units scanned (floor 13, measured 13 .yaml/.yml files in roles/; "+
-			"README.md is not a role): the scanner or the directory moved", len(units))
+	// The factory shape, asserted exactly: one role. Every professional role ships in a bundle and
+	// only exists after somebody installed it - a role reappearing here would undo that quietly,
+	// because the catalogue can carry the same identity.
+	if len(units) != 1 {
+		t.Fatalf("the factory roles/ directory yields %d units (%v), want exactly the default role",
+			len(units), sortedOf(nameSet(units)))
+	}
+	if !nameSet(units)["默认"] {
+		t.Fatalf("the one factory role is %v, want 默认", sortedOf(nameSet(units)))
 	}
 	if len(units) != len(nameSet(units)) {
 		// Two files claiming one identity would make the table keep whichever scanned last,
@@ -137,8 +143,14 @@ func TestShippedMarkdownAgentsScanAsTheLoaderSeesThem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanDir: %v", err)
 	}
-	if len(units) < 16 {
-		t.Fatalf("only %d agent units scanned (floor 16)", len(units))
+	// The factory shape, asserted exactly: no agents. Every orchestrator and specialist ships in a
+	// bundle (README.md in this directory is skipped by both the scanner and the loader on purpose).
+	if len(units) != 0 {
+		t.Fatalf("the factory agents/ directory yields %d units (%v), want none: every agent ships in a pack",
+			len(units), sortedOf(nameSet(units)))
+	}
+	if len(loaded.FileEntries) != 0 {
+		t.Fatalf("the agent loader sees %d factory definitions (%v), want none", len(loaded.FileEntries), loaded.FileEntries)
 	}
 	want := map[string]bool{}
 	for _, entry := range loaded.FileEntries {
@@ -173,8 +185,18 @@ func TestShippedSkillsScanAsDirectoryUnits(t *testing.T) {
 			withSkillMD++
 		}
 	}
-	if len(units) < 20 {
-		t.Fatalf("only %d skill units scanned (floor 20)", len(units))
+	// The factory shape, asserted exactly: the kept skills. The professional methods ship in
+	// bundles and only exist after an install.
+	kept := map[string]bool{
+		"pentest-agent-os":         true, // 总纲/路由：把渗透抽象成状态空间搜索
+		"pentest-blackboard":       true, // 项目黑板：跨会话 Fact 图与多代理协调
+		"pentest-output-standards": true, // 输出规范：报告模板与黑板状态总览
+		"pentest-verification":     true, // 验证铁律：confirmed 须证据、负结果也落库
+		"cyberstrike-eino-demo":    true, // 技能包格式的演示样例（带 scripts/references/assets）
+	}
+	if got := nameSet(units); !equalSets(got, kept) {
+		t.Fatalf("the factory skills/ directory yields %v, want exactly the kept set %v",
+			sortedOf(got), sortedOf(kept))
 	}
 	if len(units) != withSkillMD {
 		t.Fatalf("scanned %d skills but %d directories hold a SKILL.md", len(units), withSkillMD)
@@ -216,13 +238,14 @@ func TestEveryShippedCapabilityBecomesAnAddressableUnit(t *testing.T) {
 		}
 		total += len(units)
 	}
-	if total < 140 {
-		t.Fatalf("only %d shipped units in the table (floor 140): a directory stopped scanning", total)
+	if total < 96 {
+		t.Fatalf("only %d shipped units in the table (floor 96 = 1 role + 90 tools + 0 agents + 5 skills): "+
+			"a directory stopped scanning", total)
 	}
 	if table.Generation() == 0 {
 		t.Fatalf("installing %d units did not move the generation", total)
 	}
-	for _, id := range []string{"role/CTF", "agent/recon", "skill/attack-surface-recon"} {
+	for _, id := range []string{"role/默认"} {
 		if _, ok := table.Unit(id); !ok {
 			t.Errorf("shipped capability %s is not addressable by identity", id)
 		}
@@ -231,6 +254,26 @@ func TestEveryShippedCapabilityBecomesAnAddressableUnit(t *testing.T) {
 		t.Errorf("the shipped tree does not match its own digests: %v", got[:min(len(got), 5)])
 	}
 	t.Logf("plugin table holds %d shipped capability units across %d kinds", total, len(scans))
+}
+
+// TestFactoryTreeShipsNoProfessionalCapabilities is the negative half of the minimal-factory
+// shape: the professional roles, agents and skills are bundle content now, and only exist after
+// an install. A representative identity from each shelf reappearing in the shipped directories
+// would quietly undo that - and no count above would notice, because every count here is a floor
+// and a bundle can carry the same identity (that collision is what the catalogue test refuses).
+func TestFactoryTreeShipsNoProfessionalCapabilities(t *testing.T) {
+	root := pluginRepoRoot(t)
+	have := unitIDs(scanShippedUnits(t, root))
+	for _, id := range []string{
+		"role/CTF", "role/渗透测试", "role/后渗透测试", "role/云安全审计",
+		"agent/recon", "agent/orchestrator", "agent/penetration",
+		"skill/web-attack-methods", "skill/active-directory-attack", "skill/cloud-attack-methods",
+	} {
+		if have[id] {
+			t.Errorf("%s is back in the factory tree: professional capabilities ship in a bundle and "+
+				"must stay out until the operator installs one", id)
+		}
+	}
 }
 
 func nameSet(units []plugin.Unit) map[string]bool {

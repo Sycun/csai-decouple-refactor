@@ -1,0 +1,19 @@
+id: multi-agent-orchestration
+name: 多代理编排包
+version: 1.0.0
+description: 多代理模式的编排主代理（deep / plan_execute / supervisor）与交战流程专员（参与规划、影响与数据外泄证明、清理与回滚、报告撰写与修复建议）。不装也能跑——编排回落到内置提示；装上则恢复本产品的完整编制。
+units:
+  - kind: agent
+    path: agents/orchestrator.md
+  - kind: agent
+    path: agents/orchestrator-plan-execute.md
+  - kind: agent
+    path: agents/orchestrator-supervisor.md
+  - kind: agent
+    path: agents/engagement-planning.md
+  - kind: agent
+    path: agents/impact-exfiltration.md
+  - kind: agent
+    path: agents/cleanup-rollback.md
+  - kind: agent
+    path: agents/reporting-remediation.md

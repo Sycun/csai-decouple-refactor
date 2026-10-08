@@ -1,0 +1,17 @@
+id: recon-intel
+name: 信息收集与情报包
+version: 1.0.0
+description: 目标侦察与攻击面测绘：信息收集角色，侦察 / 情报 / 攻击面枚举专员，以及攻击面测绘与组件漏洞情报技能。装完即生效，卸载即回到原状。
+units:
+  - kind: role
+    path: roles/信息收集.yaml
+  - kind: agent
+    path: agents/recon.md
+  - kind: agent
+    path: agents/intel-collection.md
+  - kind: agent
+    path: agents/attack-surface-enumeration.md
+  - kind: skill
+    path: skills/attack-surface-recon
+  - kind: skill
+    path: skills/component-vuln-intel

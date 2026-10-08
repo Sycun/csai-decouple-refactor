@@ -8,6 +8,7 @@ import (
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/plugin"
+	"cyberstrike-ai/internal/store"
 
 	"go.uber.org/zap"
 )
@@ -35,7 +36,8 @@ func TestBootDeclaresPackServersWithoutStartingThem(t *testing.T) {
 			"  - kind: mcp\n    path: mcp/taken.yaml\n")
 
 	table := plugin.NewTable()
-	if installed, refused := installBundlesFromDisk(table, filepath.Join(root, "bundles"), zap.NewNop()); installed != 1 {
+	installs := &installedFake{rows: []store.InstalledBundle{{ID: "boot-mcp-pack", Version: "1.0.0"}}}
+	if installed, refused := installBundlesFromDisk(table, filepath.Join(root, "bundles"), installs, zap.NewNop()); installed != 1 {
 		t.Fatalf("boot installed %d packs (refused=%v), want 1", installed, refused)
 	}
 

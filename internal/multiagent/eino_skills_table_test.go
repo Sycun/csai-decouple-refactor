@@ -47,8 +47,9 @@ func repoSkillsTable(t *testing.T) *plugin.Table {
 	if err != nil {
 		t.Fatalf("ScanDir: %v", err)
 	}
-	if len(units) < 20 {
-		t.Fatalf("only %d skills scanned from the shipped directory", len(units))
+	if len(units) < 5 {
+		t.Fatalf("only %d skills scanned from the factory skills/ directory (measured 5: the kept "+
+			"discipline skills plus the format demo)", len(units))
 	}
 	for _, u := range units {
 		if err := table.PutLocal(u); err != nil {

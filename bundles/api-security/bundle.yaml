@@ -1,0 +1,7 @@
+id: api-security
+name: API 安全测试包
+version: 1.0.0
+description: API 安全测试角色：面向前后端接口的认证、授权、注入与越权测试。装完即生效，卸载即回到原状。
+units:
+  - kind: role
+    path: roles/API安全测试.yaml

@@ -39,8 +39,16 @@ type PluginHandler struct {
 	// must not be edited after install, so the console's switch had nowhere durable to go, and a
 	// restart rebuilt every bundled unit as enabled.
 	switches switchMemory
-	logger   *zap.Logger
-	audit    *audit.Service
+	// installs remembers the install decision itself. Start-up re-installs exactly the recorded
+	// packs, so without this a click would last until the next restart - and, in the other
+	// direction, a pack directory nobody chose would install itself at boot.
+	installs bundleInstallMemory
+	// trust answers where installed executable code came from and what the client-enforced block
+	// list holds. A constructor argument for the same reason as the rest: a nil here compiles and
+	// serves, and the operator simply never sees that a revoked build is still installed.
+	trust  capabilityTrust
+	logger *zap.Logger
+	audit  *audit.Service
 }
 
 // switchMemory is the part of the capability switch store the console writes to. A nil recorder is
@@ -49,6 +57,14 @@ type PluginHandler struct {
 type switchMemory interface {
 	Record(unitID, path string, enabled bool) error
 	Forget(unitIDs ...string) error
+}
+
+// bundleInstallMemory is the part of the install store the console writes to. The nil case follows
+// the same honesty rule as switchMemory: an install that cannot be recorded is a session install,
+// and the response says so instead of letting the next restart look like a random uninstall.
+type bundleInstallMemory interface {
+	Record(bundleID, version string) error
+	Forget(bundleID string) error
 }
 
 // toolLayerRebuilder is the piece of the tool layer that owns the recipe list and the MCP tool
@@ -68,10 +84,10 @@ type catalogPublisher interface {
 // SetAudit method on purpose: every other handler is wired with a setter that the assembly has
 // to remember, which is why an audit-completeness gate exists for them. Here forgetting is a
 // compile error, so the handler is also deliberately outside that gate's scope.
-func NewPluginHandler(table *plugin.Table, bundlesDir string, publisher catalogPublisher, tools toolLayerRebuilder, mcpManager MCPProvisioner, pluginProvisioner PluginProvisioner, switches switchMemory, auditSvc *audit.Service, logger *zap.Logger) *PluginHandler {
+func NewPluginHandler(table *plugin.Table, bundlesDir string, publisher catalogPublisher, tools toolLayerRebuilder, mcpManager MCPProvisioner, pluginProvisioner PluginProvisioner, switches switchMemory, installs bundleInstallMemory, trust capabilityTrust, auditSvc *audit.Service, logger *zap.Logger) *PluginHandler {
 	return &PluginHandler{
 		table: table, bundles: bundlesDir, republish: publisher, tools: tools,
-		mcp: mcpManager, plugins: pluginProvisioner, switches: switches, audit: auditSvc, logger: logger,
+		mcp: mcpManager, plugins: pluginProvisioner, switches: switches, installs: installs, trust: trust, audit: auditSvc, logger: logger,
 	}
 }
 
@@ -84,6 +100,18 @@ type unitView struct {
 	Enabled bool   `json:"enabled"`
 	Served  bool   `json:"served"`
 	Reason  string `json:"reason,omitempty"`
+	// Digest is the content fingerprint taken at install time. It travels so the console can show
+	// what is installed (short form) and diff an upgrade ("this unit's bytes change") without a
+	// second endpoint.
+	Digest string `json:"digest,omitempty"`
+	// Provenance is where a unit that ships executable code came from: the publisher and the
+	// artifact digest revocation keys on. Empty for content kinds and for a plugin unit that was
+	// never registered.
+	Publisher      string `json:"publisher,omitempty"`
+	ArtifactDigest string `json:"artifactDigest,omitempty"`
+	// Revoked marks a unit matched by the client-enforced block list (by publisher or by the
+	// digest of the build it runs).
+	Revoked bool `json:"revoked,omitempty"`
 }
 
 // servedKinds lists the kinds whose run path reads the table. Every kind is in it now: a role,
@@ -115,6 +143,7 @@ func toUnitView(u plugin.Unit) unitView {
 	return unitView{
 		ID: u.ID, Kind: string(u.Kind), Name: u.Name, Path: u.Path,
 		Bundle: u.Bundle, Enabled: u.Enabled, Served: served, Reason: reason,
+		Digest: u.Digest,
 	}
 }
 
@@ -125,6 +154,7 @@ func toUnitView(u plugin.Unit) unitView {
 // declaration of the same name (the file wins there, and the pack loses the live slot).
 func (h *PluginHandler) liveUnitView(u plugin.Unit) unitView {
 	v := toUnitView(u)
+	h.markPluginProvenance(u, &v)
 	if u.Kind == plugin.KindPlugin && v.Served {
 		v.Served, v.Reason = h.pluginServedState(u)
 		return v
@@ -150,6 +180,8 @@ func (h *PluginHandler) bundleView(b *plugin.Bundle) gin.H {
 	return gin.H{
 		"id": b.ID, "name": b.Name, "version": b.Version,
 		"description": b.Description, "dir": b.Dir, "units": units,
+		"categories": b.Categories, "author": b.Author, "homepage": b.Homepage,
+		"license": b.License, "compatibility": b.Compatibility, "changelog": b.Changelog,
 	}
 }
 
@@ -161,7 +193,11 @@ func (h *PluginHandler) GetState(c *gin.Context) {
 	}
 	bundles := make([]gin.H, 0)
 	for _, b := range h.table.Bundles() {
-		bundles = append(bundles, h.bundleView(b))
+		view := h.bundleView(b)
+		// Where this pack can be rolled back to: the snapshot versions kept under .previous from
+		// every install. Read-only, so the console can offer the choice before anything moves.
+		view["rollbacks"] = h.rollbackVersions(b.ID)
+		bundles = append(bundles, view)
 	}
 	standalone := make([]unitView, 0)
 	for _, kind := range plugin.Kinds {
@@ -180,6 +216,10 @@ func (h *PluginHandler) GetState(c *gin.Context) {
 		"servedKinds": servedKindNames(),
 		// Which plug-in processes exist right now, with the pack that shipped each one.
 		"pluginHost": h.pluginRuntimes(),
+		// The client-enforced block list as this process holds it: source, entries, and whether a
+		// list was loaded at all. A revocation the operator cannot see is a revocation they cannot
+		// explain, and this is the only read surface it has today.
+		"revocations": h.revocationView(),
 	})
 }
 
@@ -197,6 +237,11 @@ type installRequest struct {
 	// when it is inside the root. Anything else is refused: this endpoint installs files, so the
 	// set of places it can read from has to be small and explicit.
 	Bundle string `json:"bundle"`
+	// FromVersion names a snapshot under <root>/.previous/<id>/<version>: the rollback path. The
+	// request then means "restore these bytes over the pack directory, then install", which is why
+	// it shares this endpoint - the install half is identical and a second route would be a second
+	// place for the record/declaration/rebuild sequence to be forgotten.
+	FromVersion string `json:"from_version,omitempty"`
 }
 
 // Install handles POST /api/plugins/install: the one-click extend.
@@ -210,6 +255,14 @@ func (h *PluginHandler) Install(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	rolledBack := ""
+	if from := strings.TrimSpace(req.FromVersion); from != "" {
+		if err := h.restoreRollback(dir, from); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		rolledBack = from
 	}
 	bundle, err := loadBundle(dir)
 	if err != nil {
@@ -232,6 +285,13 @@ func (h *PluginHandler) Install(c *gin.Context) {
 		h.replyMutationError(c, "install", bundle.ID, err)
 		return
 	}
+	// The click is the decision the next start-up replays, so it is recorded with the pack - not
+	// inferred later from a directory happening to exist. Recorded after the table accepted the
+	// bundle: a row for an install that failed would re-install it at the next boot.
+	installRecorded, installMessage := h.rememberInstall(bundle.ID, bundle.Version)
+	// The version just installed becomes its own rollback target. Taken after the table accepted
+	// the bundle, so the copy describes what is live rather than what was merely on disk.
+	snapshotVersion, snapshotMessage := h.snapshotInstalled(bundle)
 	declared, mcpMessage := h.installMCPDeclarations(bundle)
 	pluginDeclared, pluginMessage := h.declarePluginUnits(bundle)
 	// A pack that brings a recipe or a plugin binary changes what the tool surface should hold, so
@@ -239,18 +299,36 @@ func (h *PluginHandler) Install(c *gin.Context) {
 	// surface is composed from the capability table on every rebuild.
 	report := h.republishCatalog(c, bundleHasKind(bundle, plugin.KindTool) || bundleHasKind(bundle, plugin.KindPlugin))
 	if h.audit != nil {
-		h.audit.RecordOK(c, "plugin", "bundle_install", "安装能力包", "plugin_bundle", bundle.ID, map[string]interface{}{
-			"version": bundle.Version,
-			"units":   len(bundle.Units),
-			"roles":   report.roles,
-		})
+		details := map[string]interface{}{
+			"version":  bundle.Version,
+			"units":    len(bundle.Units),
+			"roles":    report.roles,
+			"recorded": installRecorded,
+		}
+		if rolledBack != "" {
+			details["rollback_from"] = rolledBack
+		}
+		h.audit.RecordOK(c, "plugin", "bundle_install", "安装能力包", "plugin_bundle", bundle.ID, details)
 	}
 	body := mergeToolLayerReport(gin.H{
-		"message":   "能力包已安装并生效",
-		"bundle":    h.bundleView(bundle),
-		"roles":     report.roles,
-		"refreshed": report.refreshed,
+		"message":          "能力包已安装并生效",
+		"bundle":           h.bundleView(bundle),
+		"roles":            report.roles,
+		"refreshed":        report.refreshed,
+		"install_recorded": installRecorded,
 	}, report)
+	if installMessage != "" {
+		body["install_message"] = installMessage
+	}
+	if rolledBack != "" {
+		body["rolled_back_to"] = rolledBack
+	}
+	if snapshotVersion != "" {
+		body["snapshot_version"] = snapshotVersion
+	}
+	if snapshotMessage != "" {
+		body["snapshot_error"] = snapshotMessage
+	}
 	if declared > 0 || mcpMessage != "" {
 		body["mcp_declared"] = declared
 		body["mcp_started"] = false
@@ -325,17 +403,25 @@ func (h *PluginHandler) Uninstall(c *gin.Context) {
 		h.replyMutationError(c, "uninstall", id, err)
 		return
 	}
+	// The record goes with the pack: a row left behind would re-install it at the next boot, and
+	// the removal would look like it lasted one session.
+	installForgotten, installMessage := h.forgetInstall(id)
 	removed, mcpMessage := h.dropMCP(existing.Units)
 	pluginsRemoved, pluginsMessage := h.dropPluginUnits(existing.Units)
 	report := h.republishCatalog(c, wantTools)
 	if h.audit != nil {
 		h.audit.RecordOK(c, "plugin", "bundle_uninstall", "卸载能力包", "plugin_bundle", id, map[string]interface{}{
-			"roles": report.roles,
+			"roles":    report.roles,
+			"recorded": installForgotten,
 		})
 	}
 	body := mergeToolLayerReport(gin.H{
 		"message": "能力包已卸载", "id": id, "roles": report.roles, "refreshed": report.refreshed,
+		"install_forgotten": installForgotten,
 	}, report)
+	if installMessage != "" {
+		body["install_message"] = installMessage
+	}
 	if msg := h.forgetSwitches(existing.Units); msg != "" {
 		body["switch_message"] = msg
 	}
@@ -489,6 +575,32 @@ func (h *PluginHandler) forgetSwitches(units []plugin.Unit) string {
 		return fmt.Sprintf("开关记录未清理：%v", err)
 	}
 	return ""
+}
+
+// rememberInstall records the install decision itself. Unlike a unit switch this is the widening
+// direction - start-up replays exactly these rows - so a pack whose install cannot be recorded is
+// a session install, and saying so beats letting the next restart read as a random uninstall.
+func (h *PluginHandler) rememberInstall(bundleID, version string) (bool, string) {
+	if h.installs == nil {
+		return false, "安装记录未落库：装配没有传入安装记录存储，重启后本包需要重新安装"
+	}
+	if err := h.installs.Record(bundleID, version); err != nil {
+		return false, fmt.Sprintf("安装记录写入失败：%v；重启后本包需要重新安装", err)
+	}
+	return true, ""
+}
+
+// forgetInstall drops the decision together with the pack. A row nobody forgets re-installs the
+// pack at the next boot, so a failed cleanup has to name that consequence in the response.
+func (h *PluginHandler) forgetInstall(bundleID string) (bool, string) {
+	if h.installs == nil {
+		// Nothing was ever recorded through this process, so there is nothing to take back.
+		return true, ""
+	}
+	if err := h.installs.Forget(bundleID); err != nil {
+		return false, fmt.Sprintf("安装记录未清理：%v；本包会在下次启动时重新装入", err)
+	}
+	return true, ""
 }
 
 // RemoveLocalUnit handles DELETE /api/plugins/units/:kind/:name for a unit that came from a
@@ -674,12 +786,22 @@ func (h *PluginHandler) replyMutationError(c *gin.Context, op, subject string, e
 
 // availableBundle is one directory under the bundles root, whether or not it is installed.
 type availableBundle struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Version     string     `json:"version"`
-	Description string     `json:"description,omitempty"`
-	Installed   bool       `json:"installed"`
-	Units       []unitView `json:"units"`
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	Version       string     `json:"version"`
+	Description   string     `json:"description,omitempty"`
+	Categories    []string   `json:"categories,omitempty"`
+	Author        string     `json:"author,omitempty"`
+	Homepage      string     `json:"homepage,omitempty"`
+	License       string     `json:"license,omitempty"`
+	Compatibility string     `json:"compatibility,omitempty"`
+	Changelog     string     `json:"changelog,omitempty"`
+	Installed     bool       `json:"installed"`
+	Units         []unitView `json:"units"`
+	// Preview is what installing this pack would register: per-unit capability metadata, class
+	// counters and the fail-closed marks. It is computed per request from the pack's own files;
+	// an unreadable one degrades to per-unit errors rather than failing the listing.
+	Preview *bundlePreview `json:"preview,omitempty"`
 	// Error is a manifest that could not be read or resolved. It is per pack: one half-written
 	// bundle.yaml must not turn the list of "what can I install" into a 500.
 	Error string `json:"error,omitempty"`
@@ -722,6 +844,12 @@ func (h *PluginHandler) ListAvailable(c *gin.Context) {
 		item.Name = bundle.Name
 		item.Version = bundle.Version
 		item.Description = bundle.Description
+		item.Categories = bundle.Categories
+		item.Author = bundle.Author
+		item.Homepage = bundle.Homepage
+		item.License = bundle.License
+		item.Compatibility = bundle.Compatibility
+		item.Changelog = bundle.Changelog
 		if _, installed := h.table.Bundle(bundle.ID); installed {
 			item.Installed = true
 		}
@@ -731,6 +859,7 @@ func (h *PluginHandler) ListAvailable(c *gin.Context) {
 			// nothing is declared yet and an MCP row must not read as shadowed before it exists.
 			item.Units = append(item.Units, toUnitView(u))
 		}
+		item.Preview = buildBundlePreview(bundle)
 		out = append(out, item)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })

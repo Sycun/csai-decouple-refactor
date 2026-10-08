@@ -1,0 +1,11 @@
+id: forensics-reversing
+name: 数字取证与逆向包
+version: 1.0.0
+description: 数字取证与二进制分析两个角色，以及 APK/EXE/固件逆向、证书固定绕过与内存破坏链技能。装完即生效，卸载即回到原状。
+units:
+  - kind: role
+    path: roles/数字取证.yaml
+  - kind: role
+    path: roles/二进制分析.yaml
+  - kind: skill
+    path: skills/binary-mobile-reversing

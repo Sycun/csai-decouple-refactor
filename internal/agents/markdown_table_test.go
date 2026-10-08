@@ -52,32 +52,47 @@ func agentFileNames(load *MarkdownDirLoad) []string {
 }
 
 // TestLoadMarkdownAgentPathsMatchesDirectoryLoad is the parity clause for feeding the parser
-// from a file list instead of a directory scan: the shipped agents/ tree must come out the
-// same, including which file is the orchestrator and which are sub-agents.
+// from a file list instead of a directory scan: the two must agree, including which file is the
+// orchestrator and which are sub-agents.
+//
+// The subject is the catalogue (bundles/*/agents), not agents/ - the factory directory ships no
+// agent definitions any more, and a comparison over an empty tree would be the one thing this
+// test exists to refuse. Staging every pack's file into one directory is what makes the two
+// loaders comparable at all: the run path reads a flat path list, the fallback reads a directory.
 func TestLoadMarkdownAgentPathsMatchesDirectoryLoad(t *testing.T) {
-	dir := filepath.Join(moduleRootForAgents(t), "agents")
+	root := moduleRootForAgents(t)
+	sources, err := filepath.Glob(filepath.Join(root, "bundles", "*", "agents", "*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sources) < 20 {
+		t.Fatalf("the catalogue yielded %d agent files (measured 20); the comparison would be vacuous", len(sources))
+	}
+	dir := t.TempDir()
+	var paths []string
+	for _, src := range sources {
+		data, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dst := filepath.Join(dir, filepath.Base(src))
+		if err := os.WriteFile(dst, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		paths = append(paths, dst)
+	}
+
 	byDir, err := LoadMarkdownAgentsDir(dir)
 	if err != nil {
 		t.Fatalf("directory load: %v", err)
 	}
-	if len(byDir.FileEntries) < 16 {
-		t.Fatalf("the shipped agents directory yielded %d entries; the comparison would be vacuous", len(byDir.FileEntries))
+	if len(byDir.FileEntries) != len(paths) {
+		t.Fatalf("the staged directory yielded %d entries for %d files", len(byDir.FileEntries), len(paths))
 	}
 	if byDir.Orchestrator == nil {
-		t.Fatalf("expected the shipped tree to define a Deep orchestrator")
+		t.Fatalf("expected the catalogue's orchestration pack to define a Deep orchestrator")
 	}
 
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var paths []string
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".md" || e.Name() == "README.md" {
-			continue
-		}
-		paths = append(paths, filepath.Join(dir, e.Name()))
-	}
 	byPaths, err := LoadMarkdownAgentPaths(paths)
 	if err != nil {
 		t.Fatalf("paths load: %v", err)

@@ -12,6 +12,7 @@ import (
 	"cyberstrike-ai/internal/capability"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
+	"cyberstrike-ai/internal/handler"
 	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/store"
 
@@ -91,6 +92,9 @@ type capabilityRuntime struct {
 	delegate    *capability.Evaluator
 	logger      *zap.Logger
 	revocations *artifact.Revocations
+	// revocationsSource is the file the list was loaded from: what the console shows and
+	// what a refresh would re-read.
+	revocationsSource string
 	// provenance records which verified artifact each installed capability came
 	// from. It is kept outside the registry because rebuilding the recipe layer on a
 	// config reload recreates specs: stamped there, it would vanish and silently
@@ -408,9 +412,14 @@ func LoadRevocations(path string, logger *zap.Logger) error {
 	}
 	sharedCapability.mu.Lock()
 	sharedCapability.revocations = list
+	// Remember where the list came from: the console says "loaded from <path>", and that
+	// path is also what a future refresh reads. Keeping it next to the list means the two
+	// cannot drift apart.
+	sharedCapability.revocationsSource = path
 	sharedCapability.mu.Unlock()
 	if logger != nil {
 		logger.Info("capability revocation list installed",
+			zap.String("source", path),
 			zap.Int("digests", len(list.RevokedDigests())),
 			zap.Int("publishers", len(list.RevokedPublishers())))
 	}
@@ -429,6 +438,27 @@ func MergeRevocations(path string) (int, error) {
 		sharedCapability.revocations = artifact.NewRevocations()
 	}
 	return sharedCapability.revocations.Merge(next), nil
+}
+
+// ConsoleTrustProvider adapts the process-wide revocation list to the console's read-only view.
+// It is passed into the plug-in handler at assembly: the handler renders the block list next to
+// the units it applies to, and without this wiring a revoked build would still execute-but-nobody
+// would see why.
+type ConsoleTrustProvider struct{}
+
+// Revocations implements handler.capabilityTrust.
+func (ConsoleTrustProvider) Revocations() handler.RevocationView {
+	sharedCapability.mu.RLock()
+	list := sharedCapability.revocations
+	source := sharedCapability.revocationsSource
+	sharedCapability.mu.RUnlock()
+	view := handler.RevocationView{Source: source, Loaded: list != nil}
+	if list == nil {
+		return view
+	}
+	view.Digests = list.RevokedDigests()
+	view.Publishers = list.RevokedPublishers()
+	return view
 }
 
 // IsolateRevoked removes every capability whose provenance is revoked from the

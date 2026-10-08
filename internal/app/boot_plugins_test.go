@@ -59,7 +59,8 @@ func TestBootDeclaresPackPluginUnitsWithoutRunningThem(t *testing.T) {
 	pack := writePluginPack(t, root)
 
 	table := plugin.NewTable()
-	if installed, refused := installBundlesFromDisk(table, filepath.Join(root, "bundles"), zap.NewNop()); installed != 1 {
+	installs := &installedFake{rows: []store.InstalledBundle{{ID: "boot-plugin-pack", Version: "1.0.0"}}}
+	if installed, refused := installBundlesFromDisk(table, filepath.Join(root, "bundles"), installs, zap.NewNop()); installed != 1 {
 		t.Fatalf("boot installed %d packs (refused=%v), want 1", installed, refused)
 	}
 	unit, ok := table.Unit("plugin/ref")
@@ -99,14 +100,21 @@ func TestPersistedOnSwitchDoesNotRestartAPackPlugin(t *testing.T) {
 	root := t.TempDir()
 	writePluginPack(t, root)
 
-	db := openSwitchTestDB(t)
+	db := openBootTestDB(t)
 	switches := store.NewCapabilitySwitches(db)
 	if err := switches.EnsureSchema(); err != nil {
 		t.Fatal(err)
 	}
+	installs := store.NewInstalledBundles(db)
+	if err := installs.EnsureSchema(); err != nil {
+		t.Fatal(err)
+	}
+	if err := installs.Record("boot-plugin-pack", "1.0.0"); err != nil {
+		t.Fatal(err)
+	}
 
 	table := plugin.NewTable()
-	if installed, _ := installBundlesFromDisk(table, filepath.Join(root, "bundles"), zap.NewNop()); installed != 1 {
+	if installed, _ := installBundlesFromDisk(table, filepath.Join(root, "bundles"), installs, zap.NewNop()); installed != 1 {
 		t.Fatalf("installed %d packs, want 1", installed)
 	}
 	unit, _ := table.Unit("plugin/ref")

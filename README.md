@@ -341,10 +341,11 @@ CyberStrikeAI/
 ├── cmd/                 # Server, MCP stdio entrypoints, tooling
 ├── internal/            # Agent, MCP core, handlers, C2 (`internal/c2`), security executor
 ├── web/                 # Static SPA + templates
-├── tools/               # YAML tool recipes (100+ examples provided)
-├── roles/               # Role configurations (12+ predefined security testing roles)
-├── skills/              # Agent Skills dirs (SKILL.md + optional files; demo: cyberstrike-eino-demo)
-├── agents/              # Multi-agent Markdown (orchestrator.md + sub-agent *.md)
+├── tools/               # YAML tool recipes (90 shipped)
+├── roles/               # Role configs (only 默认 ships; other roles come from capability packs)
+├── skills/              # Agent Skills dirs (shipped: core discipline skills + demo cyberstrike-eino-demo)
+├── agents/              # Multi-agent Markdown dir (ships empty; agents come from capability packs)
+├── bundles/             # Capability-pack catalogue (16 domain packs; nothing is live until installed)
 ├── docs/                # Topic docs (deployment, config, security, API, knowledge base, C2, WebShell, etc.)
 ├── images/              # Docs screenshots & diagrams
 ├── config.yaml          # Runtime configuration

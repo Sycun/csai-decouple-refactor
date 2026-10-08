@@ -1,7 +1,7 @@
 id: ai-app-redteam
 name: AI 应用红队角色包
 version: 1.0.0
-description: 按角色打包的一键扩展：装上"AI 应用红队"角色、它的工具面盘点子代理与输出边界判定方法。装完即生效，卸载即回到原状。
+description: 按角色打包的一键扩展：装上"AI 应用红队"角色、它的工具面盘点子代理、输出边界判定方法与 AI/LLM 应用攻击技能。装完即生效，卸载即回到原状。
 units:
   - kind: role
     path: roles/AI应用红队测试.yaml
@@ -9,3 +9,5 @@ units:
     path: agents/llm-tool-surface.md
   - kind: skill
     path: skills/llm-output-boundaries
+  - kind: skill
+    path: skills/ai-llm-app-attack

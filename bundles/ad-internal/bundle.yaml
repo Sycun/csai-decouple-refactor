@@ -1,0 +1,17 @@
+id: ad-internal
+name: 内网与域渗透包
+version: 1.0.0
+description: 后渗透阶段的一键扩展：后渗透测试角色，横向移动 / 权限提升 / 持久化三个专员，以及 Active Directory 攻击与后渗透方法。装完即生效，卸载即回到原状。
+units:
+  - kind: role
+    path: roles/后渗透测试.yaml
+  - kind: agent
+    path: agents/lateral-movement.md
+  - kind: agent
+    path: agents/privilege-escalation.md
+  - kind: agent
+    path: agents/persistence-maintenance.md
+  - kind: skill
+    path: skills/active-directory-attack
+  - kind: skill
+    path: skills/post-exploitation

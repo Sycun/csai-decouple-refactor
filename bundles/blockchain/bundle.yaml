@@ -1,0 +1,7 @@
+id: blockchain
+name: 区块链与智能合约包
+version: 1.0.0
+description: 智能合约与链上攻击技能：重入、访问控制、预言机操纵、闪电贷、跨链桥与 RPC 暴露。装完即生效，卸载即回到原状。
+units:
+  - kind: skill
+    path: skills/blockchain-contract-attack

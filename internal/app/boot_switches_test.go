@@ -13,11 +13,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// openSwitchTestDB opens a bare SQLite file: the overlay is the store's own SQL plus the table's
-// own state, and nothing in this test needs the platform schema.
-func openSwitchTestDB(t *testing.T) *sql.DB {
+// openBootTestDB opens a bare SQLite file: the stores exercised on the boot path (switches,
+// install records) each own their own schema, and nothing in these tests needs the platform
+// database.
+func openBootTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "switches.db"))
+	db, err := sql.Open("sqlite3", filepath.Join(t.TempDir(), "boot.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,15 +43,22 @@ func TestPersistedSwitchesAreReappliedAtBoot(t *testing.T) {
 			"  - kind: skill\n    path: skills/switched-skill\n"+
 			"  - kind: mcp\n    path: mcp/switched.yaml\n")
 
-	db := openSwitchTestDB(t)
+	db := openBootTestDB(t)
 	switches := store.NewCapabilitySwitches(db)
 	if err := switches.EnsureSchema(); err != nil {
 		t.Fatalf("EnsureSchema: %v", err)
 	}
+	installs := store.NewInstalledBundles(db)
+	if err := installs.EnsureSchema(); err != nil {
+		t.Fatalf("EnsureSchema (installs): %v", err)
+	}
+	if err := installs.Record("switch-pack", "1.0.0"); err != nil {
+		t.Fatalf("Record: %v", err)
+	}
 
-	// First boot: the pack lands in the table, the operator switches two units off.
+	// First boot: the recorded pack lands in the table, the operator switches two units off.
 	table := plugin.NewTable()
-	if installed, refused := installBundlesFromDisk(table, filepath.Join(root, "bundles"), zap.NewNop()); installed != 1 {
+	if installed, refused := installBundlesFromDisk(table, filepath.Join(root, "bundles"), installs, zap.NewNop()); installed != 1 {
 		t.Fatalf("boot 1 installed %d packs (refused=%v), want 1", installed, refused)
 	}
 	for _, id := range []string{"role/开关角色", "skill/switched-skill"} {
@@ -71,7 +79,7 @@ func TestPersistedSwitchesAreReappliedAtBoot(t *testing.T) {
 
 	// Second boot: a fresh table rebuilt from the same files, then the overlay.
 	restarted := plugin.NewTable()
-	if installed, _ := installBundlesFromDisk(restarted, filepath.Join(root, "bundles"), zap.NewNop()); installed != 1 {
+	if installed, _ := installBundlesFromDisk(restarted, filepath.Join(root, "bundles"), installs, zap.NewNop()); installed != 1 {
 		t.Fatalf("boot 2 installed %d packs, want 1", installed)
 	}
 	if u, _ := restarted.Unit("role/开关角色"); !u.Enabled {
@@ -101,7 +109,7 @@ func TestPersistedSwitchesAreReappliedAtBoot(t *testing.T) {
 // what may execute.
 func TestPersistedSwitchOnNeverOverridesTheFile(t *testing.T) {
 	root := t.TempDir()
-	db := openSwitchTestDB(t)
+	db := openBootTestDB(t)
 	switches := store.NewCapabilitySwitches(db)
 	if err := switches.EnsureSchema(); err != nil {
 		t.Fatal(err)
@@ -133,7 +141,7 @@ func TestPersistedSwitchOnNeverOverridesTheFile(t *testing.T) {
 // applied: keeping them is how a later capability inherits somebody else's switch.
 func TestStaleSwitchRowsArePrunedAtBoot(t *testing.T) {
 	root := t.TempDir()
-	db := openSwitchTestDB(t)
+	db := openBootTestDB(t)
 	switches := store.NewCapabilitySwitches(db)
 	if err := switches.EnsureSchema(); err != nil {
 		t.Fatal(err)
@@ -233,7 +241,7 @@ func TestSwitchRowSurvivesADifferentAbsolutePath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	db := openSwitchTestDB(t)
+	db := openBootTestDB(t)
 	switches := store.NewCapabilitySwitches(db)
 	if err := switches.EnsureSchema(); err != nil {
 		t.Fatal(err)

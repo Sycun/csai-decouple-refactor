@@ -38,9 +38,10 @@ func scannedSkillTable(t *testing.T, skillsDir string) *plugin.Table {
 	if err != nil {
 		t.Fatalf("ScanDir: %v", err)
 	}
-	if len(units) < 20 {
-		t.Fatalf("only %d skills scanned in %s (the shipped tree has 23): a broken scan would make the "+
-			"parity assertions below vacuous", len(units), skillsDir)
+	if len(units) < 5 {
+		t.Fatalf("only %d skills scanned in %s (the factory tree keeps 5: the discipline skills plus the "+
+			"format demo; the professional methods ship in bundles and are installed on request): a "+
+			"broken scan would make the parity assertions below vacuous", len(units), skillsDir)
 	}
 	for _, u := range units {
 		if err := table.PutLocal(u); err != nil {
@@ -84,8 +85,9 @@ func TestBackendMatchesEinoBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("table List: %v", err)
 	}
-	if len(wantFM) < 20 {
-		t.Fatalf("the vendor backend only found %d skills; the comparison would be meaningless", len(wantFM))
+	if len(wantFM) < 5 {
+		t.Fatalf("the vendor backend only found %d skills (the factory tree keeps 5); the comparison "+
+			"would be meaningless", len(wantFM))
 	}
 	if len(gotFM) != len(wantFM) {
 		t.Fatalf("List cardinality differs: table %d vs eino %d", len(gotFM), len(wantFM))

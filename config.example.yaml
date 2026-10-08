@@ -328,9 +328,9 @@ multi_agent:
   sub_agent_user_context_max_runes: 0 # 子代理 task 描述中注入用户原文；0=不截断（默认），>0=总字符上限，负数=禁用
   without_general_sub_agent: false # false 时保留 Deep 内置 general-purpose 子代理
   without_write_todos: false
-  orchestrator_instruction: "" # Deep 主代理：agents/orchestrator.md（或 kind: orchestrator 的单个 .md）正文优先；正文为空时用此处；皆空则 Eino 默认
-  orchestrator_instruction_plan_execute: "" # plan_execute 主代理：agents/orchestrator-plan-execute.md 正文优先；正文为空时用此处；皆空则用内置 plan_execute 提示（不使用 Deep 的 orchestrator_instruction）
-  orchestrator_instruction_supervisor: "" # supervisor 主代理：agents/orchestrator-supervisor.md 正文优先；正文为空时用此处；皆空则用内置 supervisor 提示（transfer/exit 说明仍由运行追加；不使用 Deep 的 orchestrator_instruction）
+  orchestrator_instruction: "" # Deep 主代理：agents/orchestrator.md（可来自 agents/ 或能力包，如 multi-agent-orchestration 包；kind: orchestrator 的单个 .md 同理）正文优先；正文为空时用此处；皆空则 Eino 默认
+  orchestrator_instruction_plan_execute: "" # plan_execute 主代理：orchestrator-plan-execute.md 正文优先；正文为空时用此处；皆空则用内置 plan_execute 提示（不使用 Deep 的 orchestrator_instruction）
+  orchestrator_instruction_supervisor: "" # supervisor 主代理：orchestrator-supervisor.md 正文优先；正文为空时用此处；皆空则用内置 supervisor 提示（transfer/exit 说明仍由运行追加；不使用 Deep 的 orchestrator_instruction）
   # Eino 官方 Skills：渐进式披露 + 可选本机文件/Shell（eino-ext local backend）。Skills 目录见 skills_dir。
   eino_skills:
     disable: false # true：不注册 skill 渐进式披露中间件，也不挂本机 FS/Shell 工具；false：按下方开关加载

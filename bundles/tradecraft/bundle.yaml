@@ -1,0 +1,15 @@
+id: tradecraft
+name: 通用战术方法包
+version: 1.0.0
+description: 跨域作战方法：能力原语搜索、代理与工具自举、OPSEC 纪律、不设限原则，以及 OPSEC 与降噪专员。适用于任何方向的任务。装完即生效，卸载即回到原状。
+units:
+  - kind: skill
+    path: skills/capability-primitive-search
+  - kind: skill
+    path: skills/proxy-tool-bootstrap
+  - kind: skill
+    path: skills/redteam-opsec
+  - kind: skill
+    path: skills/unlimited-attack-scope
+  - kind: agent
+    path: agents/opsec-evasion.md
