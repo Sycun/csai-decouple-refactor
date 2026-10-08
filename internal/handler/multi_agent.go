@@ -165,6 +165,13 @@ func (h *AgentHandler) MultiAgentLoopStream(c *gin.Context) {
 	if o := strings.TrimSpace(req.Orchestration); o != "" {
 		effectiveOrch = config.NormalizeMultiAgentOrchestration(o)
 	}
+	// fail-closed：编排模式必须已被激活（多代理编排包已安装）且引擎已启用；
+	// 卸载包之后带着 deep 的请求在这里被挡住并被告知原因，而不是拿别的模式顶替。
+	if _, modeErr := checkAgentMode(h.config, effectiveOrch); modeErr != nil {
+		sendEvent("error", modeErr.Error(), nil)
+		sendEvent("done", "", nil)
+		return
+	}
 	agentMode := "eino_" + effectiveOrch
 	var decision agentfinalizer.Decision
 	var autoCancelledPendingExecutionIDs []string
@@ -462,6 +469,10 @@ func (h *AgentHandler) MultiAgentLoop(c *gin.Context) {
 	effectiveOrch := config.NormalizeMultiAgentOrchestration(h.config.MultiAgent.Orchestration)
 	if o := strings.TrimSpace(req.Orchestration); o != "" {
 		effectiveOrch = config.NormalizeMultiAgentOrchestration(o)
+	}
+	if _, modeErr := checkAgentMode(h.config, effectiveOrch); modeErr != nil {
+		respond(http.StatusBadRequest, gin.H{"error": modeErr.Error()})
+		return
 	}
 	agentMode := "eino_" + effectiveOrch
 	var decision agentfinalizer.Decision

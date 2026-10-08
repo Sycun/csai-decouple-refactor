@@ -14,6 +14,9 @@ func (deps routeDeps) registerAgentRoutes(protected *gin.RouterGroup) {
 	// Eino ADK 单代理（ChatModelAgent + Runner；不依赖 multi_agent.enabled）
 	protected.POST("/eino-agent", agentHandler.EinoSingleAgentLoop)
 	protected.POST("/eino-agent/stream", agentHandler.EinoSingleAgentLoopStream)
+	// 对话模式目录：前端选择器、WebShell 助手与机器人「模式」命令的数据源
+	// （内置单代理恒在；多代理模式随「多代理编排包」的安装出现）
+	protected.GET("/agent-modes", deps.agentModeHandler.GetAgentModes)
 	// Agent Loop 取消与任务列表
 	protected.POST("/agent-loop/cancel", agentHandler.CancelAgentLoop)
 	protected.GET("/agent-loop/tasks", agentHandler.ListAgentTasks)

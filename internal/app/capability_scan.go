@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/handler"
@@ -297,6 +298,41 @@ func declarePackPluginUnits(table *plugin.Table) (int, string) {
 		flipped++
 	}
 	return flipped, note
+}
+
+// verifyModeUnits reads every mode unit's declaration at boot and switches off the ones that do
+// not hold up; it returns how many were disabled and a note per unit.
+//
+// The install path already refuses bad declarations, but a boot replay goes through the generic
+// InstallBundle and never opens the file, and the catalog merges units by name without reading
+// them either. So this is where a swapped or doctored declaration is caught. Disabling (rather
+// than logging and leaving it live) is the fail-closed half: "不点不存在" is the rule for a mode
+// unit, and a unit whose file disagrees with its name is a mode nobody reviewed.
+func verifyModeUnits(table *plugin.Table, logger *zap.Logger) (int, []string) {
+	if table == nil {
+		return 0, nil
+	}
+	var (
+		disabled int
+		notes    []string
+	)
+	for _, u := range table.Units(plugin.KindMode) {
+		if !u.Enabled {
+			continue
+		}
+		if _, err := agentmode.ReadDeclaration(u.Path, u.Name); err != nil {
+			if _, offErr := table.SetEnabled(u.ID, false); offErr != nil {
+				notes = append(notes, fmt.Sprintf("%s: %v（停用失败: %v）", u.ID, err, offErr))
+				continue
+			}
+			disabled++
+			notes = append(notes, fmt.Sprintf("%s: %v（已停用）", u.ID, err))
+			if logger != nil {
+				logger.Warn("模式单元声明不可用，已从目录移除", zap.String("unit", u.ID), zap.Error(err))
+			}
+		}
+	}
+	return disabled, notes
 }
 
 // applyPersistedSwitches re-applies the operator's own on/off decisions after the packs have been

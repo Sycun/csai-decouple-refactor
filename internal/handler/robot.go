@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/authctx"
 	"cyberstrike-ai/internal/config"
@@ -971,40 +972,34 @@ func (h *RobotHandler) cmdSwitchRole(platform, userID, roleName string) string {
 }
 
 func robotAgentModeLabel(mode string) string {
-	switch config.NormalizeAgentMode(mode) {
-	case "deep":
-		return "Deep"
-	case "plan_execute":
-		return "Plan-Execute"
-	case "supervisor":
-		return "Supervisor"
-	default:
-		return "Eino 单代理"
-	}
+	return agentmode.Label(agentmode.ResolveWithDefault(mode, agentmode.DefaultID))
 }
 
 func parseRobotAgentMode(input string) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(input)) {
-	case "eino_single", "eino-single", "single", "单代理", "eino单代理", "eino 单代理":
-		return "eino_single", true
-	case "deep":
-		return "deep", true
-	case "plan_execute", "plan-execute", "planexecute", "pe":
-		return "plan_execute", true
-	case "supervisor", "super", "sv":
-		return "supervisor", true
-	default:
-		return "", false
-	}
+	return agentmode.Canonical(input)
 }
 
 func (h *RobotHandler) cmdModes(platform, userID string) string {
 	current := h.getAgentMode(platform, userID)
-	multiStatus := "可用"
-	if h.config == nil || !h.config.MultiAgent.Enabled {
-		multiStatus = "不可用（需在系统设置中启用 Eino 多代理）"
+	var b strings.Builder
+	b.WriteString("【对话模式】\n")
+	example := ""
+	for _, e := range agentModeEntries(h.config) {
+		status := "可用"
+		if !e.Available {
+			status = "不可用（需在系统设置中启用 Eino 多代理）"
+		}
+		fmt.Fprintf(&b, "· %s — %s\n", e.Label, status)
+		// 示例选自目录本身：包没装时 deep 不在目录里，拿它当示例会教用户一个不存在的模式。
+		if example == "" && e.ID != current {
+			example = e.ID
+		}
 	}
-	return fmt.Sprintf("【对话模式】\n· Eino 单代理 — 可用\n· Deep — %s\n· Plan-Execute — %s\n· Supervisor — %s\n\n当前模式: %s\n切换示例：模式 deep", multiStatus, multiStatus, multiStatus, robotAgentModeLabel(current))
+	fmt.Fprintf(&b, "\n当前模式: %s", robotAgentModeLabel(current))
+	if example != "" {
+		fmt.Fprintf(&b, "\n切换示例：模式 %s", example)
+	}
+	return b.String()
 }
 
 func (h *RobotHandler) cmdSwitchMode(platform, userID, input string) string {
@@ -1012,8 +1007,8 @@ func (h *RobotHandler) cmdSwitchMode(platform, userID, input string) string {
 	if !ok {
 		return fmt.Sprintf("不支持的对话模式「%s」。发送「模式」查看可用模式。", strings.TrimSpace(input))
 	}
-	if mode != "eino_single" && (h.config == nil || !h.config.MultiAgent.Enabled) {
-		return fmt.Sprintf("无法切换到 %s：请先在系统设置中启用 Eino 多代理。", robotAgentModeLabel(mode))
+	if _, err := checkAgentMode(h.config, mode); err != nil {
+		return err.Error() + "。发送「模式」查看可用模式。"
 	}
 	h.setAgentMode(platform, userID, mode)
 	return fmt.Sprintf("已切换对话模式：%s\n后续消息和新对话将使用该模式。", robotAgentModeLabel(mode))

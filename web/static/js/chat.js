@@ -136,9 +136,79 @@ const AI_CHANNEL_STORAGE_KEY = 'cyberstrike-chat-ai-channel';
 const REASONING_MODE_LS = 'cyberstrike-chat-reasoning-mode';
 const REASONING_EFFORT_LS = 'cyberstrike-chat-reasoning-effort';
 const CHAT_AI_CHANNEL_SUMMARY_NAME_MAX = 10;
-const CHAT_AGENT_MODE_EINO_SINGLE = 'eino_single';
-const CHAT_AGENT_EINO_MODES = ['deep', 'plan_execute', 'supervisor'];
-let multiAgentAPIEnabled = false;
+
+// 对话模式的目录对象：唯一数据源是后端 GET /api/agent-modes（internal/agentmode 目录）。
+// 本文件、webshell.js、tasks.js、settings.js 与模板里各自维护的模式清单/别名表/label 映射
+// 都已收进它——模式有哪些、叫什么、由谁执行、此刻可不可用，只由它回答。
+// 初始 default 是本文件唯一的本地字面量：目录未就绪时一切归一落到它（fail-closed）。
+window.csaiAgentModes = (function () {
+    const state = { ready: false, def: 'eino_single', modes: [], byId: Object.create(null) };
+    function norm(id) {
+        return String(id == null ? '' : id).trim().toLowerCase().replace(/-/g, '_');
+    }
+    function apply(payload) {
+        const modes = payload && Array.isArray(payload.modes) ? payload.modes : [];
+        state.def = norm(payload && payload.default) || state.def;
+        state.modes = modes.slice();
+        state.byId = Object.create(null);
+        modes.forEach(function (m) { if (m && m.id) state.byId[norm(m.id)] = m; });
+        state.ready = true;
+    }
+    const api = {
+        get ready() { return state.ready; },
+        get default() { return state.def; },
+        get modes() { return state.modes.slice(); },
+        entry(id) { return state.byId[norm(id)] || null; },
+        /** 目录里此刻可用的条目——选择器只渲染这些（"不点不存在"）。 */
+        available() {
+            if (!state.ready) {
+                // 目录未就绪（首次登录、接口短暂失败）：只给内置单代理占位，
+                // 不把它换成"把四模式都显示出来"——那正是要收掉的旧行为。
+                return [{ id: state.def, builtin: true, available: true }];
+            }
+            return state.modes.filter(function (m) { return m && m.available; });
+        },
+        isMulti(id) {
+            const e = api.entry(id);
+            return !!(e && e.runner === 'multi_agent');
+        },
+        label(id) {
+            const e = api.entry(id);
+            if (!e) return String(id == null ? '' : id);
+            return api.text(e.labelKey, e.label || e.id);
+        },
+        hint(id) {
+            const e = api.entry(id);
+            if (!e) return '';
+            return api.text(e.hintKey, '');
+        },
+        text(key, fallback) {
+            if (key && typeof window.t === 'function') {
+                const v = window.t(key);
+                if (v && v !== key) return v;
+            }
+            return fallback;
+        },
+        /** 把任意输入归一到目录认识的值；不认识（或要求可用而不可用）就落到 default。 */
+        normalize(input, requireAvailable) {
+            const e = api.entry(input);
+            if (e && (!requireAvailable || e.available)) return e.id;
+            return state.def;
+        },
+        refresh() {
+            if (typeof apiFetch !== 'function') return Promise.resolve(false);
+            return apiFetch('/api/agent-modes').then(function (r) {
+                return r.ok ? r.json() : null;
+            }).then(function (payload) {
+                if (!payload) return false;
+                apply(payload);
+                document.dispatchEvent(new CustomEvent('csai-agent-modes-changed'));
+                return true;
+            }).catch(function () { return false; });
+        }
+    };
+    return api;
+})();
 let chatAIChannels = {};
 let chatDefaultAIChannel = '';
 let chatAIChannelIdByNormalizedId = {};
@@ -399,20 +469,7 @@ if (typeof window !== 'undefined') {
     window.showChatToast = showChatToast;
 }
 
-function normalizeOrchestrationClient(s) {
-    const v = String(s || '').trim().toLowerCase().replace(/-/g, '_');
-    if (v === 'plan_execute' || v === 'planexecute' || v === 'pe') return 'plan_execute';
-    if (v === 'supervisor' || v === 'super' || v === 'sv') return 'supervisor';
-    return 'deep';
-}
-
-function chatAgentModeIsEino(mode) {
-    return CHAT_AGENT_EINO_MODES.indexOf(mode) >= 0;
-}
-
-function chatAgentModeIsEinoSingle(mode) {
-    return mode === CHAT_AGENT_MODE_EINO_SINGLE;
-}
+// 模式身份与可用性判定全部走 window.csaiAgentModes；本文件不再持有别名表与模式清单。
 
 function normalizeHitlMode(mode) {
     let v = String(mode || '').trim().toLowerCase().replace(/-/g, '_');
@@ -810,25 +867,15 @@ function bindHitlSensitiveToolsAutosaveListener() {
     });
 }
 
-/** 将 localStorage 规范为 eino_single | deep | plan_execute | supervisor */
-function chatAgentModeNormalizeStored(stored, cfg) {
-    const pub = cfg && cfg.multi_agent ? cfg.multi_agent : null;
-    const multiOn = !!(pub && pub.enabled);
-    const s = stored;
-    if (chatAgentModeIsEinoSingle(s)) return s;
-    if (chatAgentModeIsEino(s)) {
-        return multiOn ? s : CHAT_AGENT_MODE_EINO_SINGLE;
-    }
-    return CHAT_AGENT_MODE_EINO_SINGLE;
+/** 把存储的偏好收敛到目录；不可用（包未安装/单元停用/引擎未启用）时回落内置单代理。 */
+function chatAgentModeNormalizeStored(stored) {
+    return window.csaiAgentModes.normalize(stored, true);
 }
 
 function normalizeConversationAgentModeForUI(mode) {
-    const v = String(mode || '').trim().toLowerCase().replace(/-/g, '_');
-    if (chatAgentModeIsEinoSingle(v)) return v;
-    if (chatAgentModeIsEino(v)) {
-        return multiAgentAPIEnabled ? v : CHAT_AGENT_MODE_EINO_SINGLE;
-    }
-    return '';
+    const e = window.csaiAgentModes.entry(mode);
+    if (!e) return '';
+    return e.available ? e.id : window.csaiAgentModes.default;
 }
 
 function conversationAgentModeStorageKey(conversationId) {
@@ -868,14 +915,6 @@ if (typeof window !== 'undefined') {
         timeoutSeconds: DEFAULT_HITL_TIMEOUT_SECONDS
     };
     window.csaiHitlDefaultReviewer = window.csaiHitlDefaultReviewer || 'human';
-    window.csaiChatAgentMode = {
-        EINO_MODES: CHAT_AGENT_EINO_MODES,
-        EINO_SINGLE: CHAT_AGENT_MODE_EINO_SINGLE,
-        isEino: chatAgentModeIsEino,
-        isEinoSingle: chatAgentModeIsEinoSingle,
-        normalizeStored: chatAgentModeNormalizeStored,
-        normalizeOrchestration: normalizeOrchestrationClient
-    };
     window.applyHitlSidebarConfig = applyHitlSidebarConfig;
     window.readHitlConfigFromForm = readHitlConfigFromForm;
     window.applyHitlConfigToUI = applyHitlConfigToUI;
@@ -931,37 +970,7 @@ document.addEventListener('DOMContentLoaded', function () {
 });
 
 function getAgentModeLabelForValue(mode) {
-    if (typeof window.t === 'function') {
-        switch (mode) {
-            case 'deep':
-                return window.t('chat.agentModeDeep');
-            case 'plan_execute':
-                return window.t('chat.agentModePlanExecuteLabel');
-            case 'supervisor':
-                return window.t('chat.agentModeSupervisorLabel');
-            case CHAT_AGENT_MODE_EINO_SINGLE:
-                return window.t('chat.agentModeEinoSingle');
-            default:
-                return mode;
-        }
-    }
-    switch (mode) {
-        case CHAT_AGENT_MODE_EINO_SINGLE: return 'Eino 单代理';
-        case 'deep': return 'Deep';
-        case 'plan_execute': return 'Plan-Execute';
-        case 'supervisor': return 'Supervisor';
-        default: return mode;
-    }
-}
-
-function getAgentModeIconClassForValue(mode) {
-    switch (mode) {
-        case CHAT_AGENT_MODE_EINO_SINGLE: return 'eino';
-        case 'deep': return 'deep';
-        case 'plan_execute': return 'plan';
-        case 'supervisor': return 'supervisor';
-        default: return 'default';
-    }
+    return window.csaiAgentModes.label(mode);
 }
 
 function renderAgentModeLogoMarkup() {
@@ -975,7 +984,7 @@ function syncAgentModeFromValue(value) {
     if (hid) hid.value = value;
     if (label) label.textContent = getAgentModeLabelForValue(value);
     if (icon) {
-        icon.className = 'role-selector-icon agent-mode-logo agent-mode-logo--' + getAgentModeIconClassForValue(value);
+        icon.className = 'role-selector-icon agent-mode-logo agent-mode-logo--default';
         icon.innerHTML = renderAgentModeLogoMarkup();
     }
     document.querySelectorAll('.agent-mode-option').forEach(function (el) {
@@ -989,7 +998,8 @@ function syncReasoningRowVisibility(modeVal) {
     mountChatSessionSettingsPopover();
     const wrap = document.getElementById('chat-reasoning-wrapper');
     if (!wrap) return;
-    const show = modeVal === CHAT_AGENT_MODE_EINO_SINGLE || (multiAgentAPIEnabled && chatAgentModeIsEino(modeVal));
+    const e = window.csaiAgentModes.entry(modeVal);
+    const show = !!(e && e.available);
     wrap.style.display = show ? '' : 'none';
     if (!show) {
         closeChatReasoningPanel();
@@ -2046,7 +2056,7 @@ function toggleAgentModePanel() {
 }
 
 function selectAgentMode(mode) {
-    const ok = chatAgentModeIsEinoSingle(mode) || chatAgentModeIsEino(mode);
+    const ok = window.csaiAgentModes.available().some(function (m) { return m.id === mode; });
     if (!ok) return;
     saveConversationAgentModePreference(currentConversationId, mode);
     try {
@@ -2056,35 +2066,111 @@ function selectAgentMode(mode) {
     closeAgentModePanel();
 }
 
+/** 从目录重渲主面板的模式选项（DOM API 构建）。只渲染此刻可用的模式（"不点不存在"）。 */
+function renderAgentModeOptions() {
+    const box = document.querySelector('#agent-mode-panel .agent-mode-options');
+    if (!box) return;
+    const dir = window.csaiAgentModes;
+    box.textContent = '';
+    dir.available().forEach(function (m) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'role-selection-item-main agent-mode-option';
+        btn.setAttribute('role', 'option');
+        btn.setAttribute('data-value', m.id);
+
+        const icon = document.createElement('div');
+        icon.className = 'role-selection-item-icon-main agent-mode-logo agent-mode-logo--default';
+        icon.setAttribute('aria-hidden', 'true');
+        icon.innerHTML = renderAgentModeLogoMarkup();
+
+        const content = document.createElement('div');
+        content.className = 'role-selection-item-content-main';
+        const name = document.createElement('div');
+        name.className = 'role-selection-item-name-main';
+        name.textContent = dir.label(m.id);
+        content.appendChild(name);
+        const descText = dir.hint(m.id);
+        if (descText) {
+            const desc = document.createElement('div');
+            desc.className = 'role-selection-item-description-main';
+            desc.textContent = descText;
+            content.appendChild(desc);
+        }
+
+        const check = document.createElement('div');
+        check.className = 'role-selection-checkmark-main agent-mode-check';
+        check.setAttribute('data-agent-mode-check', m.id);
+        check.textContent = '✓';
+
+        btn.appendChild(icon);
+        btn.appendChild(content);
+        btn.appendChild(check);
+        btn.addEventListener('click', function () { selectAgentMode(m.id); });
+        box.appendChild(btn);
+    });
+}
+
+/** 把当前偏好收敛到目录并同步选择器（登录、装/卸包、引擎开关变化后都走这里）。 */
+function syncAgentModeWithDirectory() {
+    const sel = document.getElementById('agent-mode-select');
+    if (!sel) return;
+    let stored = '';
+    try { stored = localStorage.getItem(AGENT_MODE_STORAGE_KEY) || ''; } catch (e) { /* ignore */ }
+    const next = window.csaiAgentModes.normalize(stored, true);
+    if (next !== stored) {
+        try { localStorage.setItem(AGENT_MODE_STORAGE_KEY, next); } catch (e) { /* ignore */ }
+    }
+    sel.value = next;
+    syncAgentModeFromValue(next);
+}
+
+// 目录变化（首次拉取成功、装/卸包、开关变化后的重新拉取）统一在这里重渲与重归一。
+document.addEventListener('csai-agent-modes-changed', function () {
+    renderAgentModeOptions();
+    syncAgentModeWithDirectory();
+});
+
+// 设置页「机器人默认对话模式」下拉的填充：可用模式可选；配置里已存、但此刻不可用的模式
+// 保留为禁用项——设置页是运维者诊断配置的地方，不能因为包被卸就把存过的值静默藏掉。
+// ensureId 是「必须出现在列表里的当前配置值」。
+window.populateAgentModeSelect = function (sel, ensureId) {
+    if (!sel || typeof window.csaiAgentModes === 'undefined') return;
+    const dir = window.csaiAgentModes;
+    const current = String(ensureId != null ? ensureId : (sel.value || '')).trim();
+    const items = dir.available().slice();
+    if (current && !items.some(function (m) { return m.id === current; })) {
+        const e = dir.entry(current);
+        items.push(e ? Object.assign({}, e, { available: false }) : { id: current, available: false });
+    }
+    sel.textContent = '';
+    items.forEach(function (m) {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = dir.label(m.id);
+        if (!m.available) opt.disabled = true;
+        sel.appendChild(opt);
+    });
+    if (current) sel.value = current;
+};
+
 async function initChatAgentModeFromConfig() {
     const wrap = document.getElementById('agent-mode-wrapper');
     const sel = document.getElementById('agent-mode-select');
     if (!wrap || !sel) return;
 
-    // 先展示基础模式，避免首次登录时配置接口短暂失败导致入口被隐藏。
+    // 先按目录当前状态渲染（未就绪时只有内置单代理占位），避免首次登录时配置接口
+    // 短暂失败把入口整个藏掉。
     wrap.style.display = '';
-    let stored = localStorage.getItem(AGENT_MODE_STORAGE_KEY);
-    if (!(chatAgentModeIsEinoSingle(stored) || chatAgentModeIsEino(stored))) {
-        stored = CHAT_AGENT_MODE_EINO_SINGLE;
-    }
-    sel.value = stored;
-    syncAgentModeFromValue(stored);
-    document.querySelectorAll('.agent-mode-option').forEach(function (el) {
-        const v = el.getAttribute('data-value');
-        if (v === 'deep' || v === 'plan_execute' || v === 'supervisor') {
-            el.style.display = 'none';
-        } else {
-            el.style.display = '';
-        }
-    });
+    renderAgentModeOptions();
+    syncAgentModeWithDirectory();
     restoreChatReasoningControlsFromStorage();
-    syncReasoningRowVisibility(stored);
+    syncReasoningRowVisibility(sel.value);
 
     try {
         const r = await apiFetch('/api/config');
         if (!r.ok) return;
         const cfg = await r.json();
-        multiAgentAPIEnabled = !!(cfg.multi_agent && cfg.multi_agent.enabled);
         populateChatAIChannelSelect(cfg.ai || {});
         const hitlAuditModel = cfg.hitl && cfg.hitl.audit_model;
         chatHitlAuditBackend = cfg.hitl && typeof cfg.hitl.audit_backend === 'string'
@@ -2114,22 +2200,9 @@ async function initChatAgentModeFromConfig() {
         if (typeof window.refreshHitlPageWhitelist === 'function') {
             window.refreshHitlPageWhitelist();
         }
-        document.querySelectorAll('.agent-mode-option').forEach(function (el) {
-            const v = el.getAttribute('data-value');
-            if (v === 'deep' || v === 'plan_execute' || v === 'supervisor') {
-                el.style.display = multiAgentAPIEnabled ? '' : 'none';
-            } else {
-                el.style.display = '';
-            }
-        });
-        stored = chatAgentModeNormalizeStored(stored, cfg);
-        try {
-            localStorage.setItem(AGENT_MODE_STORAGE_KEY, stored);
-        } catch (e) { /* ignore */ }
-        sel.value = stored;
-        syncAgentModeFromValue(stored);
-        restoreChatReasoningControlsFromStorage();
-        syncReasoningRowVisibility(stored);
+        // 目录是模式可用性的唯一答案；refresh 之后由 csai-agent-modes-changed
+        // 监听器重渲选择器并把失效的偏好收敛回默认。
+        await window.csaiAgentModes.refresh();
     } catch (e) {
         console.warn('initChatAgentModeFromConfig', e);
     }
@@ -2139,7 +2212,9 @@ document.addEventListener('languagechange', function () {
     const hid = document.getElementById('agent-mode-select');
     if (!hid) return;
     const v = hid.value;
-    if (chatAgentModeIsEinoSingle(v) || chatAgentModeIsEino(v)) {
+    // 选项文案由 JS 从目录生成，语言切换后要连同当前选择一起重渲。
+    renderAgentModeOptions();
+    if (window.csaiAgentModes.entry(v)) {
         syncAgentModeFromValue(v);
     }
     if (typeof updateChatReasoningSummary === 'function') {
@@ -2420,9 +2495,10 @@ async function sendMessage() {
 
     try {
         const modeSel = document.getElementById('agent-mode-select');
-        let modeVal = modeSel ? modeSel.value : CHAT_AGENT_MODE_EINO_SINGLE;
+        let modeVal = modeSel ? modeSel.value : window.csaiAgentModes.default;
         saveConversationAgentModePreference(streamConversationId || currentConversationId, modeVal);
-        const useMulti = multiAgentAPIEnabled && chatAgentModeIsEino(modeVal);
+        const modeEntry = window.csaiAgentModes.entry(modeVal);
+        const useMulti = !!(modeEntry && modeEntry.available && modeEntry.runner === 'multi_agent');
         const streamPath = useMulti ? '/api/multi-agent/stream' : '/api/eino-agent/stream';
         if (useMulti && modeVal) {
             body.orchestration = modeVal;

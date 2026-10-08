@@ -1,7 +1,7 @@
 id: multi-agent-orchestration
 name: 多代理编排包
-version: 1.0.0
-description: 多代理模式的编排主代理（deep / plan_execute / supervisor）与交战流程专员（参与规划、影响与数据外泄证明、清理与回滚、报告撰写与修复建议）。不装也能跑——编排回落到内置提示；装上则恢复本产品的完整编制。
+version: 1.1.0
+description: 多代理模式（deep / plan_execute / supervisor）的激活声明与编排主代理，外加交战流程专员（参与规划、影响与数据外泄证明、清理与回滚、报告撰写与修复建议）。装上，三个模式进入对话模式选择器；卸载，三个模式从目录消失（Eino 单代理是内核内置，始终可用）。
 units:
   - kind: agent
     path: agents/orchestrator.md
@@ -17,3 +17,9 @@ units:
     path: agents/cleanup-rollback.md
   - kind: agent
     path: agents/reporting-remediation.md
+  - kind: mode
+    path: modes/deep.yaml
+  - kind: mode
+    path: modes/plan_execute.yaml
+  - kind: mode
+    path: modes/supervisor.yaml

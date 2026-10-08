@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/termout"
 	"cyberstrike-ai/internal/toolguard"
 
@@ -510,21 +511,11 @@ type MultiAgentPublic struct {
 	ToolSearchAlwaysVisibleEffectiveTools      []string `json:"tool_search_always_visible_effective_tools,omitempty"`
 }
 
-// NormalizeAgentMode 解析代理模式（eino_single | deep | plan_execute | supervisor）；空值默认 eino_single。
+// NormalizeAgentMode 解析代理模式；空值与未知值都回落 eino_single。身份、别名与可用性
+// 的定义在 internal/agentmode（对话模式的单一来源），本函数只是它在配置层的入口——
+// 这里曾是第一份实现，别名集与其它入口互不一致。
 func NormalizeAgentMode(mode string) string {
-	s := strings.TrimSpace(strings.ToLower(mode))
-	switch s {
-	case "", "eino_single":
-		return "eino_single"
-	case "deep":
-		return "deep"
-	case "plan_execute", "plan-execute", "planexecute", "pe":
-		return "plan_execute"
-	case "supervisor", "super", "sv":
-		return "supervisor"
-	default:
-		return "eino_single"
-	}
+	return agentmode.ResolveWithDefault(mode, agentmode.DefaultID)
 }
 
 // NormalizeRobotAgentMode 解析机器人默认对话模式。
@@ -532,17 +523,9 @@ func NormalizeRobotAgentMode(ma MultiAgentConfig) string {
 	return NormalizeAgentMode(ma.RobotDefaultAgentMode)
 }
 
-// NormalizeMultiAgentOrchestration 返回 deep、plan_execute 或 supervisor。
+// NormalizeMultiAgentOrchestration 返回 deep、plan_execute 或 supervisor；非多代理输入回落 deep。
 func NormalizeMultiAgentOrchestration(s string) string {
-	v := strings.TrimSpace(strings.ToLower(s))
-	switch v {
-	case "plan_execute", "plan-execute", "planexecute", "pe":
-		return "plan_execute"
-	case "supervisor", "super", "sv":
-		return "supervisor"
-	default:
-		return "deep"
-	}
+	return agentmode.ResolveOrchestration(s)
 }
 
 // MultiAgentAPIUpdate 设置页/API 仅更新多代理标量字段；写入 YAML 时不覆盖 sub_agents 等块。

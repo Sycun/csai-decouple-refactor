@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"cyberstrike-ai/internal/agent"
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/authctx"
 	"cyberstrike-ai/internal/config"
@@ -239,22 +240,32 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	taskCtx = mcp.WithEinoExecuteRunRegistry(taskCtx, h.tasks)
 
 	useBatchMulti := false
-	batchOrch := "deep"
-	am := strings.TrimSpace(strings.ToLower(queue.AgentMode))
-	if am == "multi" {
-		am = "deep"
-	}
-	if batchQueueWantsEino(queue.AgentMode) && h.config != nil && h.config.MultiAgent.Enabled {
+	batchOrch := agentmode.DefaultOrchestration
+	queueMode := agentmode.ResolveWithDefault(queue.AgentMode, agentmode.DefaultID)
+	switch {
+	case strings.TrimSpace(queue.AgentMode) != "" && batchQueueWantsEino(queue.AgentMode):
+		// 队列显式选了多代理模式：fail-closed——不可用（包未安装/单元停用/引擎未启用）
+		// 就明确失败，不静默换单代理跑。
+		if _, err := checkAgentMode(h.config, queueMode); err != nil {
+			finishStatus = "failed"
+			h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, BatchTaskStatusFailed, "", "批量任务模式不可用："+err.Error())
+			return
+		}
 		useBatchMulti = true
-		batchOrch = config.NormalizeMultiAgentOrchestration(am)
-	} else if queue.AgentMode == "" && h.config != nil && h.config.MultiAgent.Enabled && h.config.MultiAgent.BatchUseMultiAgent {
+		batchOrch = queueMode
+	case strings.TrimSpace(queue.AgentMode) == "" && agentModeEngineEnabled(h.config) && currentConfig(h.config).MultiAgent.BatchUseMultiAgent:
+		// 没显式选、但队列政策默认走多代理：同一个 fail-closed 判据。
+		if _, err := checkAgentMode(h.config, batchOrch); err != nil {
+			finishStatus = "failed"
+			h.batchTaskManager.UpdateTaskStatus(queueID, task.ID, BatchTaskStatusFailed, "", "批量队列默认走多代理："+err.Error())
+			return
+		}
 		useBatchMulti = true
-		batchOrch = "deep"
 	}
 	if useBatchMulti {
 		_ = h.conversations.SetConversationAgentMode(conversationID, batchOrch)
 	} else {
-		_ = h.conversations.SetConversationAgentMode(conversationID, "eino_single")
+		_ = h.conversations.SetConversationAgentMode(conversationID, agentmode.DefaultID)
 	}
 
 	var resultMA *multiagent.RunResult

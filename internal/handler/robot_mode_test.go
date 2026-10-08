@@ -5,11 +5,31 @@ import (
 	"testing"
 
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/plugin"
 
 	"go.uber.org/zap"
 )
 
+// installModeUnits 把一个装了模式单元的能力表装成进程全局表——模式可用性的新来源：
+// 单元在表里且启用，模式才进入目录（"不点不存在"）。
+func installModeUnits(t *testing.T, names ...string) {
+	t.Helper()
+	table := plugin.NewTable()
+	for _, name := range names {
+		u, err := plugin.NewUnit(plugin.KindMode, name, "/tmp/modes/"+name+".yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := table.PutLocal(u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plugin.Install(table)
+	t.Cleanup(func() { plugin.Install(nil) })
+}
+
 func TestRobotModeSwitch(t *testing.T) {
+	installModeUnits(t, "deep", "plan_execute", "supervisor")
 	h := NewRobotHandler(&config.Config{MultiAgent: config.MultiAgentConfig{Enabled: true}}, nil, nil, zap.NewNop())
 
 	if got := h.cmdSwitchMode("lark", "user-1", "plan-execute"); !strings.Contains(got, "Plan-Execute") {
@@ -23,7 +43,24 @@ func TestRobotModeSwitch(t *testing.T) {
 	}
 }
 
+func TestRobotModeRejectsUninstalledMultiAgent(t *testing.T) {
+	// 未装包：deep 不在目录里（"不点不存在"），切换被拒并说明未安装。
+	h := NewRobotHandler(&config.Config{MultiAgent: config.MultiAgentConfig{Enabled: true}}, nil, nil, zap.NewNop())
+
+	if got := h.cmdSwitchMode("lark", "user-1", "deep"); !strings.Contains(got, "未安装") {
+		t.Fatalf("unexpected rejection: %s", got)
+	}
+	if got := h.getAgentMode("lark", "user-1"); got != "eino_single" {
+		t.Fatalf("mode changed after rejection: %q", got)
+	}
+	if got := h.cmdModes("lark", "user-1"); strings.Contains(got, "Deep") {
+		t.Fatalf("uninstalled mode must not be listed: %s", got)
+	}
+}
+
 func TestRobotModeRejectsUnavailableMultiAgent(t *testing.T) {
+	// 装了包但引擎未启用：拒绝文案指向系统设置，而不是"未安装"。
+	installModeUnits(t, "deep")
 	h := NewRobotHandler(&config.Config{}, nil, nil, zap.NewNop())
 
 	if got := h.cmdSwitchMode("lark", "user-1", "deep"); !strings.Contains(got, "启用 Eino 多代理") {

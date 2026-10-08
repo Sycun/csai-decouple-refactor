@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"cyberstrike-ai/internal/agent"
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/multiagent"
 )
@@ -135,35 +136,17 @@ func runAgentNode(ctx context.Context, args RunArgs, node graphNode, state *Work
 		errText := "Agent 节点执行失败：应用配置或 Agent 为空"
 		return outputMap(envelope("agent", node.ID, node.Type, "failed", ""), map[string]any{"error": errText}), false, "failed", errText
 	}
-	mode := strings.ToLower(cfgString(node.Config, "agent_mode"))
-	if mode == "" {
-		mode = "eino_single"
-	}
+	// 模式身份与别名解析收口到 internal/agentmode（这里曾内联一份，"single"/"chat" 是它的别名）。
+	mode := agentmode.ResolveWithDefault(cfgString(node.Config, "agent_mode"), agentmode.DefaultID)
 	inputSource := resolveNodeInputBinding(node.Config, state)
 	message := buildAgentNodeMessage(node, state, inputSource)
 	var result *multiagent.RunResult
 	var err error
 	state.SegmentMaxIteration = 0
 	agentProgress := workflowAgentProgress(args.Progress, state, node)
-	switch mode {
-	case "eino_single", "single", "chat":
-		result, err = multiagent.RunEinoSingleChatModelAgent(
-			ctx,
-			args.AppCfg,
-			&args.AppCfg.MultiAgent,
-			args.Agent,
-			args.DB.Store,
-			args.Logger,
-			args.ConversationID,
-			args.ProjectID,
-			message,
-			args.History,
-			args.RoleTools,
-			agentProgress,
-			nil,
-			args.SystemPromptExtra,
-		)
-	default:
+	runner, orchestration, _ := agentmode.RunnerFor(mode)
+	switch runner {
+	case agentmode.RunnerMultiAgent:
 		result, err = multiagent.RunDeepAgent(
 			ctx,
 			args.AppCfg,
@@ -178,7 +161,24 @@ func runAgentNode(ctx context.Context, args RunArgs, node graphNode, state *Work
 			args.RoleTools,
 			agentProgress,
 			args.AgentsMarkdownDir,
-			mode,
+			orchestration,
+			nil,
+			args.SystemPromptExtra,
+		)
+	default:
+		result, err = multiagent.RunEinoSingleChatModelAgent(
+			ctx,
+			args.AppCfg,
+			&args.AppCfg.MultiAgent,
+			args.Agent,
+			args.DB.Store,
+			args.Logger,
+			args.ConversationID,
+			args.ProjectID,
+			message,
+			args.History,
+			args.RoleTools,
+			agentProgress,
 			nil,
 			args.SystemPromptExtra,
 		)

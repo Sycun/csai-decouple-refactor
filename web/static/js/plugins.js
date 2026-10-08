@@ -37,6 +37,11 @@ async function loadPluginConsole() {
 async function fetchPluginConsole() {
     const listEl = document.getElementById('plugin-console');
     if (!listEl) return;
+    // 能力表可能因装/卸/开关而变（比如加入或移走「多代理编排包」的模式声明）：顺带让对话
+    // 模式目录重新拉取，对话页与 WebShell 的选择器无需刷新页面即可跟随（changed 事件驱动）。
+    if (typeof window.csaiAgentModes !== 'undefined' && typeof window.csaiAgentModes.refresh === 'function') {
+        window.csaiAgentModes.refresh();
+    }
     listEl.innerHTML = '<div class="empty-state">' + escapeHtml(pluginsT('loading')) + '</div>';
     try {
         const [stateResp, catalogResp] = await Promise.all([

@@ -60,6 +60,12 @@ func TestBuiltInCapabilityScanCoversEveryServedKind(t *testing.T) {
 		// MCP servers are live-managed declarations, not files in a scanned directory.
 		plugin.KindRole: "RoleHandler.Reload owns the roles directory",
 		plugin.KindMCP:  "external MCP servers are runtime declarations, not a scanned directory",
+		// A mode unit activates a mode the kernel already knows how to run. There is no shipped
+		// modes/ directory because the only always-on mode (eino_single) is built into the kernel
+		// (internal/agentmode) and everything else is supposed to arrive as a pack unit - the
+		// catalog merges the kernel's builtin with activated units and does not need the table to
+		// hold a shipped copy of anything.
+		plugin.KindMode: "modes are activated by pack units; the built-in single mode lives in the kernel",
 		// A plugin unit is code that arrives inside a pack and is provisioned when the operator
 		// switches it on, after its binary has been checked against the reviewed list. There is no
 		// built-in plugins directory to scan, and adding one would mean the server ships a binary

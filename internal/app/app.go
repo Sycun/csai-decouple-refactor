@@ -535,6 +535,8 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	agentHandler.SetSettings(settingsStore)
 	bindAudit(agentHandler, auditSvc)
 	agentHandler.SetAgentsMarkdownDir(agentsDir)
+	// 对话模式目录的 HTTP 面（GET /api/agent-modes）：读包级能力表与活配置快照，无自身状态。
+	agentModeHandler := handler.NewAgentModeHandler(cfg)
 	// 如果知识库已启用，设置知识库管理器到AgentHandler以便记录检索日志
 	if knowledgeManager != nil {
 		agentHandler.SetKnowledgeManager(knowledgeManager)
@@ -643,6 +645,15 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	if n, msg := declarePackPluginUnits(pluginTable); n > 0 || msg != "" {
 		log.Logger.Info("能力包声明的插件单元按停用装入（不启动进程）",
 			zap.Int("declared", n), zap.String("note", msg))
+	}
+	// A mode unit's declaration is read here rather than trusted: the install path refuses a file
+	// whose id does not match its name, but the boot replay goes through the generic
+	// InstallBundle, which never opens the file. The catalog merges units by name without reading
+	// them either, so this is the one place a swapped or doctored declaration is caught - and it
+	// is caught fail-closed: the unit is switched off ("不点不存在"), not left serving a name
+	// nobody reviewed.
+	if n, notes := verifyModeUnits(pluginTable, log.Logger); n > 0 || len(notes) > 0 {
+		log.Logger.Info("模式单元声明已核对", zap.Int("disabled", n), zap.Strings("notes", notes))
 	}
 	// The one-click extend surface. It is confined to <configDir>/bundles, and it drives the same
 	// table the run paths read, so an install here is live on the next request. A pack that
@@ -834,6 +845,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		router:                router,
 		authHandler:           authHandler,
 		agentHandler:          agentHandler,
+		agentModeHandler:      agentModeHandler,
 		monitorHandler:        monitorHandler,
 		notificationHandler:   notificationHandler,
 		conversationHandler:   conversationHandler,
@@ -1143,6 +1155,7 @@ type routeDeps struct {
 	router                *gin.Engine
 	authHandler           *handler.AuthHandler
 	agentHandler          *handler.AgentHandler
+	agentModeHandler      *handler.AgentModeHandler
 	monitorHandler        *handler.MonitorHandler
 	notificationHandler   *handler.NotificationHandler
 	conversationHandler   *handler.ConversationHandler

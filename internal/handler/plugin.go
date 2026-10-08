@@ -125,6 +125,9 @@ var servedKinds = map[plugin.Kind]string{
 	plugin.KindSkill: "",
 	plugin.KindTool:  "",
 	plugin.KindMCP:   "",
+	// A mode unit is served by the agent-mode catalog: /api/agent-modes answers from the table, and
+	// the run paths of chat, robot, batch and workflow resolve modes through the same catalog.
+	plugin.KindMode: "",
 	// A plugin unit is served once its binary's advertised entry points have been checked against
 	// the reviewed list and registered; until then the table holds a declaration nobody can call.
 	// liveUnitView reports that per unit, which is why this entry is empty rather than a reason.
@@ -278,6 +281,12 @@ func (h *PluginHandler) Install(c *gin.Context) {
 	if err := h.checkPluginUnits(bundle); err != nil {
 		// Same rule for code: a pack whose plugin declaration does not resolve, or whose capability
 		// list is unusable, is refused before it can be half-installed.
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.checkModeUnits(bundle); err != nil {
+		// Same rule for modes: a declaration whose id does not match its file name, or names a
+		// mode the kernel does not know, is a unit that would never appear in the catalog.
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

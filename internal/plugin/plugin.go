@@ -38,13 +38,19 @@ const (
 	KindSkill Kind = "skill" // skills/<name>/SKILL.md
 	KindTool  Kind = "tool"  // tools/<name>.yaml -> security tool recipe
 	KindMCP   Kind = "mcp"   // an external MCP server declaration
+	// KindMode activates one of the conversation modes the kernel knows how to run. A mode unit
+	// carries no executable content and no execution binding: runner and orchestration are kernel
+	// knowledge (internal/agentmode), so a pack can make a known mode appear in the catalog -
+	// never point it at another runner or invent one. The always-on default (eino_single) is
+	// built into the kernel and cannot be activated or overridden by a unit.
+	KindMode Kind = "mode" // modes/<name>.yaml -> agentmode activation declaration
 	// KindPlugin is the only kind that ships executable code: a plugin binary inside the pack plus
-	// the reviewed list of the entry points it provides. The other five ship content.
+	// the reviewed list of the entry points it provides. The other six ship content.
 	KindPlugin Kind = "plugin"
 )
 
 // Kinds is every accepted value, in the order a bundle should report them.
-var Kinds = []Kind{KindRole, KindAgent, KindSkill, KindTool, KindMCP, KindPlugin}
+var Kinds = []Kind{KindRole, KindAgent, KindSkill, KindTool, KindMCP, KindMode, KindPlugin}
 
 func (k Kind) Valid() bool {
 	for _, want := range Kinds {

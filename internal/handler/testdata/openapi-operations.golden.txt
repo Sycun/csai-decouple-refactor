@@ -20,6 +20,7 @@ DELETE /api/vulnerabilities/{id}|deleteVulnerability|漏洞管理
 DELETE /api/webshell/connections/{id}|deleteWebshellConnection|WebShell管理
 GET /api/agent-loop/tasks/completed|listCompletedTasks|对话交互
 GET /api/agent-loop/tasks|listAgentTasks|对话交互
+GET /api/agent-modes|listAgentModes|对话交互
 GET /api/attack-chain/{conversationId}|getAttackChain|攻击链
 GET /api/auth/validate|validateToken|认证
 GET /api/batch-tasks/{queueId}|getBatchQueue|批量任务
