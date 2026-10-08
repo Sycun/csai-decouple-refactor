@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/authctx"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/database"
@@ -172,7 +173,7 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 				"agent_mode": map[string]interface{}{
 					"type":        "string",
 					"description": "执行模式：eino_single（Eino ADK，默认）、deep/plan_execute/supervisor（Eino 编排，需启用多代理）",
-					"enum":        []string{"eino_single", "deep", "plan_execute", "supervisor"},
+					"enum":        agentmode.AllIDs(),
 				},
 				"schedule_mode": map[string]interface{}{
 					"type":        "string",
@@ -428,7 +429,7 @@ func RegisterBatchTaskMCPTools(mcpServer *mcp.Server, h *AgentHandler, logger *z
 				"agent_mode": map[string]interface{}{
 					"type":        "string",
 					"description": "代理模式：eino_single、deep、plan_execute、supervisor",
-					"enum":        []string{"eino_single", "deep", "plan_execute", "supervisor"},
+					"enum":        agentmode.AllIDs(),
 				},
 				"concurrency": map[string]interface{}{
 					"type":        "integer",

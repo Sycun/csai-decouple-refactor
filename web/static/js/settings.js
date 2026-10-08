@@ -3950,7 +3950,7 @@ async function saveToolsConfig() {
             agent: currentConfig.agent || {},
             multi_agent: {
                 enabled: currentConfig?.multi_agent?.enabled === true,
-                robot_default_agent_mode: currentConfig?.multi_agent?.robot_default_agent_mode || 'eino_single',
+                robot_default_agent_mode: currentConfig?.multi_agent?.robot_default_agent_mode || (window.csaiAgentModes ? window.csaiAgentModes.default : ''),
                 batch_use_multi_agent: currentConfig?.multi_agent?.batch_use_multi_agent === true,
                 plan_execute_loop_max_iterations: Number(currentConfig?.multi_agent?.plan_execute_loop_max_iterations || 0),
                 tool_search_always_visible_tools: getAlwaysVisibleForSave()

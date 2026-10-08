@@ -141,6 +141,16 @@ func All() []Mode {
 	return out
 }
 
+// AllIDs 按展示顺序返回全部内核已知模式 id——完整清单出现的地方（MCP 工具参数枚举、
+// 文档生成）用它，而不是再抄一份字面量表。
+func AllIDs() []string {
+	out := make([]string, 0, len(known))
+	for _, m := range known {
+		out = append(out, m.ID)
+	}
+	return out
+}
+
 // Activatable 判断一个 id 是否允许被模式单元激活：内核认识且不是内置底线。
 func Activatable(id string) bool {
 	m, ok := byID[canonicalKey(id)]
