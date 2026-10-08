@@ -3616,6 +3616,22 @@ agents=∅、skills=5 个点名、tools≥90、总数下限 96），并新增反
 - 复现：`make js-check`（227 条）、`make wiring-check`、`make layering-check`、
   `go test ./internal/agentmode/ ./internal/layering/ -count=1`。
 
+**真机点验（2026-10-08，隔离树 + 18080 端口，2026-10-08 当日实跑）**：
+- `git archive HEAD` 出的干净树（不进测试版——它正被另一条线使用）+ 示例配置起真二进制；
+  新库启动打印一次性 admin 密码。
+- 装包前 `GET /api/agent-modes` 只有内置单代理；安装「多代理编排包」后立刻 4 条
+  （deep / plan_execute / supervisor 带 `bundle: multi-agent-orchestration`、`runner: multi_agent`）；
+  带 `orchestration=deep` 的流式请求通过模式门进入 runner（在 LLM 凭证处失败，属本实例未配 key）。
+- 卸载后目录立刻回到 1 条（无需重启）；带 deep 的请求得到
+  `对话模式 Deep 未安装：多代理编排包未安装，或该模式单元已被停用`——fail-closed 指名。
+- headless Chrome（CDP，`--ignore-certificate-errors`）真渲染：装态面板 4 项、label 为 i18n 中文
+  （Eino 单代理（ADK）/ Deep（DeepAgent）/ Plan-Execute / Supervisor（专家路由））、默认选中单代理、
+  hint 全渲染；卸载态 1 项。「不点不存在」在前端实证（`uncaughtCount: 0`）。
+- **真机抓出的缺陷**：`/api/agent-modes` 漏登记 RBAC 权限映射——编译过、单测绿，运行时所有角色
+  403「未配置访问权限」。修复（归入对话域 `agent:execute`）的同时补门禁
+  `TestEveryProtectedRouteHasAPermission`（遍历 routes.Extract 的 protected 组逐条要求映射非空 +
+  反空地板 200 条；探针验证注入即红、撤销即绿）。
+
 **与「出厂极简」承诺的关系**（本刀的交易，明说）：§11「出厂极简与安装记录」里的
 「不装也能跑——编排回落到内置提示」指编排**提示**的回落（包缺 orchestrator.md 时仍用内置提示，
 这部分仍在）；但「多代理编排包未安装」现在意味着三个模式不出现在目录、带旧模式的执行请求被
