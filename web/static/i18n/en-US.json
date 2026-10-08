@@ -84,6 +84,7 @@
     "availableTitle": "Available bundles",
     "nothingAvailable": "No uninstalled bundle in the bundles directory",
     "installedTitle": "Installed bundles",
+    "tabsAria": "Available and installed bundles",
     "nothingInstalled": "No bundle installed yet",
     "standaloneTitle": "Units registered from the built-in directories",
     "nothingStandalone": "The table holds no standalone units (the built-in scan did not run)",

@@ -54,7 +54,11 @@ function harness(state, catalog, options = {}) {
         return {
             id,
             innerHTML: '',
-            classList: { contains: () => true },
+            // contains() stays true on purpose: the failure path draws its banner only when
+            // isPluginConsoleActive() answers true, and that path is under test here. The mutators
+            // are no-ops so handlers that flip classes still run end to end.
+            classList: { contains: () => true, add() {}, remove() {}, toggle() {} },
+            setAttribute() {},
             insertAdjacentHTML: function (_pos, html) { this.innerHTML = html + this.innerHTML; },
         };
     }
@@ -133,8 +137,9 @@ function harness(state, catalog, options = {}) {
     vm.runInContext(source, sandbox);
     vm.runInContext(`
         this.api = { loadPluginConsole, installPluginBundle, unplugPluginBundle, setPluginUnitEnabled,
-                     rollbackPluginBundle, applyPluginFilter };
+                     rollbackPluginBundle, applyPluginFilter, switchPluginTab };
         this.pluginConsoleBusyReset = () => { pluginConsoleBusy = false; };
+        this.pluginTabState = () => pluginConsoleTab;
     `, sandbox);
     return { sandbox, nodes, calls, toasts, confirms };
 }
@@ -562,4 +567,42 @@ test('the install toast names what the pack brought, counted from the response',
     await sandbox.api.installPluginBundle('reporting-pack');
     assert.match(toasts[toasts.length - 1].msg, /角色 × 2、技能 × 1/,
         'the toast must count the installed units: ' + toasts[toasts.length - 1].msg);
+});
+
+// 「可安装 / 已安装」是标签页而不是一直摊开的两段：点哪个显示哪个（交互对齐系统设置），
+// 默认停在可安装。一次变更会整页重渲染，所以重渲染后必须落回用户点开的那一页——
+// 否则装完一个包等于把用户甩回第一页，装到哪儿去了又要翻。
+test('the two lists are tabs: only the open one shows, and it survives re-renders', async () => {
+    const { sandbox } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+    const consoleHtml = () => sandbox.document.getElementById('plugin-console').innerHTML;
+
+    const before = consoleHtml();
+    assert.match(before, /class="dashboard-feed-tab is-active" role="tab" id="plugin-tab-available"/,
+        'the available tab must be the default');
+    assert.match(before, /id="plugin-section-available" role="tabpanel" aria-labelledby="plugin-tab-available">/);
+    assert.match(before, /id="plugin-section-installed" role="tabpanel" aria-labelledby="plugin-tab-installed" hidden>/,
+        'the installed list must start hidden');
+    assert.match(before, /可安装的能力包/);
+    assert.match(before, /已安装的能力包/);
+
+    // 跑一遍真实 onclick 文本，而不是直接调函数：参数形状错了照样在这里现形。
+    const decoded = s => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    const tabClicks = (before.match(/onclick="switchPluginTab\([^"]*\)"/g) || [])
+        .map(a => decoded(a.slice('onclick="'.length, -1)));
+    assert.equal(tabClicks.length, 2, tabClicks.join(' | '));
+    vm.runInContext(tabClicks[1], sandbox);
+    assert.equal(sandbox.pluginTabState(), 'installed', 'the emitted handler must switch the tab');
+
+    sandbox.window.renderPluginConsole();
+    const after = consoleHtml();
+    assert.match(after, /class="dashboard-feed-tab is-active" role="tab" id="plugin-tab-installed"/);
+    assert.match(after, /id="plugin-section-installed" role="tabpanel" aria-labelledby="plugin-tab-installed">/);
+    assert.match(after, /id="plugin-section-available" role="tabpanel" aria-labelledby="plugin-tab-available" hidden>/);
+
+    // 变更后的重渲染（安装会重读表格）也要停在这一页
+    await sandbox.api.installPluginBundle('ai-app-redteam');
+    const afterInstall = consoleHtml();
+    assert.match(afterInstall, /class="dashboard-feed-tab is-active" role="tab" id="plugin-tab-installed"/,
+        'a mutation re-render must land back on the tab the operator had open');
 });
