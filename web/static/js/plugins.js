@@ -60,6 +60,25 @@ async function fetchPluginConsole() {
     }
 }
 
+// A successful mutation changes two things at once: this console's table, and every other page's
+// in-memory copy of the capability lists. The chat page rendered its role sidebar once at page load
+// and the webshell page keeps its own copy of /api/roles - refreshing only the console is why a
+// freshly installed role stayed invisible until the whole browser page was reloaded. Both copies
+// are re-read here, from the page that caused the change, so "装完即生效" holds on screen and not
+// only in the table.
+async function reloadConsoleAfterMutation() {
+    await fetchPluginConsole();
+    if (typeof loadRoles === 'function') {
+        loadRoles();
+    }
+    if (typeof wsLoadRoles === 'function') {
+        wsLoadRoles();
+    }
+    // The chat page's @ tool list refetches when this flag is set; a pack can add or remove
+    // callable tools without the role changing, so the invalidation cannot wait for a role switch.
+    window._mentionToolsRoleChanged = true;
+}
+
 function renderPluginConsole() {
     const listEl = document.getElementById('plugin-console');
     if (!listEl || !pluginConsoleState) return;
@@ -535,6 +554,19 @@ async function runPluginRequest(method, url, body) {
     return data;
 }
 
+// unitSummaryText names what a pack actually brought, in the same shape the catalogue card counts
+// it: the operator reads "角色 × 4、子代理 × 2、技能 × 2" at the toast where they clicked, instead
+// of having to find the card that moved down the page. Counts come from the response's own bundle
+// view, so the sentence is the server's, not a guess from what the click asked for.
+function unitSummaryText(bundle) {
+    const units = (bundle && bundle.units) || [];
+    if (!units.length) return '';
+    const kinds = {};
+    units.forEach(u => { kinds[u.kind] = (kinds[u.kind] || 0) + 1; });
+    const text = Object.keys(kinds).sort().map(k => unitKindLabel(k) + ' × ' + kinds[k]).join('、');
+    return text ? ' · ' + text : '';
+}
+
 async function installPluginBundle(bundleId) {
     const catalog = (pluginConsoleCatalog && pluginConsoleCatalog.bundles) || [];
     const pack = catalog.filter(b => b.id === bundleId)[0];
@@ -553,8 +585,9 @@ async function installPluginBundle(bundleId) {
         const base = upgrade
             ? pluginsT('upgradeDone')
             : (data.tools_rebuilt ? pluginsT('installWithTools') : pluginsT('installPlain'));
-        notify(`${base} ${data.bundle && data.bundle.id ? data.bundle.id : bundleId}${serverNote(data)}`, 'success');
-        await fetchPluginConsole();
+        notify(`${base} ${data.bundle && data.bundle.id ? data.bundle.id : bundleId}` +
+            `${unitSummaryText(data.bundle)}${serverNote(data)}`, 'success');
+        await reloadConsoleAfterMutation();
     }, upgrade ? 'upgrade' : 'install');
 }
 
@@ -569,8 +602,8 @@ async function rollbackPluginBundle(bundleId, version) {
             bundle: bundleId,
             from_version: version,
         });
-        notify(pluginsT('rollbackDone') + ' ' + bundleId + serverNote(data), 'success');
-        await fetchPluginConsole();
+        notify(pluginsT('rollbackDone') + ' ' + bundleId + unitSummaryText(data.bundle) + serverNote(data), 'success');
+        await reloadConsoleAfterMutation();
     }, 'rollback');
 }
 
@@ -580,7 +613,7 @@ async function unplugPluginBundle(bundleId) {
     await withPluginBusy(async () => {
         const data = await runPluginRequest('DELETE', '/api/plugins/bundles/' + encodeURIComponent(bundleId));
         notify(pluginsT('unplugDone') + serverNote(data), 'success');
-        await fetchPluginConsole();
+        await reloadConsoleAfterMutation();
     }, 'unplug');
 }
 
@@ -598,7 +631,7 @@ async function setPluginUnitEnabled(kind, name, enabled) {
                 pluginsT('switchCapabilitiesSuffix');
         }
         notify(pluginsT('switchDone') + serverNote(data) + caps, 'success');
-        await fetchPluginConsole();
+        await reloadConsoleAfterMutation();
     }, 'switch');
 }
 

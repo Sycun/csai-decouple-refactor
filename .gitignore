@@ -1,5 +1,6 @@
 # Runtime data
 data/
+bundles/.previous/
 chat_uploads/
 *.db
 *.db-shm

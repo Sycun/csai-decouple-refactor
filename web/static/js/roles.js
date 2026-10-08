@@ -303,6 +303,12 @@ async function loadRoles() {
         }
         const data = await response.json();
         roles = data.roles || [];
+        // 角色的存废会在本页之外被改变（能力包一键安装/卸载、另一个标签页）：列表刷新后，
+        // 选中项若已从服务端消失就退回默认，否则界面显示默认、请求体却仍带着一个不存在的
+        // 角色名。
+        if (currentRole && !roles.some(r => r.name === currentRole)) {
+            handleRoleChange('');
+        }
         updateRoleSelectorDisplay();
         renderRoleSelectionSidebar(); // 渲染侧边栏角色列表
         return roles;
