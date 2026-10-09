@@ -238,11 +238,17 @@ func installBundlesFromDisk(table *plugin.Table, root string, records installRec
 			continue
 		}
 		installed++
+		// recordUnits is what the row should hold after this boot: narrowed to what actually
+		// installed when the directory dropped units the row named, the row's own selection
+		// otherwise. Every rewrite below carries it - writing the row's original units back for
+		// a version change would resurrect the missing ones and re-warn at the next boot.
+		recordUnits := row.Units
 		if len(missing) > 0 {
 			// The directory moved on and dropped units the row named. Narrow the row to what was
 			// actually installed: a selection that keeps naming a unit nobody can supply would be
 			// re-checked and re-warned at every boot with nothing to restore.
-			if err := records.Record(row.ID, bundle.Version, unitIDsOf(selected)); err != nil && logger != nil {
+			recordUnits = unitIDsOf(selected)
+			if err := records.Record(row.ID, bundle.Version, recordUnits); err != nil && logger != nil {
 				logger.Warn("安装记录未能按现有单元收窄", zap.String("bundle", row.ID), zap.Strings("missing", missing), zap.Error(err))
 			} else if logger != nil {
 				logger.Warn("安装记录里的部分单元已不在包内，已按现有单元收窄",
@@ -254,7 +260,7 @@ func installBundlesFromDisk(table *plugin.Table, root string, records installRec
 		// console can compare installed vs on-disk. A downgrade is recorded the same way - the
 		// row describes what is installed, and what is installed is what the directory holds.
 		if bundle.Version != row.Version {
-			if err := records.Record(row.ID, bundle.Version, row.Units); err != nil && logger != nil {
+			if err := records.Record(row.ID, bundle.Version, recordUnits); err != nil && logger != nil {
 				logger.Warn("能力包版本变更未能写回安装记录",
 					zap.String("bundle", row.ID), zap.String("from", row.Version), zap.String("to", bundle.Version), zap.Error(err))
 			} else if logger != nil {

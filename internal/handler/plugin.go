@@ -283,9 +283,11 @@ type installRequest struct {
 	// set of places it can read from has to be small and explicit.
 	Bundle string `json:"bundle"`
 	// Units narrows the install to named units ("skill/sink-driven-audit"). Omitted or empty means
-	// the whole pack, which is the original behaviour spelled by absence. When present the set is
-	// the *desired state* of this pack - units not listed are taken out of the table - so the same
-	// request both installs and uninstalls, and re-sending it changes nothing.
+	// the whole pack, which is the original behaviour spelled by absence - with one exception: a
+	// rollback request (FromVersion set) that omits it keeps the selection the table is actually
+	// serving, so rolling back a partial install cannot silently widen it into the whole old pack.
+	// When present the set is the *desired state* of this pack - units not listed are taken out of
+	// the table - so the same request both installs and uninstalls, and re-sending it changes nothing.
 	Units []string `json:"units,omitempty"`
 	// FromVersion names a snapshot under <root>/.previous/<id>/<version>: the rollback path. The
 	// request then means "restore these bytes over the pack directory, then install", which is why
@@ -307,7 +309,40 @@ func (h *PluginHandler) Install(c *gin.Context) {
 		return
 	}
 	rolledBack := ""
+	units := req.Units
 	if from := strings.TrimSpace(req.FromVersion); from != "" {
+		snapBundle, err := h.rollbackSnapshot(dir, from)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		// A rollback that does not name units keeps what the operator is actually living with,
+		// read from the table before the snapshot overwrites the pack directory. A whole-pack
+		// install keeps following the pack; a partial one narrowed against the restored manifest.
+		// Deriving it from the record's absence would quietly install everything the old version
+		// ever declared - the widening the selection exists to prevent.
+		if units == nil {
+			if live, lerr := loadBundle(dir); lerr == nil {
+				if installed := h.table.RecordedUnits(live.ID); len(installed) > 0 && len(installed) < len(live.Units) {
+					declared := make(map[string]bool, len(snapBundle.Units))
+					for _, u := range snapBundle.Units {
+						declared[u.ID] = true
+					}
+					var keep []string
+					for _, u := range installed {
+						if declared[u.ID] {
+							keep = append(keep, u.ID)
+						}
+					}
+					if len(keep) == 0 {
+						c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf(
+							"当前安装的单元在版本 %s 中都不存在，回滚后这个包将没有任何单元；为避免静默装成整包已拒绝。如确要整包回滚，请先卸载再安装该版本", from)})
+						return
+					}
+					units = keep
+				}
+			}
+		}
 		if err := h.restoreRollback(dir, from); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -319,7 +354,7 @@ func (h *PluginHandler) Install(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	sel, err := resolveUnitSelection(bundle, req.Units)
+	sel, err := resolveUnitSelection(bundle, units)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

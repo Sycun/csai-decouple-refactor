@@ -14,10 +14,12 @@ import (
 // are the sequence every install must run, and a second route would be a second place for one of
 // them to be forgotten.
 
-// restoreRollback copies the named version's snapshot over the pack directory. It refuses a
-// snapshot that does not describe the pack asked for: a rollback that silently swapped bytes from
-// another pack would be indistinguishable from a supply-chain substitution.
-func (h *PluginHandler) restoreRollback(dir, from string) error {
+// rollbackSnapshot reads and validates the named version's snapshot: it must describe the pack
+// asked for, under the id its snapshots were filed under. A rollback that silently swapped bytes
+// from another pack would be indistinguishable from a supply-chain substitution, so the checks
+// run before anything is copied - and before the install endpoint decides what selection the
+// rollback keeps.
+func (h *PluginHandler) rollbackSnapshot(dir, from string) (*plugin.Bundle, error) {
 	// The console names packs the way the catalogue does - by directory - so that is the first
 	// candidate. The live manifest, when it is readable, is the authority and corrects it: a pack
 	// whose directory and id disagree must roll back under the id its snapshots were filed under.
@@ -27,19 +29,28 @@ func (h *PluginHandler) restoreRollback(dir, from string) error {
 	}
 	snapDir, err := plugin.PreviousVersionDir(h.bundles, id, from)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	snapBundle, err := loadBundle(snapDir)
 	if err != nil {
-		return fmt.Errorf("能力包 %s 的版本 %s 快照不可用: %w", id, from, err)
+		return nil, fmt.Errorf("能力包 %s 的版本 %s 快照不可用: %w", id, from, err)
 	}
 	if snapBundle.ID != id {
-		return fmt.Errorf("快照 %s 声明为 %q，与能力包 %s 不一致", from, snapBundle.ID, id)
+		return nil, fmt.Errorf("快照 %s 声明为 %q，与能力包 %s 不一致", from, snapBundle.ID, id)
 	}
 	if strings.TrimSpace(snapBundle.Version) != strings.TrimSpace(from) {
-		return fmt.Errorf("快照目录名 %s 与清单版本 %q 不一致", from, snapBundle.Version)
+		return nil, fmt.Errorf("快照目录名 %s 与清单版本 %q 不一致", from, snapBundle.Version)
 	}
-	_, err = plugin.RestoreBundle(h.bundles, id, from, dir)
+	return snapBundle, nil
+}
+
+// restoreRollback copies the named version's snapshot over the pack directory.
+func (h *PluginHandler) restoreRollback(dir, from string) error {
+	snapBundle, err := h.rollbackSnapshot(dir, from)
+	if err != nil {
+		return err
+	}
+	_, err = plugin.RestoreBundle(h.bundles, snapBundle.ID, from, dir)
 	return err
 }
 

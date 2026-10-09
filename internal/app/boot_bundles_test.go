@@ -336,6 +336,44 @@ func TestBootNarrowsARecordWhoseUnitsAreGone(t *testing.T) {
 	}
 }
 
+// Both moves at once - the directory went a version forward AND dropped a unit the row named.
+// The narrowing must survive the version rewrite: writing the row's original units back for the
+// new version would resurrect the missing unit, so the next boot warns and narrows all over again.
+func TestBootNarrowsARecordAcrossAVersionChange(t *testing.T) {
+	root := t.TempDir()
+	writeFileAt(t, filepath.Join(root, "bundles", "moved-pack", "roles", "仍在角色.yaml"),
+		"name: 仍在角色\nenabled: true\n")
+	writeFileAt(t, filepath.Join(root, "bundles", "moved-pack", plugin.ManifestFileName),
+		"id: moved-pack\nversion: 2.0.0\nunits:\n  - kind: role\n    path: roles/仍在角色.yaml\n")
+
+	db := openBootTestDB(t)
+	installs := store.NewInstalledBundles(db)
+	if err := installs.EnsureSchema(); err != nil {
+		t.Fatal(err)
+	}
+	if err := installs.Record("moved-pack", "1.0.0", []string{"role/仍在角色", "skill/已移除"}); err != nil {
+		t.Fatal(err)
+	}
+	table := plugin.NewTable()
+	installed, refused := installBundlesFromDisk(table, filepath.Join(root, "bundles"), installs, zap.NewNop())
+	if installed != 1 || len(refused) != 0 {
+		t.Fatalf("installed=%d refused=%v", installed, refused)
+	}
+	rows, err := installs.All()
+	if err != nil {
+		t.Fatalf("All: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("the row vanished: %+v", rows)
+	}
+	if rows[0].Version != "2.0.0" {
+		t.Fatalf("the version rewrite did not happen: %+v", rows[0])
+	}
+	if len(rows[0].Units) != 1 || rows[0].Units[0] != "role/仍在角色" {
+		t.Fatalf("the version rewrite undid the narrowing - the next boot would warn again: %+v", rows[0])
+	}
+}
+
 // A row whose units are all gone names the pack and the units and is forgotten: keeping it would
 // promise a restore that can never happen, and installing nothing under a row that says
 // "installed" is not a state this model has.
