@@ -2055,6 +2055,15 @@ function toggleAgentModePanel() {
     btn.setAttribute('aria-expanded', 'true');
 }
 
+document.addEventListener('click', (e) => {
+    const panel = document.getElementById('agent-mode-panel');
+    if (!panel || panel.style.display !== 'flex') return;
+    const wrapper = document.getElementById('agent-mode-wrapper');
+    if (wrapper && !wrapper.contains(e.target)) {
+        closeAgentModePanel();
+    }
+});
+
 function selectAgentMode(mode) {
     const ok = window.csaiAgentModes.available().some(function (m) { return m.id === mode; });
     if (!ok) return;
