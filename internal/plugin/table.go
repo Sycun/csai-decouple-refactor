@@ -228,6 +228,13 @@ func (t *Table) installBundle(b *Bundle, ids []string) error {
 		if prev, ok := next.units[u.ID]; ok && prev.Bundle != b.ID {
 			return &ErrConflict{ID: u.ID, Owner: prev.Bundle, Incoming: b.ID}
 		}
+		// A reconcile is not a reason to take the operator's switch back: the same unit carrying
+		// the same content keeps whatever on/off state it had. A unit whose path moved is a
+		// different capability under a familiar identity, so it starts at the manifest default -
+		// the same line boot holds when it forgets a persisted switch whose path drifted.
+		if prev, ok := cur.units[u.ID]; ok && prev.Bundle == b.ID && prev.Path == u.Path {
+			u.Enabled = prev.Enabled
+		}
 		next.units[u.ID] = u
 	}
 

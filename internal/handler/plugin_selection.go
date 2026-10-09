@@ -124,6 +124,18 @@ func unitsHaveKind(units []plugin.Unit, kind plugin.Kind) bool {
 	return false
 }
 
+// joinOutcomeMsg accumulates the reasons one mutationOutcome field collects across steps (a drop
+// and the re-declaration that follows it can both have something to say about the same layer).
+func joinOutcomeMsg(a, b string) string {
+	if a == "" {
+		return b
+	}
+	if b == "" {
+		return a
+	}
+	return a + "; " + b
+}
+
 // mutationOutcome is what one table mutation actually did, in the terms the response has to state
 // it: which units are in the table now, which left, what the install record says, and how far the
 // change reached into the live layers. Both the selection path and the uninstall path fill it, so
@@ -157,22 +169,31 @@ type mutationOutcome struct {
 // applySelection makes the table, the record and the live layers match one selection.
 //
 // The order is the whole-pack install's order with two additions: what leaves is unwound (MCP
-// declaration dropped, plugin trust domain dropped, saved switch forgotten) and only what arrives
-// is declared. Declaring the arriving units - rather than every selected one - is what keeps a
-// reconcile from stopping a server the operator had explicitly started: a switch is their decision,
-// and adding a skill to a pack is not a reason to take it back.
+// declaration dropped, plugin trust domain dropped, saved switch forgotten) and only what is
+// fresh is declared. "Fresh" is arriving units plus stayers whose digest changed: an upgrade that
+// edits a declaration (or the binary it names) in place ships new bytes under a familiar identity,
+// and the operator's consent was for the bytes in front of them - so a changed unit comes back
+// off and is re-declared, the same line boot holds. Stayers with unchanged bytes are never
+// re-declared: a switch is the operator's decision, and adding a skill to a pack is not a reason
+// to stop a server they started.
 func (h *PluginHandler) applySelection(c *gin.Context, sel unitSelection) (mutationOutcome, error) {
 	var out mutationOutcome
 	before := h.table.RecordedUnits(sel.bundle.ID)
-	beforeIDs := make(map[string]bool, len(before))
+	beforeByID := make(map[string]plugin.Unit, len(before))
 	for _, u := range before {
-		beforeIDs[u.ID] = true
+		beforeByID[u.ID] = u
 	}
 	out.removed = unitsMissingFrom(before, sel.units)
 	var arriving []plugin.Unit
+	var changed []plugin.Unit
 	for _, u := range sel.units {
-		if !beforeIDs[u.ID] {
+		prev, ok := beforeByID[u.ID]
+		if !ok {
 			arriving = append(arriving, u)
+			continue
+		}
+		if prev.Digest != u.Digest {
+			changed = append(changed, u)
 		}
 	}
 
@@ -202,20 +223,30 @@ func (h *PluginHandler) applySelection(c *gin.Context, sel unitSelection) (mutat
 			out.switchMsg = msg
 		}
 	}
-	if len(arriving) > 0 {
-		narrowed := withUnits(sel.bundle, arriving)
+	if len(changed) > 0 {
+		// A stayer whose bytes changed keeps its identity, so its old trust domain and capability
+		// registrations belong to the previous bytes and go before the new declaration does.
+		if n, msg := h.dropPluginUnits(changed); n > 0 || msg != "" {
+			out.plugRemoved += n
+			out.plugMessage = joinOutcomeMsg(out.plugMessage, msg)
+		}
+	}
+	if fresh := append(append([]plugin.Unit{}, arriving...), changed...); len(fresh) > 0 {
+		narrowed := withUnits(sel.bundle, fresh)
 		if n, msg := h.installMCPDeclarations(narrowed); n > 0 || msg != "" {
-			out.mcpDeclared, out.mcpMessage = n, msg
+			out.mcpDeclared += n
+			out.mcpMessage = joinOutcomeMsg(out.mcpMessage, msg)
 		}
 		if n, msg := h.declarePluginUnits(narrowed); n > 0 || msg != "" {
-			out.plugDeclared, out.plugMessage = n, msg
+			out.plugDeclared += n
+			out.plugMessage = joinOutcomeMsg(out.plugMessage, msg)
 		}
 	}
 
 	// A pack that brings a recipe or a plugin binary changes what the tool surface should hold, so
 	// both rebuild it. Only the units that moved decide that: a role-only selection must not pay for
-	// ClearTools.
-	moved := append(append([]plugin.Unit{}, arriving...), out.removed...)
+	// ClearTools, and an unchanged stayer must not stop what is running.
+	moved := append(append(append([]plugin.Unit{}, arriving...), changed...), out.removed...)
 	report := h.republishCatalog(c, unitsHaveKind(moved, plugin.KindTool) || unitsHaveKind(moved, plugin.KindPlugin))
 	out.roles, out.refreshed, out.tools, out.toolMessage = report.roles, report.refreshed, report.tools, report.toolMessage
 	return out, nil

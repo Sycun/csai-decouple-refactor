@@ -472,6 +472,97 @@ func TestSetEnabledFlipsWhatIsServed(t *testing.T) {
 	}
 }
 
+// TestReinstallKeepsTheOperatorsSwitch: a reconcile (re-install, selection change, upgrade) hands
+// the table a fresh manifest copy whose units all read Enabled=true. Re-publishing those copies
+// verbatim would silently take back the operator's off decision for every unit that is staying,
+// so the table must carry the switch across for the same unit at the same path.
+func TestReinstallKeepsTheOperatorsSwitch(t *testing.T) {
+	table := NewTable()
+	dir := sampleBundleDir(t, "webapp", "1.0.0")
+	load := func() *Bundle {
+		m, err := LoadManifestDir(dir)
+		if err != nil {
+			t.Fatalf("LoadManifestDir: %v", err)
+		}
+		b, err := m.Resolve()
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		return b
+	}
+	if err := table.InstallBundle(load()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := table.SetEnabled("role/webapp-lead", false); err != nil {
+		t.Fatalf("SetEnabled: %v", err)
+	}
+	b := load()
+	if err := table.InstallBundle(b); err != nil {
+		t.Fatalf("InstallBundle: %v", err)
+	}
+	if u, ok := table.Unit("role/webapp-lead"); !ok || u.Enabled {
+		t.Fatalf("re-install silently re-enabled a unit the operator switched off: %+v", u)
+	}
+	if _, err := table.SetEnabled("skill/webapp-triage", false); err != nil {
+		t.Fatalf("SetEnabled skill: %v", err)
+	}
+	if err := table.InstallBundleSelection(b, []string{"role/webapp-lead", "skill/webapp-triage"}); err != nil {
+		t.Fatalf("InstallBundleSelection: %v", err)
+	}
+	if u, _ := table.Unit("skill/webapp-triage"); u.Enabled {
+		t.Fatalf("selection change silently re-enabled the skill")
+	}
+	if u, _ := table.Unit("role/webapp-lead"); u.Enabled {
+		t.Fatalf("selection change silently re-enabled the role")
+	}
+}
+
+// TestReinstallTreatsAMovedUnitAsANewCapability: boot forgets a persisted switch when the path
+// drifts, because a different capability under an identity somebody switched off must not inherit
+// that switch. The table holds the same line at reconcile time: the moved unit comes back at the
+// manifest default rather than carrying the operator's off across.
+func TestReinstallTreatsAMovedUnitAsANewCapability(t *testing.T) {
+	table := NewTable()
+	dir := sampleBundleDir(t, "webapp", "1.0.0")
+	load := func() *Bundle {
+		m, err := LoadManifestDir(dir)
+		if err != nil {
+			t.Fatalf("LoadManifestDir: %v", err)
+		}
+		b, err := m.Resolve()
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		return b
+	}
+	if err := table.InstallBundle(load()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := table.SetEnabled("role/webapp-lead", false); err != nil {
+		t.Fatalf("SetEnabled: %v", err)
+	}
+	// The pack ships the same role identity from a different path (a v2 that reorganised itself).
+	moved := filepath.Join(dir, "roles", "v2-lead.yaml")
+	if err := os.Rename(filepath.Join(dir, "roles", "webapp-lead.yaml"), moved); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, ManifestFileName), `id: webapp
+name: webapp pack
+version: 2.0.0
+description: role pack used by the plugin tests
+units:
+  - kind: role
+    path: roles/v2-lead.yaml
+    name: webapp-lead
+`)
+	if err := table.InstallBundle(load()); err != nil {
+		t.Fatalf("InstallBundle moved: %v", err)
+	}
+	if u, ok := table.Unit("role/webapp-lead"); !ok || !u.Enabled {
+		t.Fatalf("a moved unit must start at the manifest default, not inherit the old switch: %+v", u)
+	}
+}
+
 // TestDriftedReportsAnEditedSource: the table must be able to say "what is running is not
 // what is on disk", or hot-plug is just a cache with extra steps.
 func TestDriftedReportsAnEditedSource(t *testing.T) {
