@@ -428,6 +428,10 @@ async function initPage(pageId) {
             if (typeof loadRoles === 'function') {
                 loadRoles();
             }
+            // 对话模式目录同理：编排包可以在另一个标签页或机器人侧被装卸，本页选择器要对齐。
+            if (typeof window.csaiAgentModes !== 'undefined' && typeof window.csaiAgentModes.refresh === 'function') {
+                window.csaiAgentModes.refresh();
+            }
             if (typeof prefetchProjectsForChat === 'function') {
                 prefetchProjectsForChat();
             }

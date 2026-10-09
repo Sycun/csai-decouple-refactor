@@ -197,8 +197,9 @@ function pluginVisibleUnits(pack) {
     return units.filter(u => kindOk(u) && unitMatchesText(u));
 }
 
-// applyPluginFilter is the input handler: it re-renders only the two list sections, so the text
-// field keeps its focus and the operator can keep typing.
+// applyPluginFilter is the input handler: it re-renders the bar (chips echo the query) and both
+// list sections from memory; rerenderPluginLists carries the field's focus and cursor across the
+// rebuild, so the operator can keep typing.
 function applyPluginFilter(query) {
     pluginConsoleFilter = String(query == null ? '' : query).trim();
     rerenderPluginLists();
@@ -250,13 +251,31 @@ function applyPluginKindFilter(kind) {
 }
 
 // rerenderPluginLists repaints the filter bar and both lists from the state already in memory. No
-// request goes out: what changed is what is on screen, not what is installed.
+// request goes out: what changed is what is on screen, not what is installed. The text field lives
+// inside the bar, so rebuilding the bar's HTML destroys the input mid-keystroke - focus and cursor
+// are carried across the rebuild, or every character typed would cost the operator their place in
+// the field.
 function rerenderPluginLists() {
     const listEl = document.getElementById('plugin-console');
     if (!listEl || !pluginConsoleState) return;
     const catalog = (pluginConsoleCatalog && pluginConsoleCatalog.bundles) || [];
     const bar = document.getElementById('plugin-filter-bar');
-    if (bar) bar.innerHTML = renderPluginFilterBar(catalog);
+    if (bar) {
+        const input = document.getElementById('plugin-filter-input');
+        const refocus = !!(input && typeof document !== 'undefined' && document.activeElement === input);
+        const selStart = refocus && typeof input.selectionStart === 'number' ? input.selectionStart : null;
+        const selEnd = refocus && typeof input.selectionEnd === 'number' ? input.selectionEnd : null;
+        bar.innerHTML = renderPluginFilterBar(catalog);
+        if (refocus) {
+            const next = document.getElementById('plugin-filter-input');
+            if (next && typeof next.focus === 'function') {
+                next.focus();
+                if (selStart !== null && typeof next.setSelectionRange === 'function') {
+                    next.setSelectionRange(selStart, selEnd);
+                }
+            }
+        }
+    }
     const sections = pluginSectionsHtml();
     const available = document.getElementById('plugin-section-available');
     const installed = document.getElementById('plugin-section-installed');
@@ -514,13 +533,33 @@ function unitChoiceKey(packID, unitID) { return packID + '|' + unitID; }
 // unitChoiceIsOn is what a checkbox shows when the operator has not touched it. A pack nobody
 // installed defaults to every unit ticked, so a plain click still means "the whole pack"; a pack
 // that is installed defaults to the units the server says are in the table, so opening the card
-// cannot quietly widen what is installed.
+// cannot quietly widen what is installed. One exception keeps the whole-pack promise: when the
+// install follows the directory, a unit arriving with an upgrade belongs to the pack the operator
+// asked for - leaving it unticked would silently demote the record from "follow the directory"
+// to a frozen list.
 function unitChoiceIsOn(pack, unit, installed) {
     const key = unitChoiceKey(pack.id, unit.id);
     if (Object.prototype.hasOwnProperty.call(pluginUnitChoices, key)) {
         return !!pluginUnitChoices[key];
     }
-    return installed ? unit.installed !== false : true;
+    if (!installed) return true;
+    if (unit.installed !== false) return true;
+    return installFollowsThePack(pack.id);
+}
+
+// installFollowsThePack answers whether this pack's install is the whole-pack kind, read from the
+// server's own counters on the installed view: every unit of the installed version is in the
+// table, which is exactly what the server records as "follow the directory" (an explicit selection
+// of all units collapses to the same record).
+function installFollowsThePack(packID) {
+    const bundles = (pluginConsoleState && pluginConsoleState.bundles) || [];
+    for (let i = 0; i < bundles.length; i++) {
+        const b = bundles[i];
+        if (b && b.id === packID) {
+            return (b.unitsTotal || 0) > 0 && b.unitsInstalled === b.unitsTotal;
+        }
+    }
+    return false;
 }
 
 // chosenUnitIDs is the selection this card would send. A unit whose identity another holder owns is
@@ -720,7 +759,10 @@ function renderPluginInstalledCard(pack, catalogEntry) {
 function unitRemoveButton(unit) {
     const args = [unit.kind, unit.name]
         .map(v => escapeAttr(JSON.stringify(v))).join(',');
-    return '<button class="btn-secondary btn-sm" data-require-permission="plugins:install" ' +
+    // Detach maps to plugins:write on the backend (DELETE /api/plugins/units/{kind}/{name}),
+    // same as the switch beside it; gating it on plugins:install would hide it from exactly the
+    // operator the API allows.
+    return '<button class="btn-secondary btn-sm" data-require-permission="plugins:write" ' +
         'onclick="removePluginUnit(' + args + ')">' +
         escapeHtml(pluginsT('removeUnit')) + '</button>';
 }

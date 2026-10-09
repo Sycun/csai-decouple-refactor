@@ -34,6 +34,8 @@ test('the bundle console is reachable, and both locales carry the same keys', ()
     const chatCase = router.split("case 'chat':")[1].split('break;')[0];
     assert.match(chatCase, /typeof loadRoles === 'function'[\s\S]*?loadRoles\(\);/,
         'entering chat must re-read the role list instead of keeping the load-time copy');
+    assert.match(chatCase, /csaiAgentModes\.refresh\(\);/,
+        'entering chat must re-read the agent-mode catalog as well: an orchestration pack can be (un)installed from another tab or the robot side');
 
     const zhKeys = flatKeys(zh.plugins, '', new Set());
     const enKeys = flatKeys(en.plugins, '', new Set());
@@ -60,10 +62,20 @@ function harness(state, catalog, options = {}) {
             classList: { contains: () => true, add() {}, remove() {}, toggle() {} },
             setAttribute() {},
             insertAdjacentHTML: function (_pos, html) { this.innerHTML = html + this.innerHTML; },
+            // The focus/selection surface the filter-bar rebuild carries across: the harness
+            // cannot destroy elements the way innerHTML does in a browser, but it records the
+            // calls, which is the contract the rebuild must honour.
+            selectionStart: 0,
+            selectionEnd: 0,
+            focusCalls: 0,
+            selectionRestored: null,
+            focus() { this.focusCalls++; },
+            setSelectionRange(a, b) { this.selectionRestored = [a, b]; },
         };
     }
     const sandbox = {
         document: {
+            activeElement: null,
             getElementById(id) {
                 if (!nodes.has(id)) nodes.set(id, makeEl(id));
                 return nodes.get(id);
@@ -489,8 +501,21 @@ test('rows carry digest, publisher and revoked state, and the revocation panel n
 
 // P0-4: the catalogue metadata renders, and the filter narrows both lists without losing the
 // query.
-test('catalogue metadata renders and the filter narrows the lists', async () => {
-    const { sandbox } = harness(sampleState, sampleCatalog);
+// 逐键输入不能把焦点打飞：筛选条每次键入都会重渲染（chips 要跟随查询词回显），输入框又
+// 住在筛选条里——重建必须把焦点和光标带回输入框，否则敲一个字符焦点就丢一次。
+test('the text filter keeps focus and cursor across re-renders', async () => {
+    const { sandbox, nodes } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+    const input = sandbox.document.getElementById('plugin-filter-input');
+    input.selectionStart = 2;
+    input.selectionEnd = 2;
+    sandbox.document.activeElement = input;
+    sandbox.api.applyPluginFilter('角色');
+    assert.equal(input.focusCalls, 1, 'the rebuilt input was never refocused - a keystroke costs the focus');
+    assert.deepEqual(input.selectionRestored, [2, 2], 'the cursor was not carried across the rebuild');
+});
+
+test('catalogue metadata renders and the filter narrows the lists', async () => {    const { sandbox } = harness(sampleState, sampleCatalog);
     await sandbox.api.loadPluginConsole();
     let html = sandbox.document.getElementById('plugin-console').innerHTML;
     assert.match(html, /作者 acme/);
@@ -669,6 +694,68 @@ test('selecting every unit sends the whole-pack shape', async () => {
     assert.deepEqual(body, { bundle: 'ai-app-redteam' });
 });
 
+// 整包装的包升级时，新版本带来的单元默认勾上：运维者当初要的是"这个包"而不是一张冻结的
+// 清单。默认不勾会让这次升级发出显式 units，安装记录就从"跟随目录"静默降级成清单，此后
+// 新版再加单元也不再自动带入——而且没有任何提示。
+test('an upgrade of a whole-pack install defaults arriving units to ticked', async () => {
+    const state = Object.assign({}, sampleState, {
+        bundles: [{
+            id: 'growing-pack', name: '成长包', version: '1.0.0', unitsInstalled: 2, unitsTotal: 2,
+            units: [
+                { id: 'role/a', kind: 'role', name: 'a', bundle: 'growing-pack', installed: true, enabled: true, served: true },
+                { id: 'role/b', kind: 'role', name: 'b', bundle: 'growing-pack', installed: true, enabled: true, served: true },
+            ],
+        }],
+    });
+    const catalog = {
+        bundlesRoot: '/srv/csai/bundles',
+        bundles: [{
+            id: 'growing-pack', name: '成长包', version: '2.0.0', installed: true,
+            units: [
+                { id: 'role/a', kind: 'role', name: 'a', installed: true },
+                { id: 'role/b', kind: 'role', name: 'b', installed: true },
+                { id: 'role/c', kind: 'role', name: 'c', installed: false },
+            ],
+        }],
+    };
+    const { sandbox, calls } = harness(state, catalog);
+    await sandbox.api.loadPluginConsole();
+    assert.deepEqual(Array.from(sandbox.api.chosenFor('growing-pack')), ['role/a', 'role/b', 'role/c'],
+        'a whole-pack install follows the pack: a unit arriving with the upgrade belongs to it');
+    await sandbox.api.installPluginBundle('growing-pack');
+    const body = JSON.parse(calls.find(c => c.method === 'POST' && c.url === '/api/plugins/install').body);
+    assert.deepEqual(body, { bundle: 'growing-pack' },
+        'ticked-everything is the whole-pack shape, so the record stays "follow the directory"');
+});
+
+// 反向同样钉死：部分安装的包新增单元默认不勾——运维者挑过的清单不能被一次升级悄悄扩大。
+test('an upgrade of a partial install leaves arriving units unticked', async () => {
+    const state = Object.assign({}, sampleState, {
+        bundles: [{
+            id: 'growing-pack', name: '成长包', version: '1.0.0', unitsInstalled: 1, unitsTotal: 2,
+            units: [
+                { id: 'role/a', kind: 'role', name: 'a', bundle: 'growing-pack', installed: true, enabled: true, served: true },
+                { id: 'role/b', kind: 'role', name: 'b', bundle: 'growing-pack', installed: false, enabled: false, served: false },
+            ],
+        }],
+    });
+    const catalog = {
+        bundlesRoot: '/srv/csai/bundles',
+        bundles: [{
+            id: 'growing-pack', name: '成长包', version: '2.0.0', installed: true,
+            units: [
+                { id: 'role/a', kind: 'role', name: 'a', installed: true },
+                { id: 'role/b', kind: 'role', name: 'b', installed: false },
+                { id: 'role/c', kind: 'role', name: 'c', installed: false },
+            ],
+        }],
+    };
+    const { sandbox } = harness(state, catalog);
+    await sandbox.api.loadPluginConsole();
+    assert.deepEqual(Array.from(sandbox.api.chosenFor('growing-pack')), ['role/a'],
+        'a partial install keeps its honest default: what was never chosen stays unticked');
+});
+
 // 已装卡上的"摘除"走单元端点，并跑一遍真实 onclick 文本（形状错了在这里现形）。
 test('removing one unit from an installed pack runs the emitted handler', async () => {
     const { sandbox, calls, toasts } = harness(sampleState, sampleCatalog);
@@ -686,6 +773,20 @@ test('removing one unit from an installed pack runs the emitted handler', async 
     assert.equal(deletes.length, 1, JSON.stringify(calls.map(c => c.method + ' ' + c.url)));
     assert.equal(deletes[0].url, '/api/plugins/units/role/%E7%A7%BB%E5%8A%A8%E7%AB%AF%E5%AE%89%E5%85%A8%E6%B5%8B%E8%AF%95');
     assert.match(toasts[toasts.length - 1].msg, /已从能力包的选择中移除/);
+});
+
+// 摘除按钮的权限标记要对齐后端映射：DELETE /api/plugins/units/* 在中间件里是 plugins:write
+// （与旁边的启停开关同级）。标成 plugins:install 会把按钮从恰好被 API 允许的操作者眼前藏起来。
+test('the detach button is gated on plugins:write, matching the backend mapping', async () => {
+    const { sandbox } = harness(sampleState, sampleCatalog);
+    await sandbox.api.loadPluginConsole();
+    const html = sandbox.document.getElementById('plugin-console').innerHTML;
+    const tags = html.match(/<button[^>]*data-require-permission="[^"]*"[^>]*onclick="removePluginUnit\(/g) || [];
+    assert.ok(tags.length > 0, 'no detach button rendered');
+    for (const tag of tags) {
+        assert.match(tag, /data-require-permission="plugins:write"/,
+            'the detach marker drifted from the backend mapping (plugins:write): ' + tag);
+    }
 });
 
 // 类型筛选是"只给我看技能"的那个开关：跑真实 onclick 文本，只看剩下的行。
