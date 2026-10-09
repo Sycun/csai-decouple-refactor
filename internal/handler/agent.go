@@ -2434,13 +2434,24 @@ func (h *AgentHandler) startBatchQueueExecution(queueID string, scheduled bool) 
 		return true, fmt.Errorf("队列状态不允许启动")
 	}
 
-	if queue != nil && batchQueueWantsEino(queue.AgentMode) && (h.config == nil || !h.config.MultiAgent.Enabled) {
-		h.batchTaskManager.UnmarkQueueExecutor(queueID)
-		err := fmt.Errorf("当前队列配置为 Eino 多代理，但系统未启用多代理")
-		if scheduled {
-			h.batchTaskManager.SetLastScheduleError(queueID, err.Error())
+	// 与逐任务执行同一条 fail-closed 判据：编排包被卸载或模式单元被停用后，队列不该启动再
+	// 逐个任务失败，而是在启动前点名拒绝。
+	if queue != nil && strings.TrimSpace(queue.AgentMode) != "" && batchQueueWantsEino(queue.AgentMode) {
+		if _, err := checkAgentMode(h.config, agentmode.ResolveWithDefault(queue.AgentMode, agentmode.DefaultID)); err != nil {
+			h.batchTaskManager.UnmarkQueueExecutor(queueID)
+			if scheduled {
+				h.batchTaskManager.SetLastScheduleError(queueID, err.Error())
+			}
+			return true, err
 		}
-		return true, err
+	} else if queue != nil && strings.TrimSpace(queue.AgentMode) == "" && agentModeEngineEnabled(h.config) && currentConfig(h.config).MultiAgent.BatchUseMultiAgent {
+		if _, err := checkAgentMode(h.config, agentmode.DefaultOrchestration); err != nil {
+			h.batchTaskManager.UnmarkQueueExecutor(queueID)
+			if scheduled {
+				h.batchTaskManager.SetLastScheduleError(queueID, err.Error())
+			}
+			return true, err
+		}
 	}
 
 	if scheduled {

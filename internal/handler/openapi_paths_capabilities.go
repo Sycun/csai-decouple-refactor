@@ -983,7 +983,7 @@ func openAPIPathsCapabilities() map[string]interface{} {
 						"name":        "kind",
 						"in":          "path",
 						"required":    true,
-						"description": "能力类别：role | agent | skill | tool | mcp | plugin",
+						"description": "能力类别：role | agent | skill | tool | mcp | plugin | mode",
 						"schema": map[string]interface{}{
 							"type": "string",
 						},
@@ -1008,9 +1008,6 @@ func openAPIPathsCapabilities() map[string]interface{} {
 					"404": map[string]interface{}{
 						"description": "单元不存在",
 					},
-					"409": map[string]interface{}{
-						"description": "该单元由某个能力包提供，需先卸载该包",
-					},
 					"401": map[string]interface{}{
 						"description": "未授权",
 					},
@@ -1028,7 +1025,7 @@ func openAPIPathsCapabilities() map[string]interface{} {
 						"name":        "kind",
 						"in":          "path",
 						"required":    true,
-						"description": "能力类别：role | agent | skill | tool | mcp | plugin",
+						"description": "能力类别：role | agent | skill | tool | mcp | plugin | mode",
 						"schema": map[string]interface{}{
 							"type": "string",
 						},

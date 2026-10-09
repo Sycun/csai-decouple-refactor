@@ -50,9 +50,15 @@ func (m *ExternalMCPManager) DeclarePackServer(name, bundleID string, serverCfg 
 }
 
 // RemovePackServer forgets the declaration and the server. The pack's files are left alone, and a
-// server the pack never owned is not this method's to remove.
+// server the pack never owned is not this method's to remove - the ownership check is what stands
+// between unplugging a shadowed pack and deleting the operator's config.yaml declaration whose
+// name shadowed it.
 func (m *ExternalMCPManager) RemovePackServer(name string) error {
 	m.mu.Lock()
+	if _, owned := m.packServers[name]; !owned {
+		m.mu.Unlock()
+		return fmt.Errorf("外部 MCP 服务器 %q 不是任何能力包的声明，按包移除会误删运维者的配置", name)
+	}
 	delete(m.packServers, name)
 	m.mu.Unlock()
 	return m.RemoveConfig(name)

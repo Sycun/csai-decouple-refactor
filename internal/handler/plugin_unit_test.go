@@ -224,6 +224,25 @@ func installPack(t *testing.T, env *pluginTestEnv, name string) (int, map[string
 	return rec.Code, map[string]interface{}{"raw": rec.Body.String()}
 }
 
+// The assembly allows a nil provisioner (bare test wiring is the documented example), and the
+// applySelection/uninstall paths call dropPluginUnits for every leaving plugin unit. Without a
+// nil guard that call panics; with nothing ever provisioned the honest drop is a no-op that says
+// the host was never wired.
+func TestPluginUninstallWithNoPluginHostDoesNotPanic(t *testing.T) {
+	env := newPluginTestEnv(t, false) // nil provisioner by construction
+	writeCodePack(t, env)
+	if code, body := installPack(t, env, "code-pack"); code != http.StatusOK {
+		t.Fatalf("install: %v", body)
+	}
+	rec := env.do(t, http.MethodDelete, "/api/plugins/bundles/code-pack", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("uninstall with no plugin host: %d %s", rec.Code, rec.Body.String())
+	}
+	if msg, _ := decodeState(t, rec)["plugin_message"].(string); !strings.Contains(msg, "插件宿主未接入") {
+		t.Fatalf("the response does not name the unwired host: %s", rec.Body.String())
+	}
+}
+
 func TestPluginUnitInstallsDeclaredAndDisabled(t *testing.T) {
 	recorder := &recordingPlugins{provisioned: map[string][]string{}}
 	env := envWithPlugins(t, recorder)

@@ -483,6 +483,16 @@ func (h *PluginHandler) applyPluginSwitch(unit plugin.Unit) ([]string, string, b
 }
 
 func (h *PluginHandler) dropPluginUnits(units []plugin.Unit) (int, string) {
+	if h.plugins == nil {
+		// Bare assemblies wire no host. Nothing was ever provisioned, so the honest drop is a
+		// no-op - but only plugin units have anything to say; other kinds never reach the host.
+		for _, u := range units {
+			if u.Kind == plugin.KindPlugin {
+				return 0, "插件宿主未接入：装配没有传入 provisioner，插件单元本就无法登记，无需注销"
+			}
+		}
+		return 0, ""
+	}
 	var total int
 	var message string
 	for _, u := range units {

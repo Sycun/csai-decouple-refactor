@@ -29,3 +29,11 @@ func (h *PluginHandler) checkModeUnits(bundle *plugin.Bundle) error {
 	}
 	return nil
 }
+
+// revalidateModeUnit reads the same reviewed surface on the third path into the catalog: the
+// enable switch. Install (checkModeUnits) and the boot check (verifyModeUnits) both validate the
+// declaration; a unit that was off while its file went bad must not ride the switch past them.
+func revalidateModeUnit(u plugin.Unit) error {
+	_, err := agentmode.ReadDeclaration(u.Path, u.Name)
+	return err
+}

@@ -598,6 +598,25 @@ func (h *PluginHandler) EnableUnit(c *gin.Context) {
 		mcpStarted = declared > 0 && unit.Enabled
 		mcpMessage = msg
 	}
+	if unitIDKind(id) == plugin.KindMode && unit.Enabled {
+		// The declaration is a reviewed surface on every path into the catalog: one that went bad
+		// while the unit was off refuses the switch and rolls it back, same as a failed plugin
+		// verification - the console must not show a mode as enabled that nothing checked.
+		if err := revalidateModeUnit(unit); err != nil {
+			message := err.Error()
+			if _, rerr := h.table.SetEnabled(id, false); rerr != nil {
+				message = fmt.Sprintf("%s；且开关回滚失败：%v", message, rerr)
+			}
+			unit.Enabled = false
+			if h.audit != nil {
+				h.audit.RecordOK(c, "plugin", "unit_enable_refused", "拒绝启用模式单元", "plugin_unit", id, map[string]interface{}{
+					"reason": message,
+				})
+			}
+			c.JSON(http.StatusConflict, gin.H{"error": message, "unit": h.liveUnitView(unit)})
+			return
+		}
+	}
 	// The tool surface is recomposed *after* the switch has been applied. A plugin's capabilities only
 	// exist once its trust domain is declared and verified, so rebuilding earlier would compose a
 	// surface that misses the very entry points this request just made callable - and the console
@@ -738,7 +757,16 @@ func (h *PluginHandler) RemoveLocalUnit(c *gin.Context) {
 			"selection": out.selection, "install_recorded": out.recorded,
 			"bundle_uninstalled": uninstalled,
 		}, reportOf(out))
-		if out.recordMsg != "" {
+		if uninstalled {
+			// The last unit leaving is performed as the uninstall it is, so the record question
+			// here is "was it forgotten" - and a failed cleanup means the pack comes back at the
+			// next boot, which the response must say out loud rather than hide behind
+			// install_recorded=false.
+			body["install_forgotten"] = out.forgotten
+			if out.forgetMsg != "" {
+				body["install_message"] = out.forgetMsg
+			}
+		} else if out.recordMsg != "" {
 			body["install_message"] = out.recordMsg
 		}
 		if out.switchMsg != "" {

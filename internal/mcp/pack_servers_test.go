@@ -152,6 +152,30 @@ func TestOperatorSideWritesRefuseAPackServer(t *testing.T) {
 	}
 }
 
+// RemovePackServer's own contract says a server the pack never owned is not its to remove. The
+// implementation has to hold that line: a name that was never pack-declared (the operator's own
+// config.yaml server, say, after it shadowed a pack's declaration) must be refused and left
+// alone - otherwise unplugging the shadowed pack closes the operator's server with it.
+func TestRemovePackServerRefusesANameThePackNeverOwned(t *testing.T) {
+	manager := NewExternalMCPManager(zap.NewNop())
+	if err := manager.AddOrUpdateConfig("lab", disabledServer("/usr/local/bin/the-operators-binary")); err != nil {
+		t.Fatalf("AddOrUpdateConfig: %v", err)
+	}
+	if err := manager.RemovePackServer("lab"); err == nil {
+		t.Fatal("RemovePackServer deleted a server no pack ever declared")
+	}
+	if _, ok := manager.GetConfigs()["lab"]; !ok {
+		t.Fatal("the operator's config-owned server was removed")
+	}
+	if got := manager.GetConfigs()["lab"].Command; got != "/usr/local/bin/the-operators-binary" {
+		t.Fatalf("the operator's server was replaced: %+v", manager.GetConfigs()["lab"])
+	}
+	// The owned direction keeps working: the refusal is about ownership, not about removing.
+	if err := manager.DeclarePackServer("lab", "mcp-pack", disabledServer("python3")); err == nil {
+		t.Fatal("a pack declaration overwrote the operator's server while the refusal was tested")
+	}
+}
+
 func configNames(m map[string]config.ExternalMCPServerConfig) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

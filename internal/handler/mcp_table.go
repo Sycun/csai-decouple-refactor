@@ -148,7 +148,14 @@ func (h *PluginHandler) dropMCP(units []plugin.Unit) (removed int, message strin
 		return 0, "MCP 声明未接入外部 MCP 管理器：声明仍留在能力表里，需要重启或手工在 MCP 页停用"
 	}
 	for _, u := range mcpUnitsOf(units) {
-		if owner, owned := h.mcp.PackOwner(u.Name); owned && owner != u.Bundle {
+		owner, owned := h.mcp.PackOwner(u.Name)
+		if !owned {
+			// The manager holds no pack declaration under this name: it was shadowed by the
+			// operator's config.yaml server, or never took at all. Either way there is nothing
+			// of this pack's to remove - and asking would delete the operator's own declaration.
+			continue
+		}
+		if owner != u.Bundle {
 			message = fmt.Sprintf("%s: 该服务器现由能力包 %q 声明，本包不删除它", u.ID, owner)
 			continue
 		}
