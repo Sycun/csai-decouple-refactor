@@ -1632,7 +1632,6 @@ async function fetchChatSystemModelsForChannel(channelId, options) {
 async function openChatSystemModelPicker(event) {
     if (event) {
         event.preventDefault();
-        event.stopPropagation();
     }
     const ui = chatSystemModelElements();
     if (!ui.menu || !ui.button || !ui.list) return;
@@ -1654,6 +1653,14 @@ async function openChatSystemModelPicker(event) {
     updateChatSystemModelPickerValues();
     await fetchChatSystemModelsForChannel(resolveChatPickerChannelId());
 }
+
+document.addEventListener('click', (e) => {
+    const ui = chatSystemModelElements();
+    if (!ui.menu || ui.menu.hidden) return;
+    if (ui.menu.contains(e.target)) return;
+    if (ui.button && ui.button.contains(e.target)) return;
+    closeChatSystemModelPicker();
+});
 
 function truncateChatAIChannelSummaryLabel(label) {
     const chars = Array.from(String(label || ''));
