@@ -3704,13 +3704,13 @@
                                                         <div class="ai-channel-form-grid">
                                                             <div class="form-group">
                                                                 <label for="openai-max-total-tokens"><span data-i18n="settingsBasic.maxTotalTokens">最大上下文 Token 数</span></label>
-                                                                <input type="number" id="openai-max-total-tokens" data-i18n="settingsBasic.maxTotalTokensPlaceholder" data-i18n-attr="placeholder" placeholder="120000" min="1000" step="1000" />
+                                                                <input type="number" id="openai-max-total-tokens" data-i18n="settingsBasic.maxTotalTokensPlaceholder" data-i18n-attr="placeholder" placeholder="120000" value="120000" min="1000" step="1000" />
                                                                 <small class="form-hint" data-i18n="settingsBasic.maxTotalTokensHint">内存压缩和攻击链构建共用此配置，默认 120000</small>
                                                             </div>
                                                             <div class="form-group">
                                                                 <label for="openai-max-completion-tokens"><span data-i18n="settingsBasic.maxCompletionTokens">最大输出 Token 数</span></label>
-                                                                <input type="number" id="openai-max-completion-tokens" data-i18n="settingsBasic.maxCompletionTokensPlaceholder" data-i18n-attr="placeholder" placeholder="16384" min="1" step="256" />
-                                                                <small class="form-hint" data-i18n="settingsBasic.maxCompletionTokensHint">单次模型回复的输出上限，默认 16384</small>
+                                                                <input type="number" id="openai-max-completion-tokens" data-i18n="settingsBasic.maxCompletionTokensPlaceholder" data-i18n-attr="placeholder" placeholder="32768" value="32768" min="256" step="256" />
+                                                                <small class="form-hint" data-i18n="settingsBasic.maxCompletionTokensHint">单次模型回复的输出上限，默认 32768</small>
                                                             </div>
                                                         </div>
                                                     </section>
@@ -6914,7 +6914,7 @@
     <script src="/static/js/chat-plan-progress.js?v=20260815-1"></script>
     <script src="/static/js/hitl.js?v=20260819-1"></script>
     <script src="/static/js/tool-guard.js?v=20260907-7"></script>
-    <script src="/static/js/settings.js?v=20260717-1"></script>
+    <script src="/static/js/settings.js?v=20261009-1"></script>
     <script src="/static/js/audit-datetime-picker.js"></script>
     <script src="/static/js/audit.js"></script>
     <script src="/static/js/storage.js"></script>

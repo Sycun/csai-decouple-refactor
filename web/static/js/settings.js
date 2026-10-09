@@ -779,8 +779,9 @@ async function loadConfig(loadTools = true, options = {}) {
         
         currentConfig.ai = ensureAIConfigShape(currentConfig);
         selectedAIChannelId = currentConfig.ai.default_channel;
-        renderAIChannelSelect();
+        // 先写主表单再渲染通道下拉：渲染链路若抛错，额度等默认值仍已落在输入框里。
         writeAIChannelToMainForm(selectedAIChannelId);
+        renderAIChannelSelect();
 
         fillVisionConfigFromCurrent(currentConfig.vision || {});
         initModelListControls();
@@ -2550,8 +2551,9 @@ function enhanceModelPickSelect(selectId) {
         if (val === null || val === '') return;
         if (select.value !== val) {
             select.value = val;
-            select.dispatchEvent(new Event('change', { bubbles: true }));
         }
+        // 即使点中的就是当前选中值也要派发 change：输入框可能被手工清空/改过，回填监听只认 change，重复派发是幂等的
+        select.dispatchEvent(new Event('change', { bubbles: true }));
         wrapper.classList.remove('open');
         syncModelPickDropdown(selectId);
     });
