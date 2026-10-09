@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -957,6 +958,33 @@ func TestUninstallDoesNotRemoveAnotherPacksServer(t *testing.T) {
 	}
 }
 
+// The mirror of the other-pack case: the name was shadowed by config.yaml, so the manager holds
+// the operator's file-owned server and NO pack ownership. Unplugging the pack must not ask the
+// manager to remove anything - RemovePackServer would delete the operator's own declaration,
+// which is exactly the server the shadowing rules exist to protect.
+func TestUninstallLeavesAConfigOwnedServerAlone(t *testing.T) {
+	env := newPluginTestEnv(t, false)
+	writeMCPPack(t, env)
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"mcp-pack"}`); rec.Code != http.StatusOK {
+		t.Fatalf("install: %s", rec.Body.String())
+	}
+	// The declaration lost the name to config.yaml (the fake needs that shadow state written by
+	// hand: its DeclarePackServer always succeeds, while the real manager refuses the name).
+	env.mcp.configs["lab-server"] = config.ExternalMCPServerConfig{Command: "/usr/local/bin/the-operators-binary"}
+	delete(env.mcp.owners, "lab-server")
+
+	rec := env.do(t, http.MethodDelete, "/api/plugins/bundles/mcp-pack", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("uninstall: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(env.mcp.removes) != 0 {
+		t.Fatalf("unplug asked the manager to remove a server the pack never held: %v", env.mcp.removes)
+	}
+	if got := env.mcp.configs["lab-server"].Command; got != "/usr/local/bin/the-operators-binary" {
+		t.Fatalf("the operator's config-owned server was removed: %+v", env.mcp.configs["lab-server"])
+	}
+}
+
 // A capability pack is content somebody else wrote. config.yaml and the MCP page both expand
 // ${VAR} in a server declaration; doing that here would hand the pack the platform process
 // environment, and a declaration like Authorization: "Bearer ${CSAI_LLM_API_KEY}" is then a
@@ -1368,6 +1396,166 @@ func TestPluginUninstallAfterAPartialInstallOnlyUnwindsWhatWasInstalled(t *testi
 	}
 }
 
+// writeVersionedPack lays down a pack whose unit set grows between versions: 1.0.0 carries roles
+// a+b, anything later adds c. A rollback target exists because every install snapshots the version
+// it put in.
+func writeVersionedPack(t *testing.T, env *pluginTestEnv, version string) {
+	t.Helper()
+	dir := filepath.Join(env.bundles, "versioned-pack")
+	writeTestFile(t, filepath.Join(dir, "roles", "a.yaml"), "name: a\nuser_prompt: A\nenabled: true\n")
+	writeTestFile(t, filepath.Join(dir, "roles", "b.yaml"), "name: b\nuser_prompt: B\nenabled: true\n")
+	units := "  - kind: role\n    path: roles/a.yaml\n  - kind: role\n    path: roles/b.yaml\n"
+	if version != "1.0.0" {
+		writeTestFile(t, filepath.Join(dir, "roles", "c.yaml"), "name: c\nuser_prompt: C\nenabled: true\n")
+		units += "  - kind: role\n    path: roles/c.yaml\n"
+	} else {
+		// A roll-back restores the snapshot bytes, so the newer file must not linger from the
+		// fixture's own rewrite either.
+		_ = os.Remove(filepath.Join(dir, "roles", "c.yaml"))
+	}
+	writeTestFile(t, filepath.Join(dir, plugin.ManifestFileName),
+		"id: versioned-pack\nname: 版本包\nversion: "+version+"\nunits:\n"+units)
+}
+
+// Rolling back a partial install must keep the selection the operator is living with. The request
+// carries no units (the console's rollback button sends none), so the selection is derived from
+// what the table serves - recording the rollback as "the whole pack" would silently install
+// everything the old version ever declared.
+func TestPluginRollbackKeepsTheLiveSelection(t *testing.T) {
+	env := newPluginTestEnv(t, false)
+	writeVersionedPack(t, env, "1.0.0")
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"versioned-pack","units":["role/a"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("install: %s", rec.Body.String())
+	}
+	writeVersionedPack(t, env, "2.0.0")
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"versioned-pack","units":["role/a"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("upgrade: %s", rec.Body.String())
+	}
+	rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"versioned-pack","from_version":"1.0.0"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rollback: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok := env.table.Unit("role/a"); !ok {
+		t.Fatalf("the kept unit vanished in the rollback")
+	}
+	if _, ok := env.table.Unit("role/b"); ok {
+		t.Fatalf("a rollback without units widened a partial install into the whole old pack")
+	}
+	if sel := env.installs.selections["versioned-pack"]; len(sel) != 1 || sel[0] != "role/a" {
+		t.Fatalf("the record after rollback = %v, want the selection the operator had", sel)
+	}
+}
+
+// The whole-pack direction of the same rule: an install that follows the pack rolls back to the
+// whole old version, record and all.
+func TestPluginRollbackOfAWholePackInstallStaysWhole(t *testing.T) {
+	env := newPluginTestEnv(t, false)
+	writeVersionedPack(t, env, "1.0.0")
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"versioned-pack"}`); rec.Code != http.StatusOK {
+		t.Fatalf("install: %s", rec.Body.String())
+	}
+	writeVersionedPack(t, env, "2.0.0")
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"versioned-pack"}`); rec.Code != http.StatusOK {
+		t.Fatalf("upgrade: %s", rec.Body.String())
+	}
+	rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"versioned-pack","from_version":"1.0.0"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rollback: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, id := range []string{"role/a", "role/b"} {
+		if _, ok := env.table.Unit(id); !ok {
+			t.Fatalf("a whole-pack rollback lost %s", id)
+		}
+	}
+	if sel, recorded := env.installs.selections["versioned-pack"]; recorded && sel != nil {
+		t.Fatalf("a whole-pack rollback recorded an explicit selection: %v", sel)
+	}
+}
+
+// The refusal that keeps the widening impossible: every unit the operator has exists only in the
+// newer version, so the old one would deliver nothing they chose. Refusing before the snapshot is
+// restored means the live pack is untouched - table, bytes and record all still the new version.
+func TestPluginRollbackRefusesWhenNoSelectedUnitSurvives(t *testing.T) {
+	env := newPluginTestEnv(t, false)
+	writeVersionedPack(t, env, "1.0.0")
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"versioned-pack"}`); rec.Code != http.StatusOK {
+		t.Fatalf("install: %s", rec.Body.String())
+	}
+	writeVersionedPack(t, env, "2.0.0")
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"versioned-pack","units":["role/c"]}`); rec.Code != http.StatusOK {
+		t.Fatalf("upgrade: %s", rec.Body.String())
+	}
+	rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"versioned-pack","from_version":"1.0.0"}`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("rollback of a selection the old version cannot serve: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "都不存在") {
+		t.Fatalf("the refusal does not name why: %s", rec.Body.String())
+	}
+	if _, ok := env.table.Unit("role/c"); !ok {
+		t.Fatalf("a refused rollback still touched the table")
+	}
+	b, err := os.ReadFile(filepath.Join(env.bundles, "versioned-pack", plugin.ManifestFileName))
+	if err != nil || !strings.Contains(string(b), "2.0.0") {
+		t.Fatalf("a refused rollback still restored the snapshot bytes: %v %s", err, b)
+	}
+}
+
+// Removing the pack's last unit is performed as the uninstall it is - and then the record
+// question is "was it forgotten". A failed cleanup means the pack comes back at the next boot,
+// which must be said out loud in the response instead of hiding behind install_recorded=false.
+func TestPluginUnitRemovalOfTheLastUnitReportsAFailedRecordCleanup(t *testing.T) {
+	env := newPluginTestEnv(t, false)
+	writeMCPPack(t, env)
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"mcp-pack"}`); rec.Code != http.StatusOK {
+		t.Fatalf("install: %s", rec.Body.String())
+	}
+	env.installs.err = errors.New("db gone")
+	rec := env.do(t, http.MethodDelete, "/api/plugins/units/mcp/lab-server", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("remove: %d %s", rec.Code, rec.Body.String())
+	}
+	state := decodeState(t, rec)
+	if state["bundle_uninstalled"] != true {
+		t.Fatalf("removing the last unit is the uninstall: %v", state)
+	}
+	if state["install_forgotten"] != false {
+		t.Fatalf("the response does not state the cleanup outcome: %v", state)
+	}
+	if msg, _ := state["install_message"].(string); !strings.Contains(msg, "安装记录未清理") {
+		t.Fatalf("a failed record cleanup (the pack resurrects at boot) is not said out loud: %v", state)
+	}
+}
+
+// The enable switch is the third path a mode takes into the runtime catalog (install and the boot
+// check are the other two), and the declaration is a reviewed surface on all three: a file that
+// went bad while the unit was off - its id no longer matching the unit name - must refuse the
+// switch and roll it back, not ride into the catalog unchecked.
+func TestPluginModeUnitEnableRevalidatesTheDeclaration(t *testing.T) {
+	env := newPluginTestEnv(t, false)
+	writeTestFile(t, filepath.Join(env.bundles, "mode-pack", "modes", "deep.yaml"), "id: deep\n")
+	writeTestFile(t, filepath.Join(env.bundles, "mode-pack", plugin.ManifestFileName),
+		"id: mode-pack\nname: 模式包\nversion: 1.0.0\nunits:\n  - kind: mode\n    path: modes/deep.yaml\n")
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"mode-pack"}`); rec.Code != http.StatusOK {
+		t.Fatalf("install: %s", rec.Body.String())
+	}
+	if rec := env.do(t, http.MethodPost, "/api/plugins/units/mode/deep/enabled", `{"enabled":false}`); rec.Code != http.StatusOK {
+		t.Fatalf("disable: %d %s", rec.Code, rec.Body.String())
+	}
+	// The declaration went bad while the unit was off: its id no longer is the unit's name.
+	writeTestFile(t, filepath.Join(env.bundles, "mode-pack", "modes", "deep.yaml"), "id: supervisor\n")
+	rec := env.do(t, http.MethodPost, "/api/plugins/units/mode/deep/enabled", `{"enabled":true}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("enabling a mode whose declaration went bad: %d %s", rec.Code, rec.Body.String())
+	}
+	if u, _ := env.table.Unit("mode/deep"); u.Enabled {
+		t.Fatalf("a refused enable left the unit on: %+v", u)
+	}
+	if !strings.Contains(rec.Body.String(), "不一致") {
+		t.Fatalf("the refusal does not name the mismatch: %s", rec.Body.String())
+	}
+}
+
 // Two packs, one identity: the catalogue says who holds it, and the install of that unit is refused
 // by name instead of half-succeeding.
 func TestAvailableCatalogueNamesAConflictingHolder(t *testing.T) {
@@ -1438,5 +1626,126 @@ func TestPluginReconcileKeepsAnAlreadyInstalledServerDeclared(t *testing.T) {
 	}
 	if _, ok := env.table.Unit("role/持有角色"); !ok {
 		t.Fatalf("the newly chosen role did not arrive")
+	}
+}
+
+// The mirror image of the running server: the operator switched a unit OFF, and a reconcile that
+// keeps the unit must not hand the table a fresh manifest copy (Enabled=true) in its place. The
+// boot replay of the saved switch only runs at start-up, so without the table holding the line the
+// unit is silently live again until the next restart.
+func TestPluginReconcileKeepsTheOperatorsOffDecision(t *testing.T) {
+	env := newPluginTestEnv(t, true)
+	writeMCPPack2(t, env)
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"mcp-role-pack"}`); rec.Code != http.StatusOK {
+		t.Fatalf("install: %s", rec.Body.String())
+	}
+	if rec := env.do(t, http.MethodPost, "/api/plugins/units/role/持有角色/enabled", `{"enabled":false}`); rec.Code != http.StatusOK {
+		t.Fatalf("disable: %d %s", rec.Code, rec.Body.String())
+	}
+	rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"mcp-role-pack","units":["role/持有角色"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("narrowing reconcile: %d %s", rec.Code, rec.Body.String())
+	}
+	u, ok := env.table.Unit("role/持有角色")
+	if !ok {
+		t.Fatalf("the kept role vanished from the table")
+	}
+	if u.Enabled {
+		t.Fatalf("a reconcile silently re-enabled the role the operator switched off")
+	}
+	for _, p := range env.table.EnabledPaths(plugin.KindRole) {
+		if p == u.Path {
+			t.Fatalf("a switched-off role is being served after the reconcile: %v", p)
+		}
+	}
+	// The saved switch was never touched, so the next boot replays the same picture.
+	if enabled, ok := env.switches.recorded["role/持有角色"]; !ok || enabled {
+		t.Fatalf("the saved switch drifted from the operator's decision: %v", env.switches.recorded)
+	}
+	for _, id := range env.switches.forgot {
+		if id == "role/持有角色" {
+			t.Fatalf("a reconcile forgot the operator's switch for a unit that stayed")
+		}
+	}
+}
+
+// An upgrade that edits a running server's declaration in place (same identity, new bytes) must
+// re-declare from the new bytes and bring the unit back off: the operator consented to the command
+// in front of them, and it is the digest that says it changed - the version string is the author's
+// say-so. Boot holds the same line for restarts.
+func TestPluginUpgradeRedeclaresAChangedServer(t *testing.T) {
+	env := newPluginTestEnv(t, false)
+	writeMCPPack2(t, env)
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"mcp-role-pack"}`); rec.Code != http.StatusOK {
+		t.Fatalf("install: %s", rec.Body.String())
+	}
+	if rec := env.do(t, http.MethodPost, "/api/plugins/units/mcp/lab-server/enabled", `{"enabled":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("enable: %d %s", rec.Code, rec.Body.String())
+	}
+	addsAfterEnable := len(env.mcp.adds)
+
+	// v2: same unit identity, edited declaration bytes.
+	writeTestFile(t, filepath.Join(env.bundles, "mcp-role-pack", "mcp", "lab-server.yaml"),
+		"type: stdio\ncommand: python3\nargs: [\"-c\", \"print(1)\"]\n")
+	rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"mcp-role-pack"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upgrade: %d %s", rec.Code, rec.Body.String())
+	}
+	if len(env.mcp.adds) != addsAfterEnable+1 {
+		t.Fatalf("a changed declaration was not re-declared (adds=%v): the manager keeps serving the old command", env.mcp.adds)
+	}
+	cfg := env.mcp.configs["lab-server"]
+	if cfg.ExternalMCPEnable || !cfg.Disabled {
+		t.Fatalf("a changed server came back without a fresh consent: enable=%v disabled=%v", cfg.ExternalMCPEnable, cfg.Disabled)
+	}
+	if got := fmt.Sprint(cfg.Args); !strings.Contains(got, "print(1)") {
+		t.Fatalf("the manager still holds the previous declaration: %+v", cfg)
+	}
+	if u, _ := env.table.Unit("mcp/lab-server"); u.Enabled {
+		t.Fatalf("the table says a changed server is still on: %+v", u)
+	}
+}
+
+// Same line for the tool surface: a recipe edited in place is new bytes under a familiar identity,
+// and Rebuild is the only reader of recipes - skipping it serves the old command indefinitely.
+func TestPluginUpgradeRebuildsToolsForAChangedRecipe(t *testing.T) {
+	env := newPluginTestEnv(t, true)
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"reporting-pack"}`); rec.Code != http.StatusOK {
+		t.Fatalf("install: %s", rec.Body.String())
+	}
+	callsAfterInstall := env.tools.calls
+
+	writeTestFile(t, filepath.Join(env.bundles, "reporting-pack", "tools", "pandoc.yaml"),
+		"name: pandoc\ncommand: /bin/false\n")
+	rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"reporting-pack"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upgrade: %d %s", rec.Code, rec.Body.String())
+	}
+	if env.tools.calls != callsAfterInstall+1 {
+		t.Fatalf("a changed recipe did not rebuild the tool surface (calls=%d, want %d)", env.tools.calls, callsAfterInstall+1)
+	}
+	if got := decodeState(t, rec)["tools_rebuilt"]; got != true {
+		t.Fatalf("the response does not report the rebuild: %v", got)
+	}
+}
+
+// The guard rail against over-firing: a reconcile whose bytes are all identical must not
+// re-declare anything (it would stop a running server) nor pay for a rebuild.
+func TestPluginReconcileWithUnchangedBytesDeclaresNothing(t *testing.T) {
+	env := newPluginTestEnv(t, true)
+	if rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"reporting-pack"}`); rec.Code != http.StatusOK {
+		t.Fatalf("install: %s", rec.Body.String())
+	}
+	callsAfterInstall := env.tools.calls
+
+	rec := env.do(t, http.MethodPost, "/api/plugins/install", `{"bundle":"reporting-pack"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reconcile: %d %s", rec.Code, rec.Body.String())
+	}
+	if env.tools.calls != callsAfterInstall {
+		t.Fatalf("an unchanged reconcile rebuilt the tool surface")
+	}
+	if got := decodeState(t, rec)["tools_rebuilt"]; got == true {
+		t.Fatalf("an unchanged reconcile reported a rebuild: %v", got)
 	}
 }
