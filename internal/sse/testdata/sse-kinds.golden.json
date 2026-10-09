@@ -339,7 +339,7 @@
     {
       "Name": "cancelled",
       "File": "internal/handler/workflow_integration.go",
-      "Line": 127,
+      "Line": 131,
       "Mode": "conduit",
       "Stream": "agent"
     },
@@ -395,7 +395,7 @@
     {
       "Name": "done",
       "File": "internal/workflow/nodes.go",
-      "Line": 235,
+      "Line": 253,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -640,7 +640,7 @@
     {
       "Name": "finalization_check",
       "File": "internal/handler/workflow_integration.go",
-      "Line": 176,
+      "Line": 180,
       "Mode": "conduit",
       "Stream": "agent"
     },
@@ -682,7 +682,7 @@
     {
       "Name": "iteration",
       "File": "internal/workflow/nodes.go",
-      "Line": 240,
+      "Line": 258,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -871,14 +871,14 @@
     {
       "Name": "response",
       "File": "internal/handler/workflow_integration.go",
-      "Line": 191,
+      "Line": 195,
       "Mode": "conduit",
       "Stream": "agent"
     },
     {
       "Name": "response",
       "File": "internal/workflow/nodes.go",
-      "Line": 235,
+      "Line": 253,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -899,7 +899,7 @@
     {
       "Name": "response_delta",
       "File": "internal/workflow/nodes.go",
-      "Line": 235,
+      "Line": 253,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -920,7 +920,7 @@
     {
       "Name": "response_start",
       "File": "internal/workflow/nodes.go",
-      "Line": 235,
+      "Line": 253,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -1025,7 +1025,7 @@
     {
       "Name": "workflow_agent_output",
       "File": "internal/workflow/nodes.go",
-      "Line": 199,
+      "Line": 217,
       "Mode": "conduit",
       "Stream": "agent"
     },
@@ -1060,7 +1060,7 @@
     {
       "Name": "workflow_hitl_checkpoint",
       "File": "internal/workflow/nodes.go",
-      "Line": 324,
+      "Line": 342,
       "Mode": "conduit",
       "Stream": "agent"
     },
@@ -1289,14 +1289,14 @@
     {
       "Name": "cancelled",
       "File": "handler/workflow_integration.go",
-      "Line": 125,
+      "Line": 129,
       "Mode": "literal",
       "Stream": "detail"
     },
     {
       "Name": "cancelled",
       "File": "handler/workflow_integration.go",
-      "Line": 266,
+      "Line": 274,
       "Mode": "literal",
       "Stream": "detail"
     },
@@ -1359,7 +1359,7 @@
     {
       "Name": "error",
       "File": "handler/workflow_integration.go",
-      "Line": 155,
+      "Line": 159,
       "Mode": "literal",
       "Stream": "detail"
     },
@@ -1471,7 +1471,7 @@
     {
       "Name": "timeout",
       "File": "handler/workflow_integration.go",
-      "Line": 140,
+      "Line": 144,
       "Mode": "literal",
       "Stream": "detail"
     },
