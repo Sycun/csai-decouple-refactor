@@ -180,20 +180,21 @@ func (l *WebSocketListener) handleConn(ws *websocket.Conn) {
 	l.conns[session.ID] = conn
 	l.mu.Unlock()
 	defer func() {
-		l.mu.Lock()
-		delete(l.conns, session.ID)
-		l.mu.Unlock()
+		l.detachConnection(conn)
 		_ = ws.Close()
-		_ = l.manager.MarkSessionDead(session.ID)
 	}()
 
 	// 心跳 goroutine
 	pingTicker := time.NewTicker(20 * time.Second)
 	defer pingTicker.Stop()
+	connDone := make(chan struct{})
+	defer close(connDone)
 	go func() {
 		for {
 			select {
 			case <-l.stopCh:
+				return
+			case <-connDone:
 				return
 			case <-pingTicker.C:
 				conn.writeMu.Lock()
@@ -213,7 +214,7 @@ func (l *WebSocketListener) handleConn(ws *websocket.Conn) {
 		case "result":
 			var report TaskResultReport
 			if err := json.Unmarshal(body, &report); err == nil {
-				_ = l.manager.IngestTaskResult(report)
+				_ = l.manager.IngestTaskResultFromListener(l.rec.ID, conn.sessionID, report)
 			}
 		case "checkin":
 			// 心跳更新：beacon 周期性送上心跳
@@ -222,6 +223,16 @@ func (l *WebSocketListener) handleConn(ws *websocket.Conn) {
 				_ = l.manager.C2().TouchC2Session(session.ID, string(SessionActive), time.Now())
 			}
 		}
+	}
+}
+
+// detachConnection only retires the connection that still owns this session.
+func (l *WebSocketListener) detachConnection(conn *wsConn) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.conns[conn.sessionID] == conn {
+		delete(l.conns, conn.sessionID)
+		_ = l.manager.MarkSessionDead(conn.sessionID)
 	}
 }
 

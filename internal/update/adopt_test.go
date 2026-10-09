@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -33,7 +34,7 @@ func TestPreviewNamesWhatAdoptionWouldReplaceWithoutTouchingTheDirectory(t *test
 	requireGit(t)
 	tr, dir := newAdoptFixture(t)
 
-	plan, err := Preview(context.Background(), Options{Root: dir, RemoteURL: tr.upstream, Branch: "main"})
+	plan, err := Preview(context.Background(), Options{Root: dir, Repo: tr.upstream})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +62,7 @@ func TestAdoptConnectsTheDirectoryAndKeepsOperatorContent(t *testing.T) {
 	requireGit(t)
 	tr, dir := newAdoptFixture(t)
 
-	res, err := Adopt(context.Background(), Options{Root: dir, RemoteURL: tr.upstream, Branch: "main", BinaryName: "none"}, nil)
+	res, err := Adopt(context.Background(), Options{Root: dir, Repo: tr.upstream, BinaryName: "none"}, nil)
 	if err != nil {
 		t.Fatalf("adopt failed: %v\nresult: %+v", err, res)
 	}
@@ -105,14 +106,14 @@ func TestAdoptConnectsTheDirectoryAndKeepsOperatorContent(t *testing.T) {
 	tr.upstreamCommit(t, "second: bump service", map[string]string{
 		"internal_service.go": "package service\n\nconst Version = \"2\"\n",
 	})
-	snap, err := Check(context.Background(), Options{Root: dir, BinaryName: "none"})
+	snap, err := Check(context.Background(), Options{Root: dir, Repo: tr.upstream, BinaryName: "none"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if snap.CheckError != "" || snap.Behind != 1 {
 		t.Fatalf("the adopted tree must update like any other: checkError=%q behind=%d", snap.CheckError, snap.Behind)
 	}
-	res2, err := Apply(context.Background(), Options{Root: dir, BinaryName: "none"}, nil)
+	res2, err := Apply(context.Background(), Options{Root: dir, Repo: tr.upstream, BinaryName: "none"}, nil)
 	if err != nil {
 		t.Fatalf("apply after adopt failed: %v", err)
 	}
@@ -131,16 +132,18 @@ func TestAdoptRefusesWhatItCannotHonestlyDo(t *testing.T) {
 	requireGit(t)
 	tr := newTree(t)
 	// Already a work tree: that is an update, not an adoption.
-	if _, err := Adopt(context.Background(), Options{Root: tr.install, RemoteURL: tr.upstream, BinaryName: "none"}, nil); asReason(err) != "already_a_repo" {
+	if _, err := Adopt(context.Background(), Options{Root: tr.install, Repo: tr.upstream, BinaryName: "none"}, nil); asReason(err) != "already_a_repo" {
 		t.Errorf("err = %v, want already_a_repo", err)
 	}
-	// No source configured.
+	// Nothing to adopt onto: the directory has to exist.
 	plain := t.TempDir()
-	if _, err := Adopt(context.Background(), Options{Root: plain, BinaryName: "none"}, nil); asReason(err) != "no_source" {
-		t.Errorf("err = %v, want no_source", err)
+	missing := filepath.Join(plain, "not-a-directory")
+	if _, err := Adopt(context.Background(), Options{Root: missing}, nil); asReason(err) != "bad_root" {
+		t.Errorf("err = %v, want bad_root", err)
 	}
-	// An address git must never be handed.
-	if _, err := Adopt(context.Background(), Options{Root: plain, RemoteURL: "ext::sh -c true", BinaryName: "none"}, nil); asReason(err) != "bad_source" {
+	// An address git must never be handed. (An unset address is no longer an error: the
+	// official repository is the default update source.)
+	if _, err := Adopt(context.Background(), Options{Root: plain, Repo: "ext::sh -c true", BinaryName: "none"}, nil); asReason(err) != "bad_source" {
 		t.Errorf("err = %v, want bad_source", err)
 	}
 }
@@ -159,4 +162,24 @@ func asReason(err error) string {
 		return ue.Reason
 	}
 	return ""
+}
+
+func TestAdoptPreservesModeOfUnchangedProtectedFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX permissions are not available on Windows")
+	}
+	requireGit(t)
+	tr, dir := newAdoptFixture(t)
+	role := filepath.Join(dir, "roles", "shipped.yaml")
+	writeFile(t, role, readFile(t, filepath.Join(tr.upstream, "roles", "shipped.yaml")))
+	if err := os.Chmod(role, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Adopt(context.Background(), Options{Root: dir, Repo: tr.upstream, BinaryName: "none"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(role)
+	if err != nil || info.Mode().Perm() != 0600 {
+		t.Fatalf("adoption lost private permissions: %v %v", info, err)
+	}
 }

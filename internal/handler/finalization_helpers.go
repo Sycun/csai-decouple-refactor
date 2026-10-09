@@ -8,6 +8,7 @@ import (
 	"cyberstrike-ai/internal/database"
 	"cyberstrike-ai/internal/multiagent"
 	"cyberstrike-ai/internal/store"
+	workflowrunner "cyberstrike-ai/internal/workflow"
 
 	"go.uber.org/zap"
 )
@@ -199,6 +200,9 @@ func finalizationCheckMessage(d agentfinalizer.Decision) string {
 }
 
 func finalizationBlockedMessage(d agentfinalizer.Decision) string {
+	if d.CompletionReason == "workflow_rejected" && strings.TrimSpace(d.FinalText) != "" {
+		return d.FinalText
+	}
 	parts := []string{"任务尚未达到最终回复条件，暂不生成成功结论。"}
 	if d.CompletionReason != "" {
 		parts = append(parts, "原因: "+d.CompletionReason)
@@ -218,4 +222,26 @@ func finalizationResponsePayload(d agentfinalizer.Decision, extra map[string]int
 
 func requestRequiresExecutionEvidence(req *ChatRequest) bool {
 	return req != nil && req.Finalization.RequireExecutionEvidence != nil && *req.Finalization.RequireExecutionEvidence
+}
+
+// finalizeWorkflowRunForDelivery decides and persists a workflow run's terminal state. It lives
+// here rather than on AgentHandler because it is the same job as the agent-run finalizers above -
+// decide, persist - and its whole dependency set is this type's.
+func (f *runFinalizer) finalizeWorkflowRunForDelivery(conversationID, messageID string, result *workflowrunner.RunResult) agentfinalizer.Decision {
+	in := agentfinalizer.Input{ConversationID: conversationID, AssistantMessageID: messageID, AgentMode: "workflow"}
+	if result == nil {
+		in.Status = agentfinalizer.StatusFailed
+		in.Response = "工作流未返回执行结果。"
+	} else {
+		in.Response = result.Response
+		in.AwaitingHITL = result.AwaitingHITL
+		in.Status = result.Status
+		if result.Status == "rejected" {
+			in.Status = agentfinalizer.StatusCancelled
+			in.CompletionReason = "workflow_rejected"
+		}
+	}
+	decision := agentfinalizer.Decide(f.decisionStore(), in)
+	f.persistFinalizationDecision(conversationID, messageID, "workflow", nil, "", decision)
+	return decision
 }

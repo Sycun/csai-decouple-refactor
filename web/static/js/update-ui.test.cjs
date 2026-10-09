@@ -10,6 +10,7 @@ const settings = fs.readFileSync('web/static/js/settings.js', 'utf8');
 const sheet = fs.readFileSync('web/static/css/style.css', 'utf8');
 const zh = JSON.parse(fs.readFileSync('web/static/i18n/zh-CN.json', 'utf8'));
 const en = JSON.parse(fs.readFileSync('web/static/i18n/en-US.json', 'utf8'));
+const ru = JSON.parse(fs.readFileSync('web/static/i18n/ru-RU.json', 'utf8'));
 
 // The only handlers this console is allowed to wire into markup.
 const HANDLES = ['startUpdateApply', 'checkForUpdates', 'rollbackUpdate',
@@ -18,8 +19,9 @@ const HANDLES = ['startUpdateApply', 'checkForUpdates', 'rollbackUpdate',
     'startRestartNow', 'refreshUpdatePage'];
 
 // The envelope shape GET /api/system/update answers with, plus what the source endpoints return.
-const emptySource = { remote: '', remoteUrl: '', branch: '', configured: false };
-const configuredSource = { remote: '', remoteUrl: 'https://github.com/Sycun/CyberStrikeAI.git', branch: 'main', configured: true };
+const officialRepo = 'https://github.com/AIPentest/CyberStrikeAI.git';
+const emptySource = { repo: '', configured: false, defaultRepo: officialRepo };
+const configuredSource = { repo: 'https://github.com/Sycun/CyberStrikeAI.git', configured: true, defaultRepo: officialRepo };
 const adoptPlan = {
     root: '/srv/csai',
     source: 'https://github.com/Sycun/CyberStrikeAI.git',
@@ -56,7 +58,9 @@ const baseStatus = {
     root: '/srv/csai',
     installed: true,
     branch: 'main',
-    remote: 'mine',
+    repo: officialRepo,
+    repoConfigured: false,
+    targetBranch: 'main',
     commit: 'a1b2c3d',
     subject: 'fix: 修好一个东西',
     committedAt: '2026-09-30 18:04:11 +0800',
@@ -100,7 +104,7 @@ const runningJob = {
     id: 'upd-1',
     state: 'running',
     started: '2026-10-01T04:00:00+08:00',
-    steps: [{ phase: 'fetch', message: '开始拉取 mine/main', at: '2026-10-01T04:00:01+08:00' }],
+    steps: [{ phase: 'fetch', message: '开始拉取更新源（默认分支 main）', at: '2026-10-01T04:00:01+08:00' }],
     restartRequested: false,
 };
 
@@ -110,7 +114,7 @@ const succeededJob = {
     started: '2026-10-01T04:00:00+08:00',
     finished: '2026-10-01T04:03:12+08:00',
     steps: [
-        { phase: 'fetch', message: 'mine/main 有 3 个新提交：a1b2c3d → f9e8d7c', at: '04:00:01' },
+        { phase: 'fetch', message: officialRepo + '（默认分支 main）有 3 个新提交：a1b2c3d → f9e8d7c', at: '04:00:01' },
         { phase: 'protect', message: '已暂存 2 个本地内容文件', at: '04:00:05' },
         { phase: 'build', message: '开始编译二进制', at: '04:00:09' },
         { phase: 'done', message: '已更新 3 个提交并换好二进制', at: '04:03:10' },
@@ -475,27 +479,36 @@ test('the update console has its own stylesheet section', () => {
     assert.ok(emitted.length >= 25, 'the class scan found too little to be a gate: ' + emitted.length);
 });
 
-test('both locales carry the same update keys, and everything the page asks for exists', () => {
+test('all locales carry the same update keys, and everything the page asks for exists', () => {
     const zhKeys = flatKeys(zh.update, '', new Set());
     const enKeys = flatKeys(en.update, '', new Set());
+    const ruKeys = flatKeys(ru.update, '', new Set());
     assert.deepEqual([...zhKeys].filter(k => !enKeys.has(k)), [], 'keys missing from en-US');
     assert.deepEqual([...enKeys].filter(k => !zhKeys.has(k)), [], 'keys missing from zh-CN');
+    assert.deepEqual([...enKeys].filter(k => !ruKeys.has(k)), [], 'keys missing from ru-RU');
+    assert.deepEqual([...ruKeys].filter(k => !enKeys.has(k)), [], 'ru-RU has keys other locales do not');
     assert.ok(zhKeys.size >= 60, 'the update namespace has gone thin: ' + zhKeys.size);
     // The settings menu is where this feature's entry lives now; the old nav key must be retired
     // everywhere rather than left behind as a second, drifting label.
-    assert.ok(zh.settings.nav.update && en.settings.nav.update,
-        'settings.nav.update must exist in both locales');
+    assert.ok(zh.settings.nav.update && en.settings.nav.update && ru.settings.nav.update,
+        'settings.nav.update must exist in every locale');
     assert.equal(zh.settings.nav.update, '一键更新');
     assert.equal(en.settings.nav.update, 'One-Click Update');
-    [['zh-CN', zh], ['en-US', en]].forEach(([label, dict]) => {
+    assert.equal(ru.settings.nav.update, 'Обновление в один клик');
+    [['zh-CN', zh], ['en-US', en], ['ru-RU', ru]].forEach(([label, dict]) => {
         assert.ok(!dict.nav.systemUpdate, label + ' still carries the retired nav.systemUpdate key');
     });
 
-    // The English dictionary must not be holding Chinese text.
+    // The non-Chinese dictionaries must not be holding Chinese text.
     [...enKeys].forEach(k => {
         const value = resolve(en.update, k) || '';
         assert.ok(!/[一-龥]/.test(value), 'en-US still has Chinese in update.' + k + ': ' + value);
         assert.ok(value !== zh.update[k], 'en-US still has the Chinese string for update.' + k);
+    });
+    [...ruKeys].forEach(k => {
+        const value = resolve(ru.update, k) || '';
+        assert.ok(!/[一-龥]/.test(value), 'ru-RU still has Chinese in update.' + k + ': ' + value);
+        assert.ok(value !== zh.update[k], 'ru-RU still has the Chinese string for update.' + k);
     });
 
     const htmlKeys = [...template.matchAll(/data-i18n="([^"]+)"/g)].map(m => m[1])
@@ -504,6 +517,7 @@ test('both locales carry the same update keys, and everything the page asks for 
     htmlKeys.forEach(k => {
         assert.ok(resolve(zh, k), 'zh-CN missing ' + k);
         assert.ok(resolve(en, k), 'en-US missing ' + k);
+        assert.ok(resolve(ru, k), 'ru-RU missing ' + k);
     });
 
     const jsKeys = [...source.matchAll(/updateT\('([^']+)'/g)].map(m => m[1]);
@@ -511,6 +525,7 @@ test('both locales carry the same update keys, and everything the page asks for 
     jsKeys.forEach(k => {
         assert.ok(resolve(zh, 'update.' + k), 'zh-CN missing update.' + k);
         assert.ok(resolve(en, 'update.' + k), 'en-US missing update.' + k);
+        assert.ok(resolve(ru, 'update.' + k), 'ru-RU missing update.' + k);
     });
 
     // withUpdateBusy picks its error prefix out of a map, so those keys are referenced dynamically
@@ -521,6 +536,7 @@ test('both locales carry the same update keys, and everything the page asks for 
     mapped.forEach(k => {
         assert.ok(resolve(zh, 'update.' + k), 'zh-CN missing update.' + k);
         assert.ok(resolve(en, 'update.' + k), 'en-US missing update.' + k);
+        assert.ok(resolve(ru, 'update.' + k), 'ru-RU missing update.' + k);
     });
 
     // No key may be dead weight: every entry has to be reachable from the page or the console.
@@ -545,7 +561,7 @@ test('opening the page reads the install tree and claims nothing about the remot
     assert.match(html, /有可回滚点/);
     assert.match(html, /待并入|本机安装/, 'the console must be laid out in labelled sections');
     // behind is 0 only because nobody looked yet: that is "not checked", never "up to date".
-    assert.match(html, /还没查过远端/);
+    assert.match(html, /还没查过更新源/);
     assert.doesNotMatch(html, /已是最新/, 'a page that did not check must not say 已是最新');
     assert.doesNotMatch(html, /update\.[a-zA-Z]/, 'a raw i18n key leaked into the markup');
     assert.doesNotMatch(html, /\{\{/, 'an un-interpolated placeholder leaked into the markup');
@@ -606,10 +622,10 @@ test('a check whose request dies mid-flight releases the button and says so', as
     const html = h.html();
     assert.match(html, /检查失败：/, 'a dead request is a failure, and it has to be called one');
     assert.match(html, /network unreachable/);
-    assert.doesNotMatch(html, /正在检查远端/, 'the button must not stay frozen on "checking"');
+    assert.doesNotMatch(html, /正在检查更新源/, 'the button must not stay frozen on "checking"');
     assert.doesNotMatch(html, /update-check-btn" disabled/, 'and it must be clickable again');
     assert.doesNotMatch(html, /已是最新/, 'a request that went nowhere is not an answer about the remote');
-    assert.match(html, /还没查过远端/, 'the page falls back to the honest "nobody looked yet"');
+    assert.match(html, /还没查过更新源/, 'the page falls back to the honest "nobody looked yet"');
     assert.equal(h.toasts.length, 1);
     assert.equal(h.toasts[0].type, 'error');
     assert.equal(h.liveTimers().length, 0);
@@ -650,7 +666,7 @@ test('local edits, a diverged tree and a clean-but-unchecked tree each block the
         },
         {
             patch: { updateAvailable: false, behind: 0, blockingChanges: [] },
-            copy: /远端没有比本机更新的提交/,
+            copy: /更新源没有比本机更新的提交/,
             path: null,
         },
     ];
@@ -678,6 +694,92 @@ test('local edits, a diverged tree and a clean-but-unchecked tree each block the
     assert.match(busy.html(), /<button class="btn-secondary update-rollback-btn" disabled/);
     assert.deepEqual(busy.calls.map(c => c.method + ' ' + c.url), ['GET /api/system/update']);
     assert.equal(busy.liveTimers().length, 1, 'opening onto a running job resumes the progress read');
+});
+
+test('a tree that only owes a build still offers the button, and says it is a build', async () => {
+    // Source already at the update source's tip, binary stale: the retry the no_toolchain
+    // message talks about has to be reachable from this page. "0 new commits" is not a
+    // reason to disable the button, and the confirm dialog must not claim nothing will
+    // happen.
+    const builtJob = {
+        id: 'upd-9',
+        state: 'succeeded',
+        started: '2026-10-08T10:00:00+08:00',
+        finished: '2026-10-08T10:00:40+08:00',
+        steps: [{ phase: 'build', message: '开始编译二进制（首次会下载依赖，可能需要几分钟）', at: '10:00:01' }],
+        result: {
+            fromCommit: 'a1b2c3d', toCommit: 'a1b2c3d',
+            commits: 0, filesTouched: 0, keptContent: [],
+            binaryPath: '/srv/csai/cyberstrike-ai',
+            binaryBuilt: true, prevBinary: '/srv/csai/cyberstrike-ai.prev',
+            backupDir: '/srv/csai/.update-backup/20261008_100000',
+            needsRestart: true, duration: '40s',
+        },
+        restartRequested: false,
+    };
+    const pendingStatus = statusOf({
+        updateAvailable: false, behind: 0, incoming: [], incomingTotal: 0, buildPending: true,
+    });
+    const h = await harness({
+        status: pendingStatus,
+        responses: {
+            'GET /api/system/update/job': [{ status: 200, body: { job: builtJob } }],
+            'GET /api/system/update': [
+                { status: 200, body: envelope(pendingStatus, null, true) },
+                { status: 200, body: envelope(statusOf({ updateAvailable: false, behind: 0, incoming: [], incomingTotal: 0, commit: 'a1b2c3d' }), builtJob, true) },
+            ],
+        },
+    });
+    const html = h.html();
+    assert.match(html, /<button class="btn-primary update-apply-btn" data-require-permission="update:apply" onclick="startUpdateApply\(\)">/,
+        'a pending build must not read as "nothing to update" and disable the button');
+    assert.match(html, /补上这次编译/, 'the page must say what pressing update will do');
+    assert.doesNotMatch(html, /更新源没有比本机更新的提交/);
+
+    h.calls.length = 0;
+    h.toasts.length = 0;
+    h.fire('startUpdateApply');
+    await h.flush();
+    const apply = h.calls.find(c => c.method === 'POST' && c.url === '/api/system/update/apply');
+    assert.ok(apply, 'the retry must reach the server: ' + h.calls.map(c => c.method + ' ' + c.url));
+    assert.match(h.confirms[h.confirms.length - 1], /补上二进制/,
+        'the confirm dialog describes a build, not "0 new commits"');
+    const success = h.toasts.filter(t => t.type === 'success' && /补编译完成/.test(t.msg)).pop();
+    assert.ok(success, 'a finished build retry is announced as a build: ' + JSON.stringify(h.toasts));
+    assert.deepEqual(h.toasts.filter(t => t.type === 'success' && /a1b2c3d → a1b2c3d/.test(t.msg)), [],
+        'a build-only retry must not be announced as "update a1b2c3d → a1b2c3d"');
+});
+
+test('a pending build with no toolchain fails with the server sentence, never a success', async () => {
+    const failed = {
+        id: 'upd-3',
+        state: 'failed',
+        started: '2026-10-08T11:00:00+08:00',
+        finished: '2026-10-08T11:00:01+08:00',
+        steps: [],
+        failure: {
+            reason: 'no_toolchain',
+            message: '源码已经是更新源最新（a1b2c3d），但二进制还是旧的：本机没有 Go 工具链，无法补编译。装好 go 后再点一次更新即可补上二进制。',
+        },
+        restartRequested: false,
+    };
+    const h = await harness({
+        status: statusOf({
+            updateAvailable: false, behind: 0, incoming: [], incomingTotal: 0,
+            buildPending: true, canBuild: false, goToolchain: '',
+        }),
+        responses: {
+            'GET /api/system/update/job': [{ status: 200, body: { job: failed } }],
+        },
+    });
+    // 按钮仍可点：缺工具链是环境事实，让操作员看到服务端那句"装好 go 再来"才是出路。
+    assert.match(h.html(), /<button class="btn-primary update-apply-btn" data-require-permission="update:apply" onclick="startUpdateApply\(\)">/);
+    await h.api.startUpdateApply();
+    await h.flush();
+    assert.deepEqual(h.toasts.filter(t => t.type === 'success' && /更新完成|补编译完成/.test(t.msg)), [],
+        'a build that did not happen must never be announced as done: ' + JSON.stringify(h.toasts));
+    assert.ok(h.toasts.some(t => t.type === 'error' && /Go 工具链/.test(t.msg)),
+        'the server sentence must be shown: ' + JSON.stringify(h.toasts));
 });
 
 test('applying posts {"restart":false} and then reads the job every 1.5 seconds', async () => {
@@ -724,7 +826,7 @@ test('applying posts {"restart":false} and then reads the job every 1.5 seconds'
     await h.tick();
     await h.flush();
     assert.deepEqual(h.calls.map(c => c.method + ' ' + c.url), ['GET /api/system/update/job']);
-    assert.match(h.html(), /开始拉取 mine\/main/, 'each step line must be rendered as it arrives');
+    assert.match(h.html(), /开始拉取更新源/, 'each step line must be rendered as it arrives');
     assert.match(h.html(), /进行中/);
     assert.equal(h.liveTimers().length, 1);
 
@@ -839,7 +941,7 @@ test('the confirm dialog says what the update will do, and cancelling posts noth
     assert.equal(h.confirms.length, 1, 'the operator must be asked before the tree moves');
     assert.match(h.confirms[0], /重新编译/, 'the confirm must say the binary gets rebuilt: ' + h.confirms[0]);
     assert.match(h.confirms[0], /二进制/);
-    assert.match(h.confirms[0], /mine\/main/, 'the confirm must name the remote and branch being merged');
+    assert.match(h.confirms[0], /github\.com\/AIPentest\/CyberStrikeAI/, 'the confirm must name the repository being fetched');
     assert.match(h.confirms[0], /a1b2c3d/, 'the confirm must name where this machine is now');
     assert.doesNotMatch(h.confirms[0], /\{\{/, 'the confirm went out un-interpolated: ' + h.confirms[0]);
     assert.deepEqual(h.calls.map(c => c.method + ' ' + c.url), [], 'a cancelled update must not POST');
@@ -1095,34 +1197,80 @@ test('an update already running is not disturbed by an auto check', async () => 
 });
 
 test('the hint describes the automatic check instead of denying any network use', () => {
-    for (const [label, dict] of [['zh-CN', zh], ['en-US', en]]) {
+    for (const [label, dict] of [['zh-CN', zh], ['en-US', en], ['ru-RU', ru]]) {
         const text = dict.update.notChecked;
         assert.ok(text, label + ' lost the notChecked copy');
-        assert.doesNotMatch(text, /不会联网|makes no network call|no network call/,
+        assert.doesNotMatch(text, /不会联网|makes no network call|no network call|не выходит в сеть|без обращения к сети/,
             label + ' still promises the page never touches the network');
-        assert.match(text, /自动|automatic|automatically/, label + ' must mention the automatic check');
+        assert.match(text, /自动|automatic|automatically|автоматическ/, label + ' must mention the automatic check');
     }
 });
 
-test('the source section shows what is in effect, and saving posts all three fields', async () => {
+test('the source section shows what is in effect, and saving posts the one address', async () => {
     const h = await harness({ status: statusOf({ installed: true }), source: configuredSource });
     assert.match(h.html(), /https:\/\/github\.com\/Sycun\/CyberStrikeAI\.git/,
-        'the configured address must be visible');
+        'the effective address must be visible');
+    assert.match(h.html(), /update-source-url/, 'the editable address field must be there');
     assert.match(h.html(), /update-source-save-btn/);
 
-    h.runHandler("updateSourceFieldChanged('branch', 'release')");
+    h.runHandler("updateSourceRepoChanged('https://gitlab.com/mirror/csai.git')");
     await h.fire('saveUpdateSource');
     await h.flush();
     const save = h.calls.find(c => c.url === '/api/system/update/source');
     assert.ok(save, 'saving must hit the source endpoint');
-    assert.deepEqual(JSON.parse(save.body), {
-        remote: '', remoteUrl: 'https://github.com/Sycun/CyberStrikeAI.git', branch: 'release',
-    });
+    assert.deepEqual(JSON.parse(save.body), { repo: 'https://gitlab.com/mirror/csai.git' },
+        'the save carries exactly the one address, nothing else');
     assert.ok(h.toasts.some(t => t.type === 'success'), 'a saved source must be confirmed');
 });
 
+test('a finished check must not leave the source form frozen (the button stays clickable)', async () => {
+    // 线上实测过的形态：打开页面 → 自动检查在忙期里重绘 → 检查结束后不再重绘，
+    // 「保存更新源」带着 disabled + data-state-disabled 留在 DOM 上——之后点击永远没有反应，
+    // 服务端连请求都收不到。这里把用户的整条动作链原样跑一遍。
+    const h = await harness({ status: statusOf({ installed: true }), source: configuredSource });
+
+    h.fireDeferred(); // 打开页面 1.2 秒后的那次自动检查
+    assert.match(h.html(), /update-source-save-btn" disabled/,
+        'the form must visibly lock while a check is in flight');
+    await h.flush();
+    assert.match(h.html(), /已是最新|落后/, 'precondition: the automatic check finished');
+    assert.doesNotMatch(h.html(), /update-source-save-btn" disabled/,
+        'a finished check must re-render the form with the button enabled again');
+
+    // 用户的下一步：清空地址 → 点保存 → 请求必须真的发出去
+    h.runHandler("updateSourceRepoChanged('')");
+    await h.fire('saveUpdateSource');
+    await h.flush();
+    const save = h.calls.find(c => c.url === '/api/system/update/source');
+    assert.ok(save, 'saving right after a check must reach the server');
+    assert.deepEqual(JSON.parse(save.body), { repo: '' });
+    assert.doesNotMatch(h.html(), /update-source-save-btn" disabled/,
+        'after saving the button must be ready for the next action, not frozen');
+});
+
+test('a second save is not swallowed by a stale busy flag', async () => {
+    const h = await harness({ status: statusOf({ installed: true }), source: configuredSource });
+    h.runHandler("updateSourceRepoChanged('https://gitlab.com/mirror/csai.git')");
+    await h.fire('saveUpdateSource');
+    await h.flush();
+    await h.fire('saveUpdateSource');
+    await h.flush();
+    const saves = h.calls.filter(c => c.url === '/api/system/update/source');
+    assert.equal(saves.length, 2, 'the second save must also reach the server');
+});
+
+test('clearing the address is the way back to the official repository', async () => {
+    const h = await harness({ status: statusOf({ installed: true }), source: configuredSource });
+    h.runHandler('updateSourceRepoChanged("")');
+    await h.fire('saveUpdateSource');
+    await h.flush();
+    const save = h.calls.find(c => c.url === '/api/system/update/source');
+    assert.deepEqual(JSON.parse(save.body), { repo: '' },
+        'an empty address means \"use the official repository again\", not an error');
+});
+
 test('a refused save shows the server reason instead of a generic failure', async () => {
-    const refusal = '远端名与远端地址二选一：要么指名已有远端，要么直接给地址';
+    const refusal = '仓库地址不合法（只允许 https/http/ssh/git/file:// 或本机绝对路径）';
     const h = await harness({
         status: statusOf({ installed: true }),
         source: configuredSource,
@@ -1130,19 +1278,21 @@ test('a refused save shows the server reason instead of a generic failure', asyn
             'POST /api/system/update/source': [{ status: 400, body: { error: refusal } }],
         },
     });
-    h.runHandler("updateSourceFieldChanged('remote', 'origin')");
+    h.runHandler("updateSourceRepoChanged('ext::sh -c true')");
     await h.fire('saveUpdateSource');
     await h.flush();
-    assert.match(h.html(), /二选一/, 'the refusal must be on screen');
-    assert.ok(h.toasts.some(t => t.type === 'error' && t.msg.includes('二选一')), 'and in a toast');
-    assert.match(h.html(), /origin/, 'the typed value must survive the failed save');
+    assert.match(h.html(), /不合法/, 'the refusal must be on screen');
+    assert.ok(h.toasts.some(t => t.type === 'error' && t.msg.includes('不合法')), 'and in a toast');
+    assert.match(h.html(), /ext::sh -c true/, 'the typed value must survive the failed save');
 });
 
 test('the adopt entry appears only for a directory that is not a git installation', async () => {
-    const notGit = await harness({ status: statusOf({ installed: false }), source: configuredSource });
-    assert.match(notGit.html(), /previewAdoptSource\(\)/, 'a configured non-git tree must offer connecting');
+    // No source configured either: the official repository is the default, so connecting is
+    // always available for a non-git directory.
+    const notGit = await harness({ status: statusOf({ installed: false }), source: emptySource });
+    assert.match(notGit.html(), /previewAdoptSource\(\)/, 'a non-git tree must offer connecting even with the default source');
 
-    const gitTree = await harness({ status: statusOf({ installed: true }), source: configuredSource });
+    const gitTree = await harness({ status: statusOf({ installed: true }), source: emptySource });
     assert.doesNotMatch(gitTree.html(), /previewAdoptSource\(\)/, 'a git installation updates, it does not adopt');
 });
 
@@ -1343,4 +1493,15 @@ test('a job poll that dies while the restart is in flight is not a failure', asy
     await h.tick();
     await h.flush();
     assert.equal(h.location.replaced.length, 1);
+});
+
+test('an interrupted rollback offers recovery and blocks a new update', async () => {
+    const h = await harness({ status: statusOf({ rollbackPending: true, hasRollback: true }) });
+    assert.match(h.html(), /上一次回滚尚未完成/);
+    assert.match(h.html(), /update-rollback-btn" data-require-permission="update:apply"/);
+    assert.match(h.html(), /update-apply-btn" disabled data-state-disabled="true"/);
+    h.calls.length = 0;
+    h.fire('startUpdateApply');
+    await h.flush();
+    assert.equal(h.calls.some(c => c.url === '/api/system/update/apply'), false);
 });

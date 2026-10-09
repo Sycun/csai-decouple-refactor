@@ -162,16 +162,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 		return true
 	}
-	decision := h.finalizer.finalizeCandidateForDeliveryWithPolicy(
-		prep.ConversationID,
-		prep.AssistantMessageID,
-		"workflow",
-		result.Response,
-		nil,
-		result.AwaitingHITL,
-		"",
-		true,
-	)
+	decision := h.finalizer.finalizeWorkflowRunForDelivery(prep.ConversationID, prep.AssistantMessageID, result)
 	responseText := decision.FinalText
 	if !decision.Finalizable {
 		responseText = finalizationBlockedMessage(decision)
@@ -288,16 +279,7 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 		respond(http.StatusInternalServerError, gin.H{"error": errMsg, "conversationId": conversationID})
 		return true
 	}
-	decision := h.finalizer.finalizeCandidateForDeliveryWithPolicy(
-		prep.ConversationID,
-		prep.AssistantMessageID,
-		"workflow",
-		result.Response,
-		nil,
-		result.AwaitingHITL,
-		"",
-		true,
-	)
+	decision := h.finalizer.finalizeWorkflowRunForDelivery(prep.ConversationID, prep.AssistantMessageID, result)
 	responseText := decision.FinalText
 	if !decision.Finalizable {
 		responseText = finalizationBlockedMessage(decision)

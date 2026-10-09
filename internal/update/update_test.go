@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"cyberstrike-ai/internal/config"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,21 +62,28 @@ func (t *tree) upstreamCommit(t2 *testing.T, message string, files map[string]st
 	mustGit(t2, t.upstream, "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "-m", message)
 }
 
-func opts(root string) Options { return Options{Root: root, BinaryName: "none"} }
+// opts points an update at the tree's own source repository: the explicit address is
+// now the whole configuration, so tests name it the way an operator would.
+func opts(tr *tree) Options {
+	return Options{Root: tr.install, Repo: tr.upstream, BinaryName: "none"}
+}
 
 func TestStatusWithoutNetworkDescribesTheTree(t *testing.T) {
 	requireGit(t)
 	tr := newTree(t)
 
-	snap, err := Status(context.Background(), opts(tr.install))
+	snap, err := Status(context.Background(), opts(tr))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !snap.Installed {
 		t.Fatal("a clone must be reported as an installable tree")
 	}
-	if snap.Branch != "main" || snap.Remote != "origin" {
-		t.Errorf("branch/remote = %q/%q, want main/origin", snap.Branch, snap.Remote)
+	if snap.Branch != "main" {
+		t.Errorf("local branch = %q, want main", snap.Branch)
+	}
+	if snap.Repo != tr.upstream || !snap.RepoConfigured {
+		t.Errorf("repo = %q configured=%v, want the configured source %q", snap.Repo, snap.RepoConfigured, tr.upstream)
 	}
 	if snap.Commit == "" {
 		t.Error("commit is empty")
@@ -93,7 +101,7 @@ func TestStatusReportsTheInstallRootInAbsoluteForm(t *testing.T) {
 	// A relative config path gives filepath.Dir as "."; the page must still be able to say
 	// which directory is being updated.
 	t.Chdir(tr.install)
-	snap, err := Status(context.Background(), opts("."))
+	snap, err := Status(context.Background(), Options{Root: ".", Repo: tr.upstream, BinaryName: "none"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,12 +120,15 @@ func TestStatusReportsTheInstallRootInAbsoluteForm(t *testing.T) {
 func TestStatusOnNonGitTreeIsAStateNotAnError(t *testing.T) {
 	requireGit(t)
 	dir := t.TempDir()
-	snap, err := Status(context.Background(), opts(dir))
+	snap, err := Status(context.Background(), Options{Root: dir})
 	if err != nil {
 		t.Fatalf("a tarball install is a readable state, not a fault: %v", err)
 	}
 	if snap.Installed || snap.CheckError == "" {
 		t.Errorf("installed=%v checkError=%q, want false with a reason", snap.Installed, snap.CheckError)
+	}
+	if snap.Repo != DefaultRepoURL || snap.RepoConfigured {
+		t.Errorf("repo = %q configured=%v, want the official repository by default", snap.Repo, snap.RepoConfigured)
 	}
 }
 
@@ -127,7 +138,7 @@ func TestCheckFetchesAndListsIncoming(t *testing.T) {
 	tr.upstreamCommit(t, "second: bump service", map[string]string{"internal_service.go": "package service\n\nconst Version = \"2\"\n"})
 	tr.upstreamCommit(t, "third: new role", map[string]string{"roles/extra.yaml": "name: extra\n"})
 
-	snap, err := Check(context.Background(), opts(tr.install))
+	snap, err := Check(context.Background(), opts(tr))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +172,7 @@ func TestApplyKeepsOperatorContentAndMovesCode(t *testing.T) {
 		"internal_service.go": "package service\n\nconst Version = \"3\"\n",
 	})
 
-	res, err := Apply(context.Background(), opts(tr.install), nil)
+	res, err := Apply(context.Background(), opts(tr), nil)
 	if err != nil {
 		t.Fatalf("apply failed: %v\nresult: %+v", err, res)
 	}
@@ -210,7 +221,7 @@ func TestApplyRefusesLocalSourceEdits(t *testing.T) {
 	tr.upstreamCommit(t, "new upstream", map[string]string{"internal_service.go": "package service\n\nconst Version = \"9\"\n"})
 	writeFile(t, filepath.Join(tr.install, "internal_service.go"), "package service\n\nconst Version = \"local hand edit\"\n")
 
-	_, err := Apply(context.Background(), opts(tr.install), nil)
+	_, err := Apply(context.Background(), opts(tr), nil)
 	ue, ok := err.(*Error)
 	if !ok {
 		t.Fatalf("want *Error, got %v", err)
@@ -234,7 +245,7 @@ func TestApplyRefusesDivergedBranch(t *testing.T) {
 	mustGit(t, tr.install, "add", "my_patch.go")
 	mustGit(t, tr.install, "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "-m", "my own commit")
 
-	_, err := Apply(context.Background(), opts(tr.install), nil)
+	_, err := Apply(context.Background(), opts(tr), nil)
 	ue, ok := err.(*Error)
 	if !ok || ue.Reason != "diverged" {
 		t.Fatalf("a branch with its own commits is a merge decision, not a download; got %v", err)
@@ -244,7 +255,7 @@ func TestApplyRefusesDivergedBranch(t *testing.T) {
 func TestApplyWhenAlreadyUpToDateIsANoOp(t *testing.T) {
 	requireGit(t)
 	tr := newTree(t)
-	res, err := Apply(context.Background(), opts(tr.install), nil)
+	res, err := Apply(context.Background(), opts(tr), nil)
 	if err != nil {
 		t.Fatalf("up to date must not be an error: %v", err)
 	}
@@ -261,7 +272,7 @@ func TestRollbackMovesBackToTheRecordedCommit(t *testing.T) {
 	tr := newTree(t)
 	before := mustGit(t, tr.install, "rev-parse", "HEAD")
 	tr.upstreamCommit(t, "upstream new", map[string]string{"internal_service.go": "package service\n\nconst Version = \"7\"\n"})
-	if _, err := Apply(context.Background(), opts(tr.install), nil); err != nil {
+	if _, err := Apply(context.Background(), opts(tr), nil); err != nil {
 		t.Fatal(err)
 	}
 	// Rollback restores the binary kept before a swap; stand one up the way installBinary
@@ -292,7 +303,7 @@ func TestRollbackRefusesWhenHeadMoved(t *testing.T) {
 	requireGit(t)
 	tr := newTree(t)
 	tr.upstreamCommit(t, "upstream new", map[string]string{"internal_service.go": "package service\n\nconst Version = \"7\"\n"})
-	if _, err := Apply(context.Background(), opts(tr.install), nil); err != nil {
+	if _, err := Apply(context.Background(), opts(tr), nil); err != nil {
 		t.Fatal(err)
 	}
 	bin := filepath.Join(tr.install, Binary)
@@ -406,4 +417,170 @@ func mustGit(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// The release version rides with the code: after an update the live config has to say the
+// version of the code now on disk (the header badge reads it), and a rollback has to put
+// the old number back next to the old code.
+func TestApplySyncsTheReleaseVersionIntoTheLiveConfig(t *testing.T) {
+	requireGit(t)
+	tr := newTree(t)
+	writeFile(t, filepath.Join(tr.install, "config.yaml"), "version: \"v1.0.0\"\nserver:\n  port: 8088\n")
+	tr.upstreamCommit(t, "release: bump version", map[string]string{
+		"config.example.yaml": "version: \"v1.1.0\"\nserver:\n  port: 8088\n",
+		"internal_service.go": "package service\n\nconst Version = \"2\"\n",
+	})
+
+	res, err := Apply(context.Background(), opts(tr), nil)
+	if err != nil {
+		t.Fatalf("apply failed: %v\nresult: %+v", err, res)
+	}
+	live := readFile(t, filepath.Join(tr.install, "config.yaml"))
+	if !strings.Contains(live, `version: "v1.1.0"`) || !strings.Contains(live, "port: 8088") {
+		t.Fatalf("live config after update = %q, want the new version with everything else untouched", live)
+	}
+	st, ok := readState(tr.install)
+	if !ok || st.VersionBefore != "v1.0.0" || st.VersionAfter != "v1.1.0" {
+		t.Fatalf("state = %+v, want the version change recorded for the rollback", st)
+	}
+
+	// Rollback puts the number back with the code.
+	bin := filepath.Join(tr.install, Binary)
+	writeFile(t, bin, "new binary bytes")
+	writeFile(t, bin+".prev", "old binary bytes")
+	if _, err := Rollback(context.Background(), Options{Root: tr.install}); err != nil {
+		t.Fatalf("rollback failed: %v", err)
+	}
+	live = readFile(t, filepath.Join(tr.install, "config.yaml"))
+	if !strings.Contains(live, `version: "v1.0.0"`) {
+		t.Fatalf("live config after rollback = %q, want the old version back", live)
+	}
+}
+
+// The same sync end to end, with the key spelled the way issue #4 was filed about: a legal
+// quoted key must be replaced in place (not appended next to), and the rollback must still
+// find a config it can read.
+func TestApplySyncsTheReleaseVersionIntoAQuotedKeyConfig(t *testing.T) {
+	requireGit(t)
+	tr := newTree(t)
+	live := filepath.Join(tr.install, "config.yaml")
+	writeFile(t, live, "\"version\": \"v1.0.0\"\nserver:\n  port: 8088\n")
+	tr.upstreamCommit(t, "release: bump version", map[string]string{
+		"config.example.yaml": "version: \"v1.1.0\"\n",
+		"internal_service.go": "package service\n\nconst Version = \"2\"\n",
+	})
+
+	if _, err := Apply(context.Background(), opts(tr), nil); err != nil {
+		t.Fatalf("apply failed: %v", err)
+	}
+	got := readFile(t, live)
+	if strings.Count(got, "version") != 1 {
+		t.Fatalf("live config gained a duplicate version key:\n%q", got)
+	}
+	if v, err := config.FileVersion(live); err != nil || v != "v1.1.0" {
+		t.Fatalf("live config after apply reads %q (%v), want v1.1.0:\n%q", v, err, got)
+	}
+	if !strings.Contains(got, "port: 8088") {
+		t.Fatalf("the rest of the config must stay:\n%q", got)
+	}
+
+	bin := filepath.Join(tr.install, Binary)
+	writeFile(t, bin, "new binary bytes")
+	writeFile(t, bin+".prev", "old binary bytes")
+	if _, err := Rollback(context.Background(), Options{Root: tr.install}); err != nil {
+		t.Fatalf("rollback failed: %v", err)
+	}
+	got = readFile(t, live)
+	if strings.Count(got, "version") != 1 {
+		t.Fatalf("rollback left a broken config:\n%q", got)
+	}
+	if v, err := config.FileVersion(live); err != nil || v != "v1.0.0" {
+		t.Fatalf("live config after rollback reads %q (%v), want v1.0.0:\n%q", v, err, got)
+	}
+}
+
+func TestRollbackDoesNotClobberAManuallyChangedVersion(t *testing.T) {
+	requireGit(t)
+	tr := newTree(t)
+	writeFile(t, filepath.Join(tr.install, "config.yaml"), "version: \"v1.0.0\"\nserver:\n  port: 8088\n")
+	tr.upstreamCommit(t, "release: bump version", map[string]string{
+		"config.example.yaml": "version: \"v1.1.0\"\n",
+	})
+	if _, err := Apply(context.Background(), opts(tr), nil); err != nil {
+		t.Fatal(err)
+	}
+	// Somebody pins their own version after the update; a rollback is not theirs to undo.
+	writeFile(t, filepath.Join(tr.install, "config.yaml"), "version: \"v9.9.9-mine\"\nserver:\n  port: 8088\n")
+	bin := filepath.Join(tr.install, Binary)
+	writeFile(t, bin, "new")
+	writeFile(t, bin+".prev", "old")
+	if _, err := Rollback(context.Background(), Options{Root: tr.install}); err != nil {
+		t.Fatal(err)
+	}
+	if live := readFile(t, filepath.Join(tr.install, "config.yaml")); !strings.Contains(live, "v9.9.9-mine") {
+		t.Fatalf("a hand-set version must survive a rollback, got %q", live)
+	}
+}
+
+func TestApplyLeavesTheVersionAloneWhenTheTreeCarriesNone(t *testing.T) {
+	requireGit(t)
+	tr := newTree(t)
+	// The fixture's upstream has no config.example.yaml at all: nothing to sync, and the
+	// live config must not be rewritten with a guess.
+	writeFile(t, filepath.Join(tr.install, "config.yaml"), "version: \"v1.0.0\"\nserver:\n  port: 8088\n")
+	tr.upstreamCommit(t, "second: bump service", map[string]string{
+		"internal_service.go": "package service\n\nconst Version = \"2\"\n",
+	})
+	if _, err := Apply(context.Background(), opts(tr), nil); err != nil {
+		t.Fatal(err)
+	}
+	if live := readFile(t, filepath.Join(tr.install, "config.yaml")); !strings.Contains(live, "v1.0.0") {
+		t.Fatalf("live config = %q, want it untouched", live)
+	}
+	if st, _ := readState(tr.install); st.VersionAfter != "" || st.VersionBefore != "" {
+		t.Fatalf("state = %+v, want no version fields when nothing changed", st)
+	}
+}
+
+func TestAdoptSyncsTheReleaseVersionIntoTheLiveConfig(t *testing.T) {
+	requireGit(t)
+	tr, dir := newAdoptFixture(t)
+	writeFile(t, filepath.Join(dir, "config.yaml"), "version: \"v0.9.0\"\nserver:\n  port: 8088\n")
+	tr.upstreamCommit(t, "release: bump version", map[string]string{
+		"config.example.yaml": "version: \"v1.1.0\"\n",
+	})
+
+	res, err := Adopt(context.Background(), Options{Root: dir, Repo: tr.upstream, BinaryName: "none"}, nil)
+	if err != nil {
+		t.Fatalf("adopt failed: %v\nresult: %+v", err, res)
+	}
+	live := readFile(t, filepath.Join(dir, "config.yaml"))
+	if !strings.Contains(live, `version: "v1.1.0"`) || !strings.Contains(live, "port: 8088") {
+		t.Fatalf("live config after adopt = %q, want the connected code's version with the rest untouched", live)
+	}
+}
+
+// A tree that is already current still gets its bookkeeping aligned: the version field is
+// the one thing an update may correct with no commits to move (that is exactly the state a
+// pre-feature installation is in).
+func TestApplyAlignsTheVersionEvenWithNothingToPull(t *testing.T) {
+	requireGit(t)
+	tr := newTree(t)
+	writeFile(t, filepath.Join(tr.install, "config.yaml"), "version: \"v0.9.0\"\nserver:\n  port: 8088\n")
+	writeFile(t, filepath.Join(tr.install, "config.example.yaml"), "version: \"v1.1.0\"\n")
+
+	res, err := Apply(context.Background(), opts(tr), nil)
+	if err != nil {
+		t.Fatalf("no-op apply failed: %v", err)
+	}
+	if res.Commits != 0 {
+		t.Fatalf("res = %+v, want zero movement", res)
+	}
+	if live := readFile(t, filepath.Join(tr.install, "config.yaml")); !strings.Contains(live, `version: "v1.1.0"`) {
+		t.Fatalf("live config = %q, want the version aligned even though nothing moved", live)
+	}
+	// Bookkeeping only: a version-only correction writes no rollback state.
+	if _, ok := readState(tr.install); ok {
+		t.Fatal("a version-only alignment must not claim to be a rollback point")
+	}
 }

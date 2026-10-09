@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// EnsureSchema creates the six C2 tables. The statements were copied out of the boot file verbatim;
+// EnsureSchema creates the seven C2 tables. The statements were copied out of the boot file verbatim;
 // the order follows the foreign keys: c2_sessions points at c2_listeners, and c2_tasks / c2_files
 // point at c2_sessions.
 func (c *C2) EnsureSchema() error {
@@ -19,6 +19,7 @@ func (c *C2) EnsureSchema() error {
 	}{
 		{"c2_listeners", c2ListenersSchema},
 		{"c2_sessions", c2SessionsSchema},
+		{"c2_http_session_auth", c2HTTPSessionAuthSchema},
 		{"c2_tasks", c2TasksSchema},
 		{"c2_files", c2FilesSchema},
 		{"c2_events", c2EventsSchema},
@@ -114,6 +115,16 @@ const c2SessionsSchema = `
 		last_check_in DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		metadata_json TEXT DEFAULT '{}',
 		note TEXT NOT NULL DEFAULT '',
+		FOREIGN KEY (listener_id) REFERENCES c2_listeners(id) ON DELETE CASCADE
+	);`
+
+// c2HTTPSessionAuthSchema binds an implant identity to the listener that authenticated it, so a
+// per-request token can be checked against the listener that issued the session.
+const c2HTTPSessionAuthSchema = `
+	CREATE TABLE IF NOT EXISTS c2_http_session_auth (
+		implant_uuid TEXT PRIMARY KEY,
+		listener_id TEXT NOT NULL,
+		token_hash TEXT NOT NULL,
 		FOREIGN KEY (listener_id) REFERENCES c2_listeners(id) ON DELETE CASCADE
 	);`
 

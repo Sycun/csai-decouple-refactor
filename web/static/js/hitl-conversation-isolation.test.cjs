@@ -27,12 +27,18 @@ test('服务端默认审批人只更新默认值，不覆盖最近会话选择',
     // be proven on both: the setter must do nothing but delegate, and the applier must write the
     // default without touching the "last global choice" record a new conversation inherits.
     const source = functionSource(hitl, 'applyHitlDefaultReviewerFromServer', 'applyHitlDefaultConfigFromServer');
-    assert.match(source, /applyHitlDefaultConfigFromServer\(\{ defaultReviewer: reviewer \}\)/);
+    assert.match(source, /return applyHitlDefaultConfigFromServer\(\{ defaultReviewer: reviewer \}\)/);
     assert.doesNotMatch(source, /saveHitlLastGlobalConfig/);
 
     const applier = functionSource(hitl, 'applyHitlDefaultConfigFromServer', 'fetchHitlDefaultConfig');
+    assert.match(applier, /const reviewer = hitlReviewerNormalize\(src\.defaultReviewer \|\| src\.reviewer \|\| 'human'\)/);
     assert.match(applier, /window\.csaiHitlDefaultReviewer = reviewer/);
-    assert.doesNotMatch(applier, /saveHitlLastGlobalConfig/);
+
+    // Upstream proved the negative over one wide slice reaching from the setter through the applier
+    // into the fetcher; keep that reach so neither half of the delegation can quietly start
+    // persisting a global/conversation choice behind the tighter per-function assertions above.
+    const defaultReviewerPath = functionSource(hitl, 'applyHitlDefaultReviewerFromServer', 'fetchHitlDefaultReviewer');
+    assert.doesNotMatch(defaultReviewerPath, /saveHitlLastGlobalConfig|saveHitlConversationConfig/);
 });
 
 test('恢复会话审批配置时保留该会话自己的审批人', () => {

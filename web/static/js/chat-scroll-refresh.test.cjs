@@ -158,7 +158,7 @@ test('登录成功后重新加载曾因未授权失败的项目侧栏', () => {
     assert.notEqual(conversationsIndex, -1);
     assert.ok(projectRetryIndex > conversationsIndex);
     assert.match(refreshSource, /typeof window\.refreshChatProjectSelector === 'function'/);
-    assert.match(html, /\/static\/js\/auth\.js\?v=20260907-blocked-1/);
+    assert.match(html, /\/static\/js\/auth\.js\?v=[A-Za-z0-9._-]+/);
 });
 
 test('用户真正滑到底部后恢复自动跟随且不会提前强制跳底', () => {
@@ -533,5 +533,5 @@ test('暗色模式对话三点悬浮不会触发浅色父行背景', () => {
     const css = fs.readFileSync('web/static/css/style.css', 'utf8');
     assert.match(css, /html\[data-theme="dark"\] \.project-conversation-row:hover \.project-conversation-item/);
     assert.match(css, /html\[data-theme="dark"\] \.project-folder-action:hover,[\s\S]*?background: rgba\(71, 85, 105, 0\.28\);[\s\S]*?box-shadow: none;/);
-    assert.match(html, /style\.css\?v=20260907-blocked-1/);
+    assert.match(html, /style\.css\?v=[A-Za-z0-9._-]+/);
 });

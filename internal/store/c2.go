@@ -941,6 +941,7 @@ func (c *C2) CreateC2Task(t *C2Task) error {
 
 // SetC2TaskStatus 更新任务的状态/结果/错误/时间戳
 type C2TaskUpdate struct {
+	ExpectedStatus *string // Optional compare-and-swap guard for terminal transitions.
 	Status         *string
 	ResultText     *string
 	ResultBlobPath *string
@@ -1000,6 +1001,10 @@ func (c *C2) UpdateC2Task(id string, u C2TaskUpdate) error {
 	}
 	query := "UPDATE c2_tasks SET " + strings.Join(sets, ", ") + " WHERE id = ?"
 	args = append(args, id)
+	if u.ExpectedStatus != nil {
+		query += " AND status = ?"
+		args = append(args, *u.ExpectedStatus)
+	}
 	res, err := c.db.Exec(query, args...)
 	if err != nil {
 		return err

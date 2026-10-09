@@ -41,6 +41,18 @@ target/
 coverage.out
 coverage.html
 
+# One-click update artifacts (internal/update): machine-local, written at the install root
+.update-lock
+.update-rollback-pending.json
+.update-rollback-pending.json.tmp
+.update-staging/
+.update-backup/
+.update-state.json
+.update-state.json.tmp
+.update-build-pending
+.update-build-pending.tmp
+cyberstrike-ai.prev
+
 # Logs and temporary files
 /log/
 *.log

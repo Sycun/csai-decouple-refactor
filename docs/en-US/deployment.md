@@ -78,13 +78,14 @@ proxy_set_header Connection "upgrade";
 ## Upgrading
 
 **Prefer the platform's own one-click update** (console System settings -> One-click update,
-`POST /api/system/update/apply`, or `./cyberstrike-ai -update` at a keyboard). It pulls **the remote
-this install directory already tracks**: fetch, fast-forward, `go build`, atomic binary swap (the old
-binary is kept as `cyberstrike-ai.prev`), while operator content - `roles/ skills/ tools/ agents/
-bundles/ knowledge_base/ data/ config.yaml` - is put aside and restored, and the result names every
-file it kept. For a fork this is the only path that does not overwrite you with somebody else's code;
-when source is modified locally or the branch has diverged it refuses and says why instead of forcing.
-See [the developer guide](developer-guide.md) for the full semantics.
+`POST /api/system/update/apply`, or `./cyberstrike-ai -update` at a keyboard). It pulls the newest
+commit of the **update source repository**'s default branch (the official repository
+`https://github.com/AIPentest/CyberStrikeAI.git` by default; one setting points it at your own fork
+or a mirror): fetch, fast-forward, `go build`, atomic binary swap (the old binary is kept as
+`cyberstrike-ai.prev`), while operator content - `roles/ skills/ tools/ agents/ bundles/
+knowledge_base/ data/ config.yaml` - is put aside and restored, and the result names every file it
+kept. When source is modified locally or the local history has diverged from the source it refuses
+and says why instead of forcing. See [the developer guide](developer-guide.md) for the full semantics.
 
 When a supervisor is detected (systemd/launchd startup markers in the environment), the "exit after
 updating" tick is pre-ticked: the process stands down after a successful update, the supervisor brings
@@ -92,13 +93,14 @@ the new binary back, and the page reloads itself once the service answers (sessi
 one fresh login follows). Forgot the tick, or swapped the binary from the CLI? The console carries a
 persistent banner with **Restart now** - no shell login needed.
 
-The source is chosen either in the `update` section of `config.yaml` (`remote` or `remote_url`, plus
-an optional `branch`) or right on the console page: the official repository, your own fork, or
-somebody else's second-development repository are all just this one setting; unset, it follows the
-remote this directory already tracks. An installation unpacked from a Release archive (no `.git`)
-can be connected from the same page: the preview lists the files the target would replace and the
+The update source is a single repository address in the `update` section of `config.yaml` (`repo`),
+or right on the console page: the official repository, your own fork, somebody else's repository or a
+mirror are all just this one setting; empty means the official repository (updates then follow that
+repository's own default branch). An installation unpacked
+from a Release archive (no `.git`) can be connected from the same page (no configuration needed - the
+default official repository applies): the preview lists the files the target would replace and the
 operator content that is kept, replaced files are backed up under
-`.update-backup/<timestamp>/overwritten/`, and confirming turns the directory into a normal
+`.update-backup/<unique-backup>/overwritten/`, and confirming turns the directory into a normal
 installation with one-click updates.
 
 `upgrade.sh` still works and is now a thin shell over that implementation, with two paths decided by
@@ -135,7 +137,7 @@ quick upgrades without compatibility risk; in production still back up first. Py
 The one-click update leaves its own rollback point: `./cyberstrike-ai -update-rollback`, or the button
 on the page, goes back to the commit before that update and puts `cyberstrike-ai.prev` back. It runs
 only while HEAD is still the commit that update wrote, so work done afterwards is not discarded.
-Content that was put aside also survives under `.update-backup/<timestamp>/`.
+Content that was put aside also survives under `.update-backup/<unique-backup>/`.
 
 Beyond that, roll back together:
 

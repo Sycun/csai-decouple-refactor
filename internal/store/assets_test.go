@@ -259,3 +259,26 @@ func TestAssetsUnlinkProjectClearsTheStampAndKeepsTheRow(t *testing.T) {
 		t.Fatalf("a3 stamp=%q after an empty unlink, want p-2", stamp)
 	}
 }
+
+// An asset whose host is an IP URL keeps the IP its caller already supplied: normalizeAsset must
+// not turn that host into a domain, and must not lose the port on the way.
+func TestAssetIPURLWithPrefilledIPDoesNotBecomeDomain(t *testing.T) {
+	a, _ := openAssetDB(t)
+	if err := a.EnsureSchema(); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+	cases := []*Asset{
+		{Host: "http://192.168.200.100:18081", IP: "192.168.200.100", Port: 18081, Protocol: "http"},
+		{Host: "http://[2001:db8::1]:18081", IP: "2001:db8::1", Port: 18081, Protocol: "http"},
+		{Host: "http://192.0.2.1:18081"},
+	}
+	for _, asset := range cases {
+		result, err := a.UpsertAssets([]*Asset{asset}, "")
+		if err != nil || result.Created != 1 {
+			t.Fatalf("rejected IP URL: %#v %v", result, err)
+		}
+		if asset.Domain != "" || asset.IP == "" || asset.Port != 18081 {
+			t.Fatalf("wrong structured fields: %#v", asset)
+		}
+	}
+}

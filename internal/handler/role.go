@@ -13,6 +13,7 @@ import (
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/config"
 	"cyberstrike-ai/internal/plugin"
+	"cyberstrike-ai/internal/store"
 
 	"gopkg.in/yaml.v3"
 
@@ -30,6 +31,7 @@ type RoleHandler struct {
 	logger     *zap.Logger
 	audit      *audit.Service
 	plugins    *plugin.Table
+	workflows  *store.Workflows
 }
 
 // SetAudit wires platform audit logging.
@@ -37,13 +39,15 @@ func (h *RoleHandler) SetAudit(s *audit.Service) {
 	h.audit = s
 }
 
-// NewRoleHandler 创建新的角色处理器
-func NewRoleHandler(cfg *config.Config, configPath string, logger *zap.Logger, plugins *plugin.Table) *RoleHandler {
+// NewRoleHandler 创建新的角色处理器。workflows 是角色绑定校验要读的存储（见 role_validation.go）；
+// 它是构造参数而不是 setter，因为一个少了它的 RoleHandler 会在校验绑定时报"存储不可用"。
+func NewRoleHandler(cfg *config.Config, configPath string, logger *zap.Logger, plugins *plugin.Table, workflows *store.Workflows) *RoleHandler {
 	return &RoleHandler{
 		config:     cfg,
 		configPath: configPath,
 		logger:     logger,
 		plugins:    plugins,
+		workflows:  workflows,
 	}
 }
 
@@ -110,6 +114,16 @@ func (h *RoleHandler) UpdateRole(c *gin.Context) {
 	// 确保角色名称与请求中的name一致
 	if req.Name == "" {
 		req.Name = roleName
+	}
+	if err := h.validateRole(req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.Name != roleName {
+		if _, exists := h.config.Roles[req.Name]; exists {
+			c.JSON(http.StatusConflict, gin.H{"error": "角色已存在"})
+			return
+		}
 	}
 
 	roles := currentRoles(h.config)
@@ -195,8 +209,8 @@ func (h *RoleHandler) CreateRole(c *gin.Context) {
 		return
 	}
 
-	if strings.TrimSpace(req.Name) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "角色名称不能为空"})
+	if err := h.validateRole(req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 

@@ -101,18 +101,21 @@ func (b *PayloadBuilder) BuildBeacon(in PayloadBuilderInput) (*BuildResult, erro
 		goarch = "amd64"
 	}
 
+	// 模板参数：请求 Host > 监听器 callback_host > bind 推导（见 ResolveBeaconDialHost）
+	host := ResolveBeaconDialHost(listener, in.Host, b.logger, listener.ID)
+	if err := ValidateBeaconDialHost(host); err != nil {
+		return nil, err
+	}
+
 	// 读取模板
 	tmplData, err := b.readTemplate("beacon.go.tmpl")
 	if err != nil {
 		return nil, fmt.Errorf("read template: %w", err)
 	}
 
-	// 模板参数：请求 Host > 监听器 callback_host > bind 推导（见 ResolveBeaconDialHost）
-	host := ResolveBeaconDialHost(listener, in.Host, b.logger, listener.ID)
-	serverURL := fmt.Sprintf("%s://%s:%d",
+	serverURL := fmt.Sprintf("%s://%s",
 		listenerTypeToScheme(listener.Type),
-		host,
-		listener.BindPort,
+		net.JoinHostPort(host, strconv.Itoa(listener.BindPort)),
 	)
 
 	transport := "http"

@@ -194,8 +194,23 @@ func (h *ExternalMCPHandler) AddOrUpdateExternalMCP(c *gin.Context) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	// 更新内存中的配置
+	if h.config.ExternalMCP.Servers == nil {
+		h.config.ExternalMCP.Servers = make(map[string]config.ExternalMCPServerConfig)
+	}
+
+	cfg := req.Config
+
+	// Editing metadata does not change activation unless the request says so.
+	previous, exists := h.manager.GetConfigs()[name]
+	cfg.ExternalMCPEnable = req.activation(previous.ExternalMCPEnable, exists)
+	cfg.Disabled = !cfg.ExternalMCPEnable
+
+	// 展开 ${VAR} 环境变量
+	config.ExpandConfigEnv(&cfg)
+
 	// 添加或更新配置
-	if err := h.manager.AddOrUpdateConfig(name, req.Config); err != nil {
+	if err := h.manager.AddOrUpdateConfig(name, cfg); err != nil {
 		if errors.Is(err, mcp.ErrPackOwnedServer) {
 			// The pre-check above can lose a race with an install; the manager's answer is the
 			// one that holds, and a refusal is not a server error.
@@ -206,24 +221,6 @@ func (h *ExternalMCPHandler) AddOrUpdateExternalMCP(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "添加或更新配置失败: " + err.Error()})
 		return
 	}
-
-	// 更新内存中的配置
-	if h.config.ExternalMCP.Servers == nil {
-		h.config.ExternalMCP.Servers = make(map[string]config.ExternalMCPServerConfig)
-	}
-
-	cfg := req.Config
-
-	// 官方 disabled 字段 → ExternalMCPEnable 取反
-	if cfg.Disabled {
-		cfg.ExternalMCPEnable = false
-	} else if !cfg.ExternalMCPEnable {
-		// 用户未显式设置 external_mcp_enable，官方配置默认就是启用的
-		cfg.ExternalMCPEnable = true
-	}
-
-	// 展开 ${VAR} 环境变量
-	config.ExpandConfigEnv(&cfg)
 
 	h.config.ExternalMCP.Servers[name] = cfg
 
@@ -306,6 +303,7 @@ func (h *ExternalMCPHandler) StartExternalMCP(c *gin.Context) {
 	}
 	cfg := h.config.ExternalMCP.Servers[name]
 	cfg.ExternalMCPEnable = true
+	cfg.Disabled = false
 	h.config.ExternalMCP.Servers[name] = cfg
 
 	// 保存到配置文件
@@ -363,6 +361,7 @@ func (h *ExternalMCPHandler) StopExternalMCP(c *gin.Context) {
 	}
 	cfg := h.config.ExternalMCP.Servers[name]
 	cfg.ExternalMCPEnable = false
+	cfg.Disabled = true
 	h.config.ExternalMCP.Servers[name] = cfg
 
 	// 保存到配置文件
@@ -533,7 +532,9 @@ func setStringArrayInMap(mapNode *yaml.Node, key string, values []string) {
 
 // AddOrUpdateExternalMCPRequest 添加或更新外部MCP请求
 type AddOrUpdateExternalMCPRequest struct {
-	Config config.ExternalMCPServerConfig `json:"config"`
+	Config   config.ExternalMCPServerConfig `json:"config"`
+	enable   *bool
+	disabled *bool
 }
 
 // ExternalMCPResponse 外部MCP响应

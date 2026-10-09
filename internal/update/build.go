@@ -2,6 +2,9 @@ package update
 
 import (
 	"context"
+	"crypto/sha256"
+	"debug/buildinfo"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -63,6 +66,10 @@ func build(ctx context.Context, root, outPath string) error {
 // Linux (ETXTBSY) but renaming it aside is always allowed, so the old process keeps its
 // inode and the new path is complete before anyone can observe it.
 func installBinary(src, dst string) (string, error) {
+	// Validate the staged file before moving the live executable aside.
+	if err := os.Chmod(src, 0o755); err != nil {
+		return "", err
+	}
 	prev := ""
 	if fileExists(dst) {
 		prev = dst + ".prev"
@@ -72,9 +79,6 @@ func installBinary(src, dst string) (string, error) {
 		if err := os.Rename(dst, prev); err != nil {
 			return "", fmt.Errorf("保留旧二进制失败：%w", err)
 		}
-	}
-	if err := os.Chmod(src, 0o755); err != nil {
-		return prev, err
 	}
 	if err := os.Rename(src, dst); err != nil {
 		// Put the kept-previous binary back rather than leaving the install with no
@@ -95,15 +99,41 @@ func restorePrevBinary(bin string) error {
 	if !fileExists(prev) {
 		return fmt.Errorf("没有旧二进制：%s", prev)
 	}
-	if fileExists(bin) {
-		if err := os.Remove(bin); err != nil {
-			return err
-		}
-	}
 	if err := os.Chmod(prev, 0o755); err != nil {
 		return err
 	}
-	return os.Rename(prev, bin)
+	return replaceBinary(prev, bin)
+
+}
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func binaryRevision(path string) string {
+	info, err := buildinfo.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var revision string
+	for _, setting := range info.Settings {
+		if setting.Key == "vcs.modified" && setting.Value == "true" {
+			return ""
+		}
+		if setting.Key == "vcs.revision" {
+			revision = strings.TrimSpace(setting.Value)
+		}
+	}
+	return revision
 }
 
 // tail keeps the last bytes of a compiler's output: the end of a build log is where the
@@ -132,6 +162,11 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	tmp := dst + ".tmp"
 	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode.Perm())
 	if err != nil {
+		return err
+	}
+	if err := out.Chmod(mode.Perm()); err != nil {
+		out.Close()
+		os.Remove(tmp)
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {

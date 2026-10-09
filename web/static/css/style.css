@@ -6550,6 +6550,73 @@ html[data-theme="dark"] .chat-input-container .send-btn:disabled::before {
     margin-bottom: 0;
 }
 
+.login-password-field {
+    position: relative;
+}
+
+.login-form .login-password-field input[type="password"],
+.login-form .login-password-field input[type="text"] {
+    min-width: 0;
+    width: 100%;
+    padding-inline-end: 52px;
+}
+
+.login-password-toggle {
+    position: absolute;
+    inset-inline-end: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.login-password-toggle:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.login-password-toggle:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: -2px;
+}
+
+.login-password-icon {
+    width: 20px;
+    height: 20px;
+    flex: none;
+    pointer-events: none;
+}
+
+.login-password-icon--hide,
+.login-password-toggle[aria-pressed="true"] .login-password-icon--show {
+    display: none;
+}
+
+.login-password-toggle[aria-pressed="true"] .login-password-icon--hide {
+    display: block;
+}
+
+.password-field-error {
+    color: var(--error-color, #dc3545);
+    margin-top: 6px;
+    font-size: 0.8125rem;
+}
+
+.login-form input[aria-invalid="true"],
+.login-form input[aria-invalid="true"]:focus {
+    border-color: var(--error-color, #dc3545);
+}
+
 .login-form .form-group label {
     display: block;
     margin-bottom: 8px;
@@ -6560,6 +6627,7 @@ html[data-theme="dark"] .chat-input-container .send-btn:disabled::before {
 
 .login-form input[type="text"],
 .login-form input[type="password"] {
+    min-height: 48px;
     width: 100%;
     padding: 12px 14px;
     font-size: 0.9375rem;
@@ -24820,10 +24888,9 @@ tr.mcp-stats-tool-row[data-tool-name]:focus-visible {
 }
 
 .dashboard-recent-fact-project {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    display: block;
     width: 72px;
+    max-width: 100%;
     box-sizing: border-box;
     padding: 3px 6px;
     border-radius: 6px;
@@ -39375,6 +39442,12 @@ html[data-theme="dark"] .form-group select {
     background: var(--bg-secondary);
 }
 
+.workflow-status-toggle.is-invalid {
+    color: var(--error-color, #dc3545);
+    border-color: currentColor;
+    background: var(--bg-secondary);
+}
+
 .workflow-status-toggle:hover {
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.08);
 }
@@ -43069,7 +43142,7 @@ input.theme-checkbox:disabled {
 .asset-target-link:hover { text-decoration: underline; }
 .asset-table td small { margin-top: 4px; color: var(--text-secondary, #64748b); }
 .asset-tag { display: inline-block; margin: 5px 4px 0 0; padding: 2px 7px; border-radius: 999px; background: rgba(37,99,235,.1); color: #2563eb; font-size: 11px; }
-.asset-project-badge { display: inline-flex; max-width: 180px; padding: 3px 8px; border-radius: 6px; background: rgba(99,102,241,.1); color: #4f46e5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asset-project-badge { display: block; max-width: 100%; box-sizing: border-box; padding: 3px 8px; border-radius: 6px; background: rgba(99,102,241,.1); color: #4f46e5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .asset-service { display: block; max-width: 100%; overflow: hidden; color: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .asset-status { display: inline-flex; padding: 3px 9px; border-radius: 999px; font-size: 12px; background: rgba(16,185,129,.12); color: #059669; }
 .asset-status--inactive { background: rgba(100,116,139,.12); color: #64748b; }
@@ -44502,6 +44575,7 @@ html[data-theme="dark"] .project-folders-load-more-count {
     color: inherit;
     font: inherit;
     cursor: pointer;
+    text-align: left;
 }
 
 .recent-conversations-toggle:hover {
@@ -46817,6 +46891,34 @@ html[data-theme="dark"] { --tool-blocked-color: #f4bc62; }
     padding-left: 18px;
     font-size: 13px;
 }
+
+.batch-queue-status-failed {
+    color: var(--error-color, #dc2626);
+    background: rgba(220, 38, 38, 0.08);
+    border-color: rgba(220, 38, 38, 0.25);
+}
+
+#project-panel-facts .projects-fact-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+    margin-top: 5px;
+    min-width: 0;
+}
+#project-panel-facts .projects-fact-meta .projects-list-item-badge {
+    margin: 0;
+    line-height: 1.5;
+}
+#project-panel-facts .projects-fact-meta .projects-fact-vuln-link {
+    margin: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    line-height: 1.5;
+}
+
 
 /* ---------------------------------------------------------------------------
    一键更新控制台（系统设置页的 settings-section-update 分区）：这里说的每一句状态都要能被眼睛分区——
