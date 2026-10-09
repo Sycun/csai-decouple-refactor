@@ -53,6 +53,12 @@ type RunArgs struct {
 	SystemPromptExtra  string
 	AssistantMessageID string
 	Progress           agent.ProgressCallback
+	// CheckAgentMode is the same fail-closed verdict chat, robot and batch ask before running:
+	// "is this conversation mode executable right now". The wiring lives in the handler package
+	// because the catalog does; a nil checker means a bare assembly, where only the built-in
+	// single-agent mode may pass - an agent node naming an uninstalled mode fails its node
+	// rather than becoming the back door that runs multi-agent after the pack was unplugged.
+	CheckAgentMode func(id string) error
 }
 
 type RunResult struct {

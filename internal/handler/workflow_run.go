@@ -170,6 +170,10 @@ func (h *WorkflowHandler) ResumeRun(c *gin.Context) {
 		Agent:          h.agent,
 		ConversationID: run.ConversationID,
 		ProjectID:      run.ProjectID,
+		CheckAgentMode: func(id string) error {
+			_, err := checkAgentMode(h.cfg, id)
+			return err
+		},
 	}, runID, req.Approved, req.Comment)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})

@@ -131,6 +131,18 @@ func truncateWorkflowToolOutput(output string, maxBytes int, executionID string)
 	return output[:head] + marker + output[tailStart:]
 }
 
+// checkNodeAgentMode asks the wired catalog (handler 装配时注入) whether the mode is executable
+// right now. A bare assembly has no catalog to ask: then only the kernel built-in may pass, which
+// is the fail-closed direction - the alternative is a workflow that runs multi-agent after the
+// orchestration pack was unplugged.
+func checkNodeAgentMode(args RunArgs, mode string) error {
+	if args.CheckAgentMode != nil {
+		return args.CheckAgentMode(mode)
+	}
+	_, err := agentmode.Check(nil, false, mode)
+	return err
+}
+
 func runAgentNode(ctx context.Context, args RunArgs, node graphNode, state *WorkflowLocalState) (map[string]any, bool, string, string) {
 	if args.AppCfg == nil || args.Agent == nil {
 		errText := "Agent 节点执行失败：应用配置或 Agent 为空"
@@ -138,6 +150,12 @@ func runAgentNode(ctx context.Context, args RunArgs, node graphNode, state *Work
 	}
 	// 模式身份与别名解析收口到 internal/agentmode（这里曾内联一份，"single"/"chat" 是它的别名）。
 	mode := agentmode.ResolveWithDefault(cfgString(node.Config, "agent_mode"), agentmode.DefaultID)
+	// 与 chat/robot/batch 同一条 fail-closed 判据：编排包被卸载、单元被停用或引擎被关掉之后，
+	// workflow 不能成为照跑多代理的那个入口。
+	if err := checkNodeAgentMode(args, mode); err != nil {
+		errText := err.Error()
+		return outputMap(envelope("agent", node.ID, node.Type, "failed", ""), map[string]any{"error": errText}), false, "failed", errText
+	}
 	inputSource := resolveNodeInputBinding(node.Config, state)
 	message := buildAgentNodeMessage(node, state, inputSource)
 	var result *multiagent.RunResult

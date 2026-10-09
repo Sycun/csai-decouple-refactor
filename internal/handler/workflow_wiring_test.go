@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
 	"testing"
 
@@ -52,6 +55,52 @@ func TestWorkflowHandlersAreWiredToTheirRunLedger(t *testing.T) {
 	got, err := workflows.runs.GetWorkflowDefinition("wiring-fixture")
 	if err != nil || got == nil || got.Name != "wiring" {
 		t.Fatalf("read back through the workflow handler's ledger = %#v / %v", got, err)
+	}
+}
+
+// RunArgs.CheckAgentMode is what makes the workflow engine ask the mode catalog before an agent
+// node dispatches (chat, robot and batch each ask on their own entry). A construction site that
+// forgets it still compiles - the field is just nil - and that entry silently keeps running
+// multi-agent after the orchestration pack was unplugged. Parse the sources and name any
+// RunArgs literal that leaves the checker unset, so the omission is a test failure instead of
+// another runtime 403-style discovery.
+func TestEveryWorkflowRunArgsWiresTheModeCatalog(t *testing.T) {
+	sources := []string{"workflow_integration.go", "workflow_run.go"}
+	literals := 0
+	for _, file := range sources {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, file, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", file, err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			lit, ok := n.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			sel, ok := lit.Type.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "RunArgs" {
+				return true
+			}
+			if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "workflowrunner" {
+				return true
+			}
+			literals++
+			for _, elt := range lit.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "CheckAgentMode" {
+					return true
+				}
+			}
+			t.Errorf("%s: workflowrunner.RunArgs at %s leaves CheckAgentMode unset", file, fset.Position(lit.Pos()))
+			return true
+		})
+	}
+	if literals == 0 {
+		t.Fatal("found no workflowrunner.RunArgs literal in the parsed sources - the gate would pass vacuously if the call sites moved")
 	}
 }
 

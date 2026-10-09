@@ -111,6 +111,10 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 		SystemPromptExtra:  h.agentSessionContextBlock(conversationID),
 		AssistantMessageID: assistantMessageID,
 		Progress:           progress,
+		CheckAgentMode: func(id string) error {
+			_, err := checkAgentMode(h.config, id)
+			return err
+		},
 	})
 	if err != nil {
 		cause := context.Cause(baseCtx)
@@ -255,6 +259,10 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 		SystemPromptExtra:  h.agentSessionContextBlock(conversationID),
 		AssistantMessageID: assistantMessageID,
 		Progress:           progress,
+		CheckAgentMode: func(id string) error {
+			_, err := checkAgentMode(h.config, id)
+			return err
+		},
 	})
 	if err != nil {
 		cause := context.Cause(baseCtx)
