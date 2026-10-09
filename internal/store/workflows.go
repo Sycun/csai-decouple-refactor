@@ -121,6 +121,36 @@ func (w *Workflows) EnsureSchema() error {
 	return nil
 }
 
+var ErrWorkflowAlreadyExists = errors.New("工作流 ID 已存在")
+
+// CreateWorkflowDefinition never replaces a definition with the same ID.
+func (w *Workflows) CreateWorkflowDefinition(wf *WorkflowDefinition) error {
+	if wf == nil || strings.TrimSpace(wf.ID) == "" || strings.TrimSpace(wf.Name) == "" {
+		return fmt.Errorf("工作流 id 和 name 不能为空")
+	}
+	if wf.Version <= 0 {
+		wf.Version = 1
+	}
+	if err := w.requireDB(); err != nil {
+		return err
+	}
+	now := time.Now()
+	res, err := w.db.Exec(`INSERT INTO workflow_definitions (id, name, description, version, graph_json, enabled, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO NOTHING`,
+		wf.ID, wf.Name, wf.Description, wf.Version, wf.GraphJSON, boolToInt(wf.Enabled), now, now)
+	if err != nil {
+		return err
+	}
+	count, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrWorkflowAlreadyExists
+	}
+	return nil
+}
+
 // WorkflowDefinition is a persisted user-defined graph/workflow template.
 // graph_json intentionally remains opaque so users can define their own fields.
 type WorkflowDefinition struct {

@@ -1,6 +1,7 @@
 package update
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
@@ -8,10 +9,60 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 )
+
+// recoverAdoption resumes a checkout interrupted before the directory had a
+// usable HEAD. It only repeats a forced checkout if every differing local file
+// still matches its recorded backup; later operator edits are never overwritten.
+func recoverAdoption(ctx context.Context, opts Options) error {
+	root, err := opts.installRoot()
+	if err != nil {
+		return err
+	}
+	pending, present, err := readBuildPending(root)
+	if err != nil {
+		return &Error{Reason: "state_unreadable", Message: "无法读取接入恢复记录：" + err.Error()}
+	}
+	if !present || pending.AdoptBranch == "" {
+		return nil
+	}
+	if !ValidName(pending.AdoptBranch) {
+		return &Error{Reason: "bad_state", Message: "接入恢复记录的分支不合法"}
+	}
+	head, headErr := gitCmd(ctx, root, "rev-parse", "HEAD")
+	if headErr != nil {
+		scan, err := scanAdoption(ctx, root, root, pending.Commit)
+		if err != nil {
+			return err
+		}
+		for _, rel := range append(scan.changed, scan.kept...) {
+			backup := filepath.Join(pending.BackupDir, "overwritten", filepath.FromSlash(rel))
+			if Protected(rel) {
+				backup = filepath.Join(pending.BackupDir, filepath.FromSlash(rel))
+			}
+			old, oldErr := os.ReadFile(backup)
+			current, currentErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+			if oldErr != nil || currentErr != nil || !bytes.Equal(old, current) {
+				return &Error{Reason: "local_source_edits", Message: "接入中断后本地文件发生变化，已保留现场：" + rel}
+			}
+		}
+		if _, err := gitCmd(ctx, root, "checkout", "--force", "-B", pending.AdoptBranch, pending.Commit); err != nil {
+			return err
+		}
+	} else if head != pending.Commit {
+		return &Error{Reason: "build_state_mismatch", Message: "接入中断后 HEAD 发生变化，已保留现场"}
+	}
+	if err := restoreInterruptedProtected(ctx, root, pending, true); err != nil {
+		return err
+	}
+	pending.AdoptBranch = ""
+	pending.VersionBefore, pending.VersionAfter = plannedVersionChange(root)
+	return writeBuildPending(root, pending)
+}
 
 // Adopt connects a plain directory - a tarball or zip installation, or a copy carried in by
 // hand - to the configured update source, so it becomes a git work tree the one-click
@@ -56,7 +107,7 @@ type adoptionScan struct {
 // Preview builds an adoption plan without touching the directory: the fetch happens in a
 // throwaway bare repository outside it, so a failure cannot leave a half-adopted tree.
 func Preview(ctx context.Context, opts Options) (*AdoptPlan, error) {
-	root, source, branch, err := adoptPreflight(ctx, opts)
+	root, source, err := adoptPreflight(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +120,7 @@ func Preview(ctx context.Context, opts Options) (*AdoptPlan, error) {
 	if _, err := gitCmd(ctx, tmp, "init", "--quiet", "--bare"); err != nil {
 		return nil, err
 	}
-	branch, commit, subject, err := fetchSource(ctx, tmp, source, branch)
+	branch, commit, subject, err := fetchSource(ctx, tmp, source)
 	if err != nil {
 		return nil, err
 	}
@@ -84,17 +135,22 @@ func Preview(ctx context.Context, opts Options) (*AdoptPlan, error) {
 // (the preview's throwaway fetch cannot be reused), and on any failure removes only the
 // .git it created itself, so a retry starts from the same pristine state.
 func Adopt(ctx context.Context, opts Options, onStep func(Step)) (*Result, error) {
+	release, err := LockInstall(opts)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	if onStep == nil {
 		onStep = func(Step) {}
 	}
 	step := func(phase, msg string) { onStep(Step{Phase: phase, Message: msg, At: time.Now().Format(time.RFC3339)}) }
 	start := time.Now()
 
-	root, source, branch, err := adoptPreflight(ctx, opts)
+	root, source, err := adoptPreflight(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	step("preflight", fmt.Sprintf("把目录 %s 接入更新源 %s（分支 %s）", root, source, branch))
+	step("preflight", fmt.Sprintf("把目录 %s 接入更新源 %s", root, source))
 
 	if _, err := gitCmd(ctx, root, "init", "--quiet"); err != nil {
 		return nil, &Error{Reason: "init_failed", Message: "git init 失败：" + err.Error()}
@@ -110,7 +166,7 @@ func Adopt(ctx context.Context, opts Options, onStep func(Step)) (*Result, error
 		return nil, &Error{Reason: "init_failed", Message: "添加远端失败：" + err.Error()}
 	}
 
-	branch, commit, subject, err := fetchSource(ctx, root, source, branch)
+	branch, commit, subject, err := fetchSource(ctx, root, source)
 	if err != nil {
 		return nil, err
 	}
@@ -122,13 +178,19 @@ func Adopt(ctx context.Context, opts Options, onStep func(Step)) (*Result, error
 	step("fetch", fmt.Sprintf("%s/%s（%s %s）共 %d 个文件：%d 个本机版本会被目标版本替换，%d 个运维者文件先暂存再放回",
 		source, branch, commit, subject, len(scan.paths), len(scan.changed), len(scan.kept)))
 
-	backupDir := filepath.Join(root, ".update-backup", time.Now().Format("20060102_150405"))
+	backupDir := ""
 	backupAll := append(append([]string{}, scan.changed...), scan.kept...)
+	if len(backupAll) > 0 {
+		backupDir, err = newBackupDir(root, time.Now().Format("20060102_150405"))
+		if err != nil {
+			return nil, err
+		}
+	}
 	for _, p := range backupAll {
 		abs := filepath.Join(root, filepath.FromSlash(p))
 		info, statErr := os.Stat(abs)
 		if statErr != nil || !info.Mode().IsRegular() {
-			continue
+			return nil, &Error{Reason: "backup_failed", Message: "备份前本地文件发生变化，未执行接入：" + p}
 		}
 		dst := filepath.Join(backupDir, "overwritten", filepath.FromSlash(p))
 		if Protected(p) {
@@ -142,19 +204,49 @@ func Adopt(ctx context.Context, opts Options, onStep func(Step)) (*Result, error
 		step("protect", fmt.Sprintf("%d 个文件已留底（被替换的在 %s/overwritten/，运维者的会原样放回）", len(backupAll), backupDir))
 	}
 
-	if _, err := gitCmd(ctx, root, "checkout", "--force", "-B", branch, ref); err != nil {
-		return nil, &Error{Reason: "checkout_failed", Message: "落地目标内容失败：" + err.Error()}
+	targetCommit, err := gitCmd(ctx, root, "rev-parse", ref)
+	if err != nil {
+		return nil, err
+	}
+	pending := buildPendingState{
+		Commit:               targetCommit,
+		BackupDir:            backupDir,
+		KeptContent:          append([]string(nil), scan.kept...),
+		OverwrittenContent:   append([]string(nil), scan.changed...),
+		AdoptBranch:          branch,
+		PreviousBinaryAbsent: !fileExists(filepath.Join(root, opts.binaryName())),
+	}
+	if opts.binaryName() != "none" {
+		bin := filepath.Join(root, opts.binaryName())
+		if fileExists(bin) {
+			pending.PreviousBinarySHA256, err = fileSHA256(bin)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	// Record both the target and backups before checkout can replace any file.
+	if err := writeBuildPending(root, pending); err != nil {
+		return nil, &Error{Reason: "state_unwritable", Message: "无法写入接入恢复状态：" + err.Error()}
+	}
+	adopted = true
+	if _, err := gitCmd(ctx, root, "checkout", "--force", "-B", branch, targetCommit); err != nil {
+		return nil, &Error{Reason: "checkout_failed", Message: "落地目标内容失败，已保留恢复记录，再次更新可恢复：" + err.Error()}
 	}
 	if err := restoreProtected(backupDir, scan.kept); err != nil {
 		return nil, err
 	}
+	pending.AdoptBranch = ""
+	pending.VersionBefore, pending.VersionAfter = plannedVersionChange(root)
+	if err := writeBuildPending(root, pending); err != nil {
+		return nil, &Error{Reason: "state_unwritable", Message: "无法更新接入恢复状态：" + err.Error()}
+	}
 	if _, err := gitCmd(ctx, root, "branch", "--set-upstream-to="+ref); err != nil {
 		return nil, &Error{Reason: "upstream_failed", Message: "设置分支跟踪失败：" + err.Error()}
 	}
-	// From here the directory IS a work tree tracking the source: a later build failure
-	// must leave it that way (the source has landed; only the binary has not), so the
-	// cleanup above must not remove the repository any more.
-	adopted = true
+
+	versionBefore, versionAfter, versionErr := syncVersionToConfig(root)
+	versionStep(step, versionBefore, versionAfter, versionErr)
 
 	res := &Result{
 		ToCommit:     commit,
@@ -167,6 +259,9 @@ func Adopt(ctx context.Context, opts Options, onStep func(Step)) (*Result, error
 	}
 
 	if opts.binaryName() == "none" {
+		if err := clearBuildPending(root); err != nil {
+			return res, err
+		}
 		step("done", fmt.Sprintf("目录已接入 %s/%s（%s）；按请求跳过重新编译", source, branch, commit))
 		res.Duration = time.Since(start).Round(time.Millisecond).String()
 		return res, nil
@@ -183,70 +278,52 @@ func Adopt(ctx context.Context, opts Options, onStep func(Step)) (*Result, error
 		}
 	}
 
-	step("build", "开始编译二进制（首次会下载依赖，可能需要几分钟）")
-	staging := filepath.Join(root, ".update-staging")
-	if err := os.MkdirAll(staging, 0o755); err != nil {
-		return res, &Error{Reason: "staging_failed", Message: err.Error()}
+	if err := buildAndSwap(ctx, root, opts, res, step, targetCommit, nil, pending); err != nil {
+		res.Duration = time.Since(start).Round(time.Millisecond).String()
+		return res, err
 	}
-	defer os.RemoveAll(staging)
-	newBin := filepath.Join(staging, opts.binaryName())
-	if err := build(ctx, root, newBin); err != nil {
-		return res, &Error{Reason: "build_failed", Message: "编译失败，目录已接入但二进制保持原版本：\n" + err.Error()}
-	}
-	prev, err := installBinary(newBin, bin)
-	if err != nil {
-		return res, &Error{Reason: "swap_failed", Message: err.Error()}
-	}
-	res.BinaryBuilt = true
-	res.PrevBinary = prev
 	step("done", fmt.Sprintf("目录已接入 %s/%s（%s）并换好二进制", source, branch, commit))
 	res.Duration = time.Since(start).Round(time.Millisecond).String()
 	return res, nil
 }
 
-// adoptPreflight validates the operation's preconditions: a plain directory, a usable
-// source address, and (when given) a sane branch name. It does not touch the directory.
-func adoptPreflight(ctx context.Context, opts Options) (root, source, branch string, err error) {
+// adoptPreflight validates the operation's preconditions: a plain directory and a usable
+// source address. It does not touch the directory.
+func adoptPreflight(ctx context.Context, opts Options) (root, source string, err error) {
 	root, err = opts.installRoot()
 	if err != nil {
-		return "", "", "", err
+		return "", "", err
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		return "", "", "", &Error{Reason: "no_git", Message: "本机没有 git，无法把目录接入更新源"}
+		return "", "", &Error{Reason: "no_git", Message: "本机没有 git，无法把目录接入更新源"}
 	}
 	if _, err := gitCmd(ctx, root, "rev-parse", "--is-inside-work-tree"); err == nil {
-		return "", "", "", &Error{Reason: "already_a_repo", Message: "这个目录已经是 git 工作树：用「一键更新」，不需要接入"}
+		return "", "", &Error{Reason: "already_a_repo", Message: "这个目录已经是 git 工作树：用「一键更新」，不需要接入"}
 	}
 	if fi, statErr := os.Stat(root); statErr != nil || !fi.IsDir() {
-		return "", "", "", &Error{Reason: "bad_root", Message: "安装目录不存在：" + root}
+		return "", "", &Error{Reason: "bad_root", Message: "安装目录不存在：" + root}
 	}
-	source = strings.TrimSpace(opts.RemoteURL)
-	if source == "" {
-		return "", "", "", &Error{Reason: "no_source", Message: "还没有配置更新源地址：先填入仓库地址（配置文件的 update.remote_url）再接入"}
+	if _, statErr := os.Lstat(filepath.Join(root, ".git")); !os.IsNotExist(statErr) {
+		return "", "", &Error{Reason: "existing_git_metadata", Message: "安装目录已存在 .git 元数据，接入不会覆盖它；请先人工检查仓库状态"}
 	}
+	source = opts.repoURL()
 	if !ValidRemoteURL(source) {
-		return "", "", "", &Error{Reason: "bad_source", Message: "更新源地址不合法（只允许 https/http/ssh/git/file:// 或本机绝对路径）"}
+		return "", "", &Error{Reason: "bad_source", Message: "更新源仓库地址不合法（只允许 https/http/ssh/git/file:// 或本机绝对路径）"}
 	}
-	branch = strings.TrimSpace(opts.Branch)
-	if branch != "" && !ValidName(branch) {
-		return "", "", "", &Error{Reason: "bad_branch", Message: fmt.Sprintf("分支名不合法：%q", branch)}
-	}
-	return root, source, branch, nil
+	return root, source, nil
 }
 
-// fetchSource fetches one branch from source into repo and reports which branch that
-// ended up being (an empty request resolves the repository's default branch), its short
-// commit and its subject. Both callers fetch into a repository of their own.
-func fetchSource(ctx context.Context, repo, source, branch string) (string, string, string, error) {
+// fetchSource fetches the source's default branch into repo and reports which branch
+// that ended up being, its short commit and its subject. Both callers fetch into a
+// repository of their own.
+func fetchSource(ctx context.Context, repo, source string) (string, string, string, error) {
+	out, err := gitCmd(ctx, repo, "ls-remote", "--symref", source, "HEAD")
+	if err != nil {
+		return "", "", "", &Error{Reason: "fetch_failed", Message: "读取远端默认分支失败：" + err.Error()}
+	}
+	branch := parseDefaultBranch(out)
 	if branch == "" {
-		out, err := gitCmd(ctx, repo, "ls-remote", "--symref", source, "HEAD")
-		if err != nil {
-			return "", "", "", &Error{Reason: "fetch_failed", Message: "读取远端默认分支失败：" + err.Error()}
-		}
-		branch = parseDefaultBranch(out)
-		if branch == "" {
-			return "", "", "", &Error{Reason: "no_branch", Message: "无法确定远端默认分支，请在配置里写明分支（update.branch）"}
-		}
+		return "", "", "", &Error{Reason: "no_branch", Message: "无法确定远端默认分支：" + source}
 	}
 	if _, err := gitCmd(ctx, repo, "fetch", "--quiet", "--no-tags", "--recurse-submodules=no",
 		source, "+refs/heads/"+branch+":refs/remotes/origin/"+branch); err != nil {
@@ -261,24 +338,6 @@ func fetchSource(ctx context.Context, repo, source, branch string) (string, stri
 	return branch, commit, subject, nil
 }
 
-// parseDefaultBranch reads "ref: refs/heads/<name>\tHEAD" out of ls-remote --symref output.
-func parseDefaultBranch(out string) string {
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "ref: refs/heads/") {
-			continue
-		}
-		rest := strings.TrimPrefix(line, "ref: refs/heads/")
-		if i := strings.IndexAny(rest, "\t "); i >= 0 {
-			rest = rest[:i]
-		}
-		if ValidName(rest) {
-			return rest
-		}
-	}
-	return ""
-}
-
 // scanAdoption compares the directory against the tracked files of ref in repo.
 func scanAdoption(ctx context.Context, root, repo, ref string) (*adoptionScan, error) {
 	out, err := gitRaw(ctx, repo, "ls-tree", "-r", "-z", "--full-tree", ref)
@@ -286,6 +345,7 @@ func scanAdoption(ctx context.Context, root, repo, ref string) (*adoptionScan, e
 		return nil, &Error{Reason: "diff_failed", Message: err.Error()}
 	}
 	scan := &adoptionScan{target: map[string]string{}}
+	targetModes := map[string]os.FileMode{}
 	for _, rec := range nulList(out) {
 		tab := strings.IndexByte(rec, '\t')
 		if tab < 0 {
@@ -297,17 +357,28 @@ func scanAdoption(ctx context.Context, root, repo, ref string) (*adoptionScan, e
 		}
 		p := rec[tab+1:]
 		scan.target[p] = fields[2]
+		targetModes[p] = 0644
+		if fields[0] == "100755" {
+			targetModes[p] = 0755
+		}
 		scan.paths = append(scan.paths, p)
 	}
 	sort.Strings(scan.paths)
 	for _, p := range scan.paths {
+		if err := validateFilePath(root, p); err != nil {
+			return nil, err
+		}
 		abs := filepath.Join(root, filepath.FromSlash(p))
 		info, err := os.Lstat(abs)
 		if err != nil || !info.Mode().IsRegular() {
 			continue
 		}
 		hash, err := gitBlobHash(abs)
-		if err != nil || hash == scan.target[p] {
+		if err != nil {
+			return nil, &Error{Reason: "backup_failed", Message: "无法读取待接入的本地文件，未修改目录：" + p + ": " + err.Error()}
+		}
+		modeChanged := runtime.GOOS != "windows" && Protected(p) && info.Mode().Perm() != targetModes[p]
+		if hash == scan.target[p] && !modeChanged {
 			continue
 		}
 		if Protected(p) {

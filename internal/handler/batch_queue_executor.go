@@ -306,10 +306,10 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 	if useBatchMulti {
 		agentMode = "batch_eino_" + batchOrch
 	}
-	decision := h.finalizer.decideAgentRunForDeliveryWithPolicy(conversationID, assistantMessageID, agentMode, resultMA, mcpIDs, true)
+	decision := h.finalizer.decideAgentRunForDeliveryWithPolicy(conversationID, assistantMessageID, agentMode, resultMA, mcpIDs, false)
 	autoCancelledPendingExecutionIDs := h.finalizer.cleanupPendingToolExecutionsAfterIteration(taskCtx, conversationID, decision, progressCallback)
 	if len(autoCancelledPendingExecutionIDs) > 0 {
-		decision = h.finalizer.decideAgentRunForDeliveryWithPolicy(conversationID, assistantMessageID, agentMode, resultMA, mcpIDs, true)
+		decision = h.finalizer.decideAgentRunForDeliveryWithPolicy(conversationID, assistantMessageID, agentMode, resultMA, mcpIDs, false)
 	}
 	h.finalizer.persistFinalizationDecision(conversationID, assistantMessageID, agentMode, mcpIDs, reasoningContent, decision)
 	resText := decision.FinalText

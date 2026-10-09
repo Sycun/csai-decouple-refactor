@@ -111,6 +111,13 @@ func permissionForRequest(method, fullPath string) string {
 			return "rbac:read"
 		}
 		return "rbac:write"
+	case strings.HasPrefix(path, "/system/update"):
+		// Reading the version of the installation is a read. Applying an update replaces the
+		// program that is answering the request, so it is not a flavour of write.
+		if method == http.MethodGet || method == http.MethodHead {
+			return "update:read"
+		}
+		return "update:apply"
 	case strings.HasPrefix(path, "/robot/wechat/status"):
 		return "robot:read"
 	case strings.HasPrefix(path, "/robot"):

@@ -806,7 +806,7 @@ func openAPIPathsCapabilities() map[string]interface{} {
 			"post": map[string]interface{}{
 				"tags":        []string{"系统更新"},
 				"summary":     "配置更新源（本安装从哪个仓库更新）",
-				"description": "把更新源写进 config.yaml 的 update 段：remote（已有远端名）与 remote_url（仓库地址）二选一，branch 可选。不配置时更新跟随本目录自己跟踪的远端；地址白名单为 https/http/ssh/git/file:// 与本机绝对路径（git 的 ext:: 传输会执行命令，一律拒绝）。",
+				"description": "把更新源写进 config.yaml 的 update.repo：一个仓库地址，更新跟随该仓库的默认分支。留空即官方仓库；地址白名单为 https/http/ssh/git/file:// 与本机绝对路径（git 的 ext:: 传输会执行命令，一律拒绝）。",
 				"operationId": "saveUpdateSource",
 				"requestBody": map[string]interface{}{
 					"content": map[string]interface{}{
@@ -814,9 +814,7 @@ func openAPIPathsCapabilities() map[string]interface{} {
 							"schema": map[string]interface{}{
 								"type": "object",
 								"properties": map[string]interface{}{
-									"remote":    map[string]interface{}{"type": "string", "description": "安装树里已有的远端名（mine/origin/upstream/任意名）"},
-									"remoteUrl": map[string]interface{}{"type": "string", "description": "仓库地址（与 remote 二选一）"},
-									"branch":    map[string]interface{}{"type": "string", "description": "要跟踪的分支；留空按 upstream/当前分支推断"},
+									"repo": map[string]interface{}{"type": "string", "description": "更新源仓库地址；留空 = 官方仓库"},
 								},
 							},
 						},
@@ -824,8 +822,9 @@ func openAPIPathsCapabilities() map[string]interface{} {
 				},
 				"responses": map[string]interface{}{
 					"200": map[string]interface{}{"description": "已保存（返回生效的更新源）"},
-					"400": map[string]interface{}{"description": "远端名/地址/分支不合法，或两者同时给出"},
+					"400": map[string]interface{}{"description": "仓库地址不合法"},
 					"401": map[string]interface{}{"description": "未授权"},
+					"409": map[string]interface{}{"description": "更新进行中，不能切换更新源"},
 				},
 			},
 		},

@@ -180,21 +180,24 @@ SQLite 热备份时最好先停止服务，或至少复制 `*.db`、`*.db-wal`�
 ## 升级
 
 **优先用平台自带的「一键更新」**（控制台「系统设置 → 一键更新」、`POST /api/system/update/apply`、
-或键盘上的 `./cyberstrike-ai -update`）。它拉的是**这个安装目录自己跟踪的远端**：fetch → 快进合并 →
-`go build` → 原子换二进制（旧的留作 `cyberstrike-ai.prev`），并把 `roles/ skills/ tools/ agents/
-bundles/ knowledge_base/ data/ config.yaml` 等运维者内容先暂存再放回，结果里点名保留了哪些文件。
-跑 fork 时这是唯一不会"用别人的代码覆盖自己"的路径；本地源码有改动或分支已分叉时它会拒绝并说明原因，
-而不是硬来。细节见 [开发者指南](developer-guide.md) 的「一键更新」一节。
+或键盘上的 `./cyberstrike-ai -update`）。它从**更新源仓库**（默认官方仓库
+`https://github.com/AIPentest/CyberStrikeAI.git`，可一处配置改成自己的二开或镜像）拉取该仓库默认分支的
+最新代码：fetch → 快进合并 → `go build` → 原子换二进制（旧的留作 `cyberstrike-ai.prev`），并把
+`roles/ skills/ tools/ agents/ bundles/ knowledge_base/ data/ config.yaml` 等运维者内容先暂存再放回，
+结果里点名保留了哪些文件。本地源码有改动、或本地历史与更新源分叉时它会拒绝并说明原因，而不是硬来。
+构建失败或本机没有 Go 工具链时源码照样更新、二进制保持原样：欠编译会记在安装目录（`.update-build-pending`）
+并被页面标出，装好 go 后再点一次「一键更新」即补编译。
+细节见 [开发者指南](developer-guide.md) 的「一键更新」一节。
 
 检测到 systemd/launchd（环境里有对应启动标记）时，"更新完成后退出进程"默认勾选：更新成功后进程退出、
 由守护拉起新二进制，页面会在服务回来时自动刷新（会话在内存里，需要重新登录一次）。忘勾、或在命令行
 换过二进制时，控制台顶部有常驻横幅和「立即重启服务」补上这一步——不必再登录服务器手动重启。
 
-更新源可以在 `config.yaml` 的 `update` 段指定（`remote` 或 `remote_url`，可带 `branch`），也可以直接在
-控制台「一键更新」页填写保存：想跟随官方仓库、自己的二开或别人的二开，改的都是这一处；不配置时跟随
-本目录自己跟踪的远端。**用 Release 包解压安装、目录里没有 git 的**，配好地址后在同一页点「预览并接入」：
+更新源是 `config.yaml` `update` 段里的**一个仓库地址**（`repo`），也可以直接在控制台「一键更新」页填写保存：
+想跟随官方仓库、自己的二开、别人的二开或镜像，改的都是这一处；不写就是官方仓库（更新跟随该仓库自己的默认分支）。
+**用 Release 包解压安装、目录里没有 git 的**，在同一页点「预览并接入」（不配置也能用默认的官方仓库）：
 预览先列出会被目标版本替换的文件与会保留的运维者内容，被替换的都会备份在
-`.update-backup/<时间戳>/overwritten/`，确认后目录成为可一键更新的正常安装。
+`.update-backup/<唯一备份目录>/overwritten/`，确认后目录成为可一键更新的正常安装。
 
 `upgrade.sh` 仍然可用，它现在只是这条实现的薄壳，并按安装形态分两条路：
 
@@ -224,7 +227,7 @@ Python 依赖方面：`venv/` 由 `run.sh` 自动创建和管理，保留它就�
 
 一键更新自带回滚点：`./cyberstrike-ai -update-rollback` 或页面上的回滚按钮，会撤到那次更新前的提交并把
 `cyberstrike-ai.prev` 换回原位；它只在"HEAD 仍是那次更新写下的提交"时才执行，之后的工作不会被顺手抹掉。
-被暂存的运维者内容在 `.update-backup/<时间戳>/` 里也留有一份。
+被暂存的运维者内容也留在 `.update-backup/<唯一备份目录>/` 里。
 
 除此之外，回滚时同时恢复：
 

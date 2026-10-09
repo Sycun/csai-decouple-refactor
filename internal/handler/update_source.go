@@ -22,22 +22,26 @@ func newUpdateSourceStore(cfg *config.UpdateConfig, save func() error) *UpdateSo
 	return &UpdateSourceStore{cfg: cfg, save: save}
 }
 
-// Get 读当前生效的更新源；更新处理器每次请求现读，保存后立即生效。
-func (s *UpdateSourceStore) Get() (string, string, string) {
+// Get 读当前生效的更新源仓库地址；空 = 官方仓库，跟随其默认分支。
+// 更新处理器每次请求现读，保存后立即生效。
+func (s *UpdateSourceStore) Get() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.cfg.Remote, s.cfg.RemoteURL, s.cfg.Branch
+	return s.cfg.Repo
 }
 
-// Save 记录 remote / remote_url / branch 并落盘。校验在端点层（复用与更新同一套白名单），
-// 这里只负责把值送进文件。
-func (s *UpdateSourceStore) Save(remote, remoteURL, branch string) error {
+// Save 记录 update.repo 并落盘；留空即回到官方仓库。校验在端点层（复用与更新同一套白名单），
+// 这里只负责把值送进文件——落盘失败就把内存里的值退回原样，不留下"页面显示已改、文件没改"。
+func (s *UpdateSourceStore) Save(repo string) error {
 	s.mu.Lock()
-	*s.cfg = config.UpdateConfig{
-		Remote:    strings.TrimSpace(remote),
-		RemoteURL: strings.TrimSpace(remoteURL),
-		Branch:    strings.TrimSpace(branch),
-	}
+	previous := *s.cfg
+	*s.cfg = config.UpdateConfig{Repo: strings.TrimSpace(repo)}
 	s.mu.Unlock()
-	return s.save()
+	if err := s.save(); err != nil {
+		s.mu.Lock()
+		*s.cfg = previous
+		s.mu.Unlock()
+		return err
+	}
+	return nil
 }

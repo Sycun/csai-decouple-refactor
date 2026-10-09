@@ -575,7 +575,9 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	agentHandler.SetHitlConfigSaver(configHandler)
 	externalMCPHandler := handler.NewExternalMCPHandler(externalMCPMgr, cfg, configPath, log.Logger)
 	bindAudit(externalMCPHandler, auditSvc)
-	roleHandler := handler.NewRoleHandler(cfg, configPath, log.Logger, pluginTable)
+	// A role may bind a workflow, and validating that binding reads the workflow store, so the
+	// handler is constructed with it rather than handed a DB to reach through.
+	roleHandler := handler.NewRoleHandler(cfg, configPath, log.Logger, pluginTable, workflows)
 	bindAudit(roleHandler, auditSvc)
 	// Publish the role catalog before anything can serve: built-in files plus any bundle
 	// already on disk go through the table, so the first request sees the same answer as the

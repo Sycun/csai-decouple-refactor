@@ -70,12 +70,12 @@ removed, because that is verification input rather than source. Override the loc
 
 ## One-Click Update: Letting an Installation Update Its Own Source
 
-On a deployed machine the routine is "my fork moved forward by a few dozen commits -> bring this
+On a deployed machine the routine is "my tree moved forward by a few dozen commits -> bring this
 installation up -> rebuild -> swap the binary -> restart". This used to be only `upgrade.sh`, which
 pointed at one fixed upstream repository, so for anyone running a fork "upgrade" meant "overwrite
-yourself with somebody else's code". The capability now lives in the platform (`internal/update`)
-and the console page, the REST API and the CLI share one implementation, so the three surfaces
-cannot disagree about why an update was refused.
+yourself with somebody else's code". The capability now lives in the platform (`internal/update`) and
+the console page, the REST API and the CLI share one implementation, so the three surfaces cannot
+disagree about why an update was refused.
 
 ### Three entry points
 
@@ -91,41 +91,50 @@ additionally requires a global (`all` scope) session: one machine has one source
 
 ### Where the code comes from
 
-From **the remote this directory already tracks**; no third-party repository is hardcoded. The remote
-is picked from the ones this tree has, in the order `mine`, `origin`, `upstream` (that matches how this
-project is actually cloned: your own fork is `mine` and tracks your work, the upstream is kept for
-reference), and the branch defaults to what the current branch's `@{upstream}` names (the current
-branch itself when there is no upstream). `upgrade.sh` is now a thin shell over the same
-implementation: when this directory is a git work tree it just calls `./cyberstrike-ai -update`.
+From **the update source repository**: one address, the official repository
+`https://github.com/AIPentest/CyberStrikeAI.git` by default, and the update follows that repository's
+**own default branch** (nothing about branches is configured, and "main" is not hardcoded), so an
+installation with no configuration at all still has exactly one answer to "where does an update come
+from". `upgrade.sh` is now a thin shell over the same implementation: when this directory is a git
+work tree it just calls `./cyberstrike-ai -update`.
 
-### Choosing the source (the update section of config.yaml)
+### Changing the source (the update section of config.yaml)
 
-Unset, the rules above apply; set, the explicit choice wins:
+The update source is a single field: a repository address. Empty means the official repository; to
+follow your own fork, a mirror (when GitHub is hard to reach), or somebody else's repository, this is
+the one place to change:
 
 ```yaml
 update:
-  remote: origin        # an existing remote name (mine/origin/upstream/anything), or remote_url instead
-  # remote_url: https://github.com/AIPentest/CyberStrikeAI.git
-  branch: main          # optional; defaults to @{upstream} / the current branch
+  repo: https://github.com/AIPentest/CyberStrikeAI.git  # one repository address; empty/absent = the official repository
 ```
 
-The console page edits and saves all three. Saving validates: remote and branch names go through the
-same allowlist an update uses, and the address allowlist is https/http/ssh/git/file plus local
-absolute paths - git's `ext::` transport executes commands and is rejected outright. Following the
-official repository, your own fork, or somebody else's second-development repository is exactly the
-choice this section expresses.
+The console's "Update source" block edits and saves this address (saving it empty goes back to the
+official repository). Saving validates the address against an allowlist: https/http/ssh/git/file plus
+local absolute paths - git's `ext::` transport executes commands and is rejected outright.
 
 ### Connecting a non-git installation (the tarball kind)
 
-An installation that started as an unpacked Release archive has no `.git`; once a source is saved it
-can be connected from the same page: the preview fetches in a throwaway repository and first lists
+An installation that started as an unpacked Release archive has no `.git`; it can be connected from
+the same page (the default official repository works without any configuration): the preview fetches in a throwaway repository and first lists
 **the local files the target would replace** and **the operator content that will be kept**; on
 confirm the directory becomes a git work tree (`git init`, origin added, the target branch checked
-out), every replaced file is kept under `.update-backup/<timestamp>/overwritten/`, operator content
+out), every replaced file is kept under `.update-backup/<unique-backup>/overwritten/`, operator content
 is stashed and restored as usual, and the binary is rebuilt. From then on it is a normal
 installation with one-click update and rollback - but note there is no git history before the
 connection, so the connection itself has no earlier commit to roll back to; the first real update
 writes the first rollback point.
+
+### The version number follows the code
+
+The repository's `config.example.yaml` carries the release version this code was cut from
+(upstream bumps it in the release commit), while your `config.yaml` is operator data that no
+update ever touches. So after a successful merge the update writes the new code's version back
+into `config.yaml`'s `version` field (that one line only, temp file plus atomic rename; the job
+log records the old and the new number). After a restart the header badge and the static
+assets' `?v=` both match the code again - which is also why the frontend cache invalidates
+itself on upgrade. A rollback puts the number back too (unless somebody hand-edited it in the
+meantime), and connecting a tarball install syncs it as well.
 
 ### The four refusals
 
@@ -143,11 +152,15 @@ else -> 400). Other failures (`merge_failed`, `build_failed`, `swap_failed`) car
 compiler's own output; a failed build leaves the previous binary in place while the source has already
 moved and the state file is written, so it stays rollback-able.
 
+Check, update, adoption, rollback and restart share an operating-system file lock in the install
+directory (`.update-lock`). Wait for the other operation when `update_busy` is reported. The system
+releases the lock when its process exits; do not delete the lock file to bypass it.
+
 ### How operator content survives
 
 `roles/ skills/ tools/ agents/ bundles/ knowledge_base/ data/ log/ venv/ config.yaml .env` belong to
 the **operator** (`update.Protected` is the judge). Before the merge, only those of those paths the
-update actually writes to are copied into `.update-backup/<timestamp>/` and removed from the tree -
+update actually writes to are copied into `.update-backup/<unique-backup>/` and removed from the tree -
 your extra directories that upstream never touched are not disturbed - and they are put back
 afterwards, which is what "update the code, keep my work" means. The result names every file in
 `keptContent` instead of quietly dropping it: where both you and upstream changed the same file, the
@@ -158,11 +171,19 @@ are unrelated to this path; they are handled by the capability table and the plu
 ### Rollback
 
 `./cyberstrike-ai -update-rollback`, or the button on the page: `git reset --hard` back to the commit
-the update came from, the binary kept as `cyberstrike-ai.prev` is put back, and `.update-state.json`
-is removed. It refuses when there is no update record (`no_state`), no kept binary (`no_binary`), the
-recorded commit is not in this repository (`bad_state`), **HEAD has moved since that update**
+the update came from, the binary kept as `cyberstrike-ai.prev` is put back when that update swapped
+one, and `.update-state.json` is removed. An update whose build failed never swapped a binary, so its
+rollback moves the source only - the binary on disk already belongs to the commit it returns to. It
+refuses when there is no update record (`no_state`), a swap is owed but no `cyberstrike-ai.prev` is
+left (`no_binary`), a recorded commit is not in this repository (`bad_state`), the binary on disk is
+not the one the record pairs with that commit (`binary_changed`), **HEAD has moved since that update**
 (`moved_since_update` - a rollback undoes the update, not the work done after it), or source is
 modified locally (`local_source_edits`).
+
+Rollback writes `.update-rollback-pending.json` before changing source or binaries. Run rollback
+again after an interruption to finish recovery; the console reports `rollbackPending` and pauses new
+updates. Keep the recovery record, backup directory and `.prev` file. If recorded binary hashes do not
+match the files on disk, recovery refuses to overwrite them.
 
 ### The two restart cases
 
@@ -273,3 +294,12 @@ High-value tests:
 - OpenAPI: `internal/handler/openapi.go` plus its `openapi_paths_<group>.go` data files
 - Tool executor: `internal/security/executor.go`
 - Skill package: `internal/skillpackage/`
+- One-click update: `internal/update/` (status, apply, rollback), HTTP surface in
+  `internal/handler/update.go`, CLI switches in `cmd/server/update_cli.go`, thin shell in
+  `upgrade.sh`
+
+### Recovery evidence and MCP activation edits
+
+Self-update recovery validates JSON field names/types, duplicate keys, commit/hash relationships and the actual binary files before resuming filesystem changes. The plain-text legacy build marker remains supported, but any accompanying State is validated too. An ambiguous, incomplete or unsupported record is refused with the files and recovery evidence preserved. Do not delete a pending record just to bypass the refusal: first reconcile the source commit, live binary and previous binary/backup.
+
+Editing an existing external MCP without activation fields preserves its current enabled/stopped state. Explicit `disabled` or `external_mcp_enable` fields change activation; `disabled: true` takes precedence. A new server defaults to enabled. Start/Stop also persist the corresponding disabled state, so editing or restarting the application does not silently enable a stopped server.

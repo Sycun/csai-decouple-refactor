@@ -376,6 +376,9 @@ func (m *Manager) IngestCheckIn(listenerID string, req ImplantCheckInRequest) (*
 	if err != nil {
 		return nil, err
 	}
+	if existing != nil && existing.ListenerID != listenerID {
+		return nil, ErrAuthFailed
+	}
 	now := time.Now()
 	isFirstSeen := existing == nil
 	var sessID string
@@ -654,7 +657,7 @@ func (m *Manager) CancelTask(taskID string) error {
 	}
 	cancelled := string(TaskCancelled)
 	now := time.Now()
-	if err := m.c2.UpdateC2Task(taskID, store.C2TaskUpdate{Status: &cancelled, CompletedAt: &now}); err != nil {
+	if err := m.c2.UpdateC2Task(taskID, store.C2TaskUpdate{ExpectedStatus: &t.Status, Status: &cancelled, CompletedAt: &now}); err != nil {
 		return err
 	}
 	m.publishEvent("info", "task", t.SessionID, taskID, "任务已取消", nil)
@@ -664,6 +667,30 @@ func (m *Manager) CancelTask(taskID string) error {
 // PopTasksForBeacon beacon check_in 后调用：取该会话所有 queued+approved 的任务，
 // 内部已置为 sent；返回 TaskEnvelope，便于 listener 直接编码下发。
 func (m *Manager) PopTasksForBeacon(sessionID string, limit int) ([]TaskEnvelope, error) {
+	session, err := m.c2.GetC2Session(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if session != nil {
+		listener, err := m.c2.GetC2Listener(session.ListenerID)
+		if err != nil {
+			return nil, err
+		}
+		if listener != nil && listener.Type == string(ListenerTypeTCPReverse) {
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			for _, status := range []string{string(TaskSent), string(TaskRunning)} {
+				inFlight, err := m.c2.ListC2Tasks(store.ListC2TasksFilter{SessionID: sessionID, Status: status, Limit: 1})
+				if err != nil {
+					return nil, err
+				}
+				if len(inFlight) > 0 {
+					return []TaskEnvelope{}, nil
+				}
+			}
+			limit = 1
+		}
+	}
 	tasks, err := m.c2.PopQueuedC2Tasks(sessionID, limit)
 	if err != nil {
 		return nil, err
@@ -676,6 +703,30 @@ func (m *Manager) PopTasksForBeacon(sessionID string, limit int) ([]TaskEnvelope
 }
 
 // IngestTaskResult beacon 回传任务结果的统一入口
+// IngestTaskResultFromListener verifies transport-established ownership before
+// accepting a result. HTTP transports authenticate the listener; persistent
+// connections additionally bind the result to the session established at check-in.
+func (m *Manager) IngestTaskResultFromListener(listenerID, sessionID string, report TaskResultReport) error {
+	if listenerID == "" {
+		return ErrAuthFailed
+	}
+	task, err := m.c2.GetC2Task(report.TaskID)
+	if err != nil {
+		return err
+	}
+	if task == nil {
+		return ErrTaskNotFound
+	}
+	session, err := m.c2.GetC2Session(task.SessionID)
+	if err != nil {
+		return err
+	}
+	if session == nil || session.ListenerID != listenerID || (sessionID != "" && session.ID != sessionID) {
+		return ErrAuthFailed
+	}
+	return m.IngestTaskResult(report)
+}
+
 func (m *Manager) IngestTaskResult(report TaskResultReport) error {
 	if strings.TrimSpace(report.TaskID) == "" {
 		return ErrInvalidInput
@@ -686,6 +737,9 @@ func (m *Manager) IngestTaskResult(report TaskResultReport) error {
 	}
 	if t == nil {
 		return ErrTaskNotFound
+	}
+	if t.Status == string(TaskCancelled) || t.Status == string(TaskSuccess) || t.Status == string(TaskFailed) {
+		return nil
 	}
 
 	startedAt := time.Unix(0, report.StartedAt*int64(time.Millisecond))
@@ -711,12 +765,13 @@ func (m *Manager) IngestTaskResult(report TaskResultReport) error {
 	errText := ResolveTaskResultText(report.Error, report.ErrorB64, sessionOS)
 
 	upd := store.C2TaskUpdate{
-		Status:      &status,
-		ResultText:  &resultText,
-		Error:       &errText,
-		StartedAt:   &startedAt,
-		CompletedAt: &endedAt,
-		DurationMS:  &duration,
+		ExpectedStatus: &t.Status,
+		Status:         &status,
+		ResultText:     &resultText,
+		Error:          &errText,
+		StartedAt:      &startedAt,
+		CompletedAt:    &endedAt,
+		DurationMS:     &duration,
 	}
 
 	// blob（如截图）落盘

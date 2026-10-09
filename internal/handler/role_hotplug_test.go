@@ -38,7 +38,7 @@ func newRoleTestEnv(t *testing.T) (*RoleHandler, *settings.Store, *plugin.Table,
 	t.Cleanup(resetSettingsStoreForTest)
 
 	table := plugin.NewTable()
-	h := NewRoleHandler(cfg, configPath, zap.NewNop(), table)
+	h := NewRoleHandler(cfg, configPath, zap.NewNop(), table, nil)
 	return h, store, table, dir
 }
 

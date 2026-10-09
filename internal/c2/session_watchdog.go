@@ -79,6 +79,48 @@ func (w *SessionWatchdog) tick() {
 			}
 		}
 	}
+	sessions, err := w.manager.C2().ListC2Sessions(store.ListC2SessionsFilter{Status: string(SessionDead)})
+	if err != nil {
+		w.logger.Warn("离线任务查询失败", zap.Error(err))
+		return
+	}
+	for _, session := range sessions {
+		w.expireOfflineCommands(session, now)
+	}
+}
+
+func (w *SessionWatchdog) expireOfflineCommands(session *store.C2Session, now time.Time) {
+	tasks, err := w.manager.C2().ListC2Tasks(store.ListC2TasksFilter{SessionID: session.ID, Status: string(TaskSent)})
+	if err != nil {
+		w.logger.Warn("离线命令查询失败", zap.Error(err))
+		return
+	}
+	for _, task := range tasks {
+		if task.TaskType != string(TaskTypeExec) && task.TaskType != string(TaskTypeShell) {
+			continue
+		}
+		if task.SentAt == nil {
+			continue
+		}
+		seconds := 60.0
+		if value, ok := task.Payload["timeout_seconds"].(float64); ok && value > 0 {
+			seconds = value
+		}
+		// Invalid huge deadlines remain unexpired rather than wrapping a duration.
+		if seconds > float64((1<<63-1)/int64(time.Second)) {
+			continue
+		}
+		if now.Sub(*task.SentAt) <= time.Duration(seconds)*time.Second+w.minGrace {
+			continue
+		}
+		status := string(TaskFailed)
+		errText := "会话已离线且任务结果超过执行期限；远端进程是否终止尚未确认"
+		if err := w.manager.C2().UpdateC2Task(task.ID, store.C2TaskUpdate{ExpectedStatus: &task.Status, Status: &status, Error: &errText, CompletedAt: &now}); err != nil {
+			w.logger.Warn("收尾离线命令失败", zap.Error(err))
+			continue
+		}
+		w.manager.publishEvent("warn", "task", session.ID, task.ID, errText, nil)
+	}
 }
 
 // isStale 判断会话是否超时

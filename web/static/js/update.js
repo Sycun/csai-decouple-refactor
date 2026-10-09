@@ -9,7 +9,7 @@ const UPDATE_POLL_INTERVAL_MS = 1500;
 const UPDATE_WATCHDOG_INTERVAL_MS = 2000;
 const UPDATE_WATCHDOG_TIMEOUT_MS = 90000;
 
-// withUpdateBusy 按动作挑错误文案的前缀，所有 key 都必须在两份语言里存在。
+// withUpdateBusy 按动作挑错误文案的前缀，所有 key 都必须在三份语言里存在。
 const UPDATE_FAILURE_KEYS = {
     check: 'checkFailed',
     apply: 'applyFailed',
@@ -32,8 +32,9 @@ let updateWatchdogTimer = null;     // 重启守侧自己的定时器，跟任�
 let updateWatchdogDeadline = 0;
 let updateWatchdogSlow = null;      // null=还没超时；'running'=仍由旧进程应答；'down'=服务没回来
 let updateAutoCheckDone = false; // 每个会话只自动查一次远端，不每次重绘都去打扰
-let updateSourceDraft = null;    // 编辑中的更新源；null=还贴着服务端保存的值
+let updateSourceDraft = null;    // 编辑中的更新源仓库地址；null=还贴着服务端保存的值
 let updateSourceError = '';      // 最近一次保存/接入失败的原因，画在区块里
+let updateActionError = '';      // 最近一次动作（检查/更新/回滚/重启）失败的原因，画在控制台顶部
 let updateAdoptPlan = null;      // 预览回来的接入计划；确认后清掉
 
 function updateT(key, opts) {
@@ -47,21 +48,17 @@ function updateT(key, opts) {
 }
 
 function updateSourceOf() {
-    return (updateConsoleState && updateConsoleState.source) || { remote: '', remoteUrl: '', branch: '', configured: false };
+    return (updateConsoleState && updateConsoleState.source) || { repo: '', configured: false, defaultRepo: '' };
 }
 
 // 草稿优先：轮询重绘不许把正在输入的地址冲掉；保存成功后草稿丢弃、回到服务端的值。
-function updateSourceField(field) {
-    if (updateSourceDraft && typeof updateSourceDraft[field] === 'string') return updateSourceDraft[field];
-    return updateSourceOf()[field] || '';
+function updateSourceRepo() {
+    if (typeof updateSourceDraft === 'string') return updateSourceDraft;
+    return updateSourceOf().repo || '';
 }
 
-function updateSourceFieldChanged(field, value) {
-    if (!updateSourceDraft) {
-        const s = updateSourceOf();
-        updateSourceDraft = { remote: s.remote || '', remoteUrl: s.remoteUrl || '', branch: s.branch || '' };
-    }
-    updateSourceDraft[field] = String(value == null ? '' : value);
+function updateSourceRepoChanged(value) {
+    updateSourceDraft = String(value == null ? '' : value);
 }
 
 // scheduleUpdateAutoCheck answers the question the page exists to answer, without making
@@ -151,7 +148,7 @@ async function fetchUpdateStatus() {
         supervised: !!r.data.supervised,
         needsRestart: !!r.data.needsRestart,
         binaryBuiltAt: r.data.binaryBuiltAt || '',
-        source: r.data.source || { remote: '', remoteUrl: '', branch: '', configured: false },
+        source: r.data.source || { repo: '', configured: false, defaultRepo: '' },
     };
     noteRestartDefault();
     return updateConsoleState;
@@ -176,25 +173,30 @@ function notify(message, type) {
     }
 }
 
+// 动作期的重绘必须头尾对称。忙时要画"占用中"（按钮带 disabled），闲时要再画回来——
+// 这个页面的检查流程（包括打开页面后的自动检查）会在忙期里重绘，若结束时不再重绘，
+// 那份 disabled 就留在 DOM 上把按钮永久冻死：实测打开页面自动检查一次后，「保存更新源」
+// 带 disabled + data-state-disabled 留在页面上，再点永远没有反应，连请求都发不出去。
+// 横幅改成状态（updateActionError）由 renderUpdateConsole 渲染，退出重绘就不会把它擦掉；
+// 重启守侧接管画面时（updateRestartPending）一律不重绘，别把自恢复视图盖回控制台。
 async function withUpdateBusy(fn, label) {
     if (updateBusy) return;
     updateBusy = true;
+    updateActionError = '';
+    if (!updateRestartPending) renderUpdateConsole();
     try {
         await fn();
     } catch (err) {
         const reason = err && err.message ? err.message : String(err);
-        const text = updateT(UPDATE_FAILURE_KEYS[label] || 'loadFailed', { reason: reason });
-        const el = document.getElementById('update-console');
-        if (el && isUpdateConsoleActive()) {
-            // 先按当前状态重绘再挂横幅：请求炸在半路上时，画面还停在"正在检查远端…"这种
-            // 已经不再成立的状态上，光加一条红字是盖不住它的。
-            renderUpdateConsole();
-            el.insertAdjacentHTML('afterbegin', '<div class="update-error">' + escapeHtml(text) + '</div>');
-        }
-        // 内联横幅会被下一次轮询重绘冲掉，toast 才是留得住的那一份。
-        notify(text, 'error');
+        // 请求炸在半路上时，画面还停在"正在检查更新源…"这种已经不再成立的状态上，
+        // 光加一条红字没用：横幅跟随状态重绘，画面本身也要按当前状态画一遍。
+        updateActionError = updateT(UPDATE_FAILURE_KEYS[label] || 'loadFailed', { reason: reason });
+        if (!updateRestartPending) renderUpdateConsole();
+        // 内联横幅会被下一次动作开始时的重绘冲掉，toast 才是留得住的那一份。
+        notify(updateActionError, 'error');
     } finally {
         updateBusy = false;
+        if (!updateRestartPending) renderUpdateConsole();
     }
 }
 
@@ -212,6 +214,7 @@ async function loadUpdateConsole() {
     resetUpdateCheck();
     updateRestartChoiceSet = false;
     updateRestartChoice = true; // 之后由 noteRestartDefault 按 supervised 修正
+    updateActionError = '';     // 重新进页 = 干净画面，上一次动作的红字不跟过来
     const el = document.getElementById('update-console');
     if (!el) return;
     el.innerHTML = '<div class="empty-state">' + escapeHtml(updateT('loading')) + '</div>';
@@ -329,9 +332,7 @@ async function pollUpdateJob() {
         if (job.state === 'succeeded' && job.restartRequested) {
             // 进程马上要让位给新二进制：先把结论播报掉，再进自恢复视图；不再回头
             // 去读一个即将消失的服务（reportFinishedJob 会去读，这里跳过它）。
-            const result = job.result || null;
-            const tail = result && result.toCommit ? ' ' + result.fromCommit + ' → ' + result.toCommit : '';
-            notify(updateT('jobDoneToast') + tail, 'success');
+            notify(updateDoneToast(job.result || null), 'success');
             startUpdateWatchdog();
             return;
         }
@@ -340,13 +341,22 @@ async function pollUpdateJob() {
     }
 }
 
+// 完成时的这一句只念服务端写下来的结论，但补编译与普通更新是两种完成：commits=0 却换了
+// 二进制时念"a1b2c3d → a1b2c3d"等于没说，得说"补编译完成"。
+function updateDoneToast(result) {
+    if (result && result.binaryBuilt && result.fromCommit && result.fromCommit === result.toCommit) {
+        return updateT('buildDoneToast');
+    }
+    const tail = result && result.toCommit ? ' ' + result.fromCommit + ' → ' + result.toCommit : '';
+    return updateT('jobDoneToast') + tail;
+}
+
 // 播报只念服务端写下来的结论：成功念 result 的两个提交号，失败念 failure.message，
 // 页面自己不在这里编"更新完成"。
 function reportFinishedJob(job) {
     const result = job.result || null;
     if (job.state === 'succeeded') {
-        const tail = result && result.toCommit ? ' ' + result.fromCommit + ' → ' + result.toCommit : '';
-        notify(updateT('jobDoneToast') + tail, 'success');
+        notify(updateDoneToast(result), 'success');
         if (result && result.needsRestart) notify(updateT('needsRestartToast'), 'info');
     } else {
         const reason = (job.failure && job.failure.message) ? job.failure.message : updateT('failureNoMessage');
@@ -404,6 +414,7 @@ function updateBehindCount(status) {
 // 按钮为什么点不动，得说得出原因；"灰着"不算解释。
 function updateApplyBlockers(status, job) {
     const blockers = [];
+    if (status.rollbackPending) blockers.push(updateT('rollbackPendingHint'));
     if (!status.installed) blockers.push(updateT('blockedNotGitTree'));
     if (job && job.state === 'running') blockers.push(updateT('blockedJobRunning'));
     if ((status.blockingChanges || []).length) {
@@ -415,7 +426,7 @@ function updateApplyBlockers(status, job) {
             behind: status.behind || 0,
         }));
     }
-    if (!status.updateAvailable) blockers.push(updateT('blockedNoUpdate'));
+    if (!status.updateAvailable && !status.buildPending) blockers.push(updateT('blockedNoUpdate'));
     return blockers;
 }
 
@@ -433,13 +444,15 @@ function updateRestartRequested() {
 }
 
 function updateConfirmText(status, restart) {
-    const base = updateT('confirmApply', {
-        remote: status.remote || '-',
-        branch: status.branch || '-',
-        commit: status.commit || '-',
-        target: status.remoteCommit || '-',
-        n: updateBehindCount(status),
-    });
+    // 补编译和"更新 N 个提交"是两件事：一句说"0 个新提交"的确认框会让人以为白点。
+    const base = (!status.updateAvailable && status.buildPending)
+        ? updateT('confirmBuildPending', { commit: status.commit || '-' })
+        : updateT('confirmApply', {
+            repo: status.repo || '-',
+            target: status.remoteCommit || '-',
+            commit: status.commit || '-',
+            n: updateBehindCount(status),
+        });
     return base + ' ' + (restart ? updateT('confirmRestartYes') : updateT('confirmRestartNo'));
 }
 
@@ -516,19 +529,18 @@ async function rollbackUpdate() {
     }, 'rollback');
 }
 
-// 更新源：服务端负责校验与写入（config.yaml 的 update 段），这里只做搬运与说明。
+// 更新源：服务端负责校验与写入（config.yaml update 段的单个 repo 字段），这里只做搬运与说明。
+// 留空提交 = 回到官方仓库，和"从没配过"是同一种状态。
 async function saveUpdateSource() {
     if (updateBusy) return;
     const body = {
-        remote: updateSourceField('remote').trim(),
-        remoteUrl: updateSourceField('remoteUrl').trim(),
-        branch: updateSourceField('branch').trim(),
+        repo: updateSourceRepo().trim(),
     };
     updateSourceError = '';
     await withUpdateBusy(async () => {
         const r = await runUpdateRequest('POST', '/api/system/update/source', body);
         if (!r.ok) {
-            // 服务端的拒绝文案（二选一、地址不合法……）就是要展示的那句，不在这里另编。
+            // 服务端的拒绝文案（地址不合法……）就是要展示的那句，不在这里另编。
             updateSourceError = updateT('sourceSaveFailed', { reason: r.error });
             renderUpdateConsole();
             notify(updateSourceError, 'error');
@@ -609,29 +621,19 @@ function updateMark(ok, yesKey, noKey, reason) {
 
 function renderUpdateSourceBody(status) {
     const src = updateSourceOf();
+    const defaultRepo = src.defaultRepo || '';
     const parts = [];
-    parts.push('<div class="update-hint">' + escapeHtml(src.configured ? updateT('sourceFromConfig') : updateT('sourceFromTracked')) + '</div>');
-    if (status.remoteUrl) {
-        parts.push('<div class="update-facts">' + updateFact(updateT('sourceUrl'), status.remoteUrl) + '</div>');
-    }
-    if (status.remote) {
-        parts.push('<div class="update-facts">' + updateFact(updateT('sourceRemote'), status.remote) + '</div>');
-    }
-    if (status.branch) {
-        parts.push('<div class="update-facts">' + updateFact(updateT('sourceBranch'), status.branch) + '</div>');
+    parts.push('<div class="update-hint">' + escapeHtml(src.configured ? updateT('sourceFromConfig') : updateT('sourceIsDefault', { repo: defaultRepo })) + '</div>');
+    if (status.repo) {
+        parts.push('<div class="update-facts">' + updateFact(updateT('sourceUrl'), status.repo) + '</div>');
     }
     // 手输错误属于页面自己的状态，重绘（轮询）不能把它冲掉。
     const disabled = updateBusy ? ' disabled data-state-disabled="true"' : '';
     parts.push('<div class="update-source-form">' +
         '<label>' + escapeHtml(updateT('sourceUrlLabel')) +
-        '<input type="text" class="update-source-input update-source-url" value="' + escapeAttr(updateSourceField('remoteUrl')) +
-        '" placeholder="https://github.com/owner/repo.git" oninput="updateSourceFieldChanged(\'remoteUrl\', this.value)"></label>' +
-        '<label>' + escapeHtml(updateT('sourceRemoteLabel')) +
-        '<input type="text" class="update-source-input update-source-remote" value="' + escapeAttr(updateSourceField('remote')) +
-        '" placeholder="origin" oninput="updateSourceFieldChanged(\'remote\', this.value)"></label>' +
-        '<label>' + escapeHtml(updateT('sourceBranchLabel')) +
-        '<input type="text" class="update-source-input update-source-branch" value="' + escapeAttr(updateSourceField('branch')) +
-        '" placeholder="main" oninput="updateSourceFieldChanged(\'branch\', this.value)"></label>' +
+        '<input type="text" class="update-source-input update-source-url" value="' + escapeAttr(updateSourceRepo()) +
+        '" placeholder="' + escapeAttr(defaultRepo) + '" oninput="updateSourceRepoChanged(this.value)"></label>' +
+        '<div class="update-hint">' + escapeHtml(updateT('sourceRepoHint', { repo: defaultRepo })) + '</div>' +
         '<div class="update-actions"><button class="btn-secondary update-source-save-btn"' + disabled +
         ' data-require-permission="update:apply" onclick="saveUpdateSource()">' +
         escapeHtml(updateT('sourceSaveBtn')) + '</button></div></div>');
@@ -645,10 +647,6 @@ function renderUpdateSourceBody(status) {
 }
 
 function renderAdoptBody() {
-    const typedUrl = updateSourceField('remoteUrl') || updateSourceField('remote');
-    if (!updateSourceOf().configured && !typedUrl) {
-        return '<div class="update-hint">' + escapeHtml(updateT('adoptNeedsSource')) + '</div>';
-    }
     const parts = [];
     parts.push('<div class="update-hint">' + escapeHtml(updateT('adoptHint')) + '</div>');
     const disabled = updateBusy ? ' disabled data-state-disabled="true"' : '';
@@ -683,7 +681,6 @@ function renderUpdateInstallBody(status) {
     const facts = [
         updateFact(updateT('root'), status.root),
         updateFact(updateT('branch'), status.branch),
-        updateFact(updateT('remote'), status.remote),
         updateFact(updateT('commit'), status.commit),
         updateFact(updateT('committedAt'), status.committedAt),
         updateFact(updateT('subject'), status.subject),
@@ -721,8 +718,9 @@ function renderUpdateRemoteBody(status) {
     if (status.ahead > 0) {
         parts.push('<div class="update-warn">' + escapeHtml(updateT('aheadCount', { n: status.ahead })) + '</div>');
     }
-    if (status.remoteCommit) {
+    if (status.targetBranch || status.remoteCommit) {
         parts.push('<div class="update-facts">' +
+            updateFact(updateT('sourceBranch'), status.targetBranch) +
             updateFact(updateT('remoteHead'), status.remoteCommit) +
             updateFact(updateT('remoteSubject'), status.remoteSubject) + '</div>');
     }
@@ -781,6 +779,14 @@ function renderUpdateApplyBody(status, job) {
     }
     if (!status.canBuild && status.installed) {
         parts.push('<div class="update-warn">' + escapeHtml(updateT('noToolchainWarn')) + '</div>');
+    }
+    // 源码已经在更新源尖端、只欠一次编译：这不是"没有可用更新"，按钮必须照常可点，而且
+    // 得说清楚点它会去补编译——否则 no_toolchain 里那句"再点一次更新"在页面上根本没有落点。
+    if (status.rollbackPending) {
+        parts.push('<div class="update-warn">' + escapeHtml(updateT('rollbackPendingHint')) + '</div>');
+    }
+    if (status.buildPending && status.installed) {
+        parts.push('<div class="update-warn">' + escapeHtml(updateT('buildPendingHint')) + '</div>');
     }
 
     // Both halves matter: `disabled` for the browser, `data-state-disabled` so the platform's
@@ -977,6 +983,10 @@ function renderUpdateConsole() {
     const job = updateJobOf();
 
     const parts = [];
+    // 动作失败的红字是状态而不是一次性注入：重绘（轮询、退出忙态的那一次）都不能把它擦掉。
+    if (updateActionError) {
+        parts.push('<div class="update-error">' + escapeHtml(updateActionError) + '</div>');
+    }
     if (updateConsoleState.needsRestart) parts.push(renderRestartBanner());
     parts.push(updateSection(updateT('installTitle'), renderUpdateInstallBody(status)));
     parts.push(updateSection(updateT('sourceTitle'), renderUpdateSourceBody(status)));
@@ -1003,4 +1013,4 @@ window.renderUpdateConsole = renderUpdateConsole;
 window.saveUpdateSource = saveUpdateSource;
 window.previewAdoptSource = previewAdoptSource;
 window.confirmAdoptSource = confirmAdoptSource;
-window.updateSourceFieldChanged = updateSourceFieldChanged;
+window.updateSourceRepoChanged = updateSourceRepoChanged;

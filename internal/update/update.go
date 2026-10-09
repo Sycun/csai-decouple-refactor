@@ -1,19 +1,19 @@
 // Package update makes "bring this installation up to the newest commit of the
-// repository it was cloned from" one action: fetch, move the working tree, rebuild the
+// repository it updates from" one action: fetch, move the working tree, rebuild the
 // binary, swap it in.
 //
-// Why this exists rather than more shell: the shipped upgrade.sh downloads a Release
-// tarball of one fixed upstream repository. For anyone running a fork - which is how
-// this project is actually deployed here - "upgrade" therefore means "overwrite yourself
-// with somebody else's code", and the honest alternative is to pull by hand and remember
-// the build command. The platform has to answer "is there anything new" and "take it"
-// against the remote *this directory already tracks*, with nobody typing git or go.
+// The update source is one thing: a repository address. It defaults to the official
+// repository and can be pointed at a mirror, a fork or a second-development repository
+// with one config field (config.yaml update.repo); the branch that is followed is that
+// repository's own default branch, so there is nothing else to configure and nothing to
+// guess. The platform has to answer "is there anything new" and "take it" with nobody
+// typing git or go.
 //
 // Two properties hold the design down:
 //
-//   - Nothing destructive happens by default. Local source edits, or a branch that has
-//     diverged from its remote, stop with the file names and commit counts in the error
-//     instead of being reset to match.
+//   - Nothing destructive happens by default. Local source edits, or a tree that has
+//     diverged from the incoming history, stop with the file names and commit counts in
+//     the error instead of being reset to match.
 //   - Content the operator owns is not ours to overwrite. roles/, skills/, tools/,
 //     agents/, bundles/, knowledge_base/, data/, config.yaml and friends are put aside
 //     and restored on top of the merge, so an update moves code while the roles and
@@ -24,6 +24,7 @@ package update
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -34,9 +35,13 @@ import (
 // Binary is the default executable name an update replaces.
 const Binary = "cyberstrike-ai"
 
-// urlRefNamespace is where a fetch from an explicit address (config.yaml update.remote_url)
-// parks its remote-tracking ref. A fixed name no remote can shadow keeps the update reading
-// the same shape whether the source is a remote name or a URL.
+// DefaultRepoURL is where an installation updates from unless config.yaml says
+// otherwise. Keeping the official repository as the default is what makes the feature
+// work with no configuration at all; forks and mirrors change this one value.
+const DefaultRepoURL = "https://github.com/AIPentest/CyberStrikeAI.git"
+
+// urlRefNamespace is where a fetch parks its remote-tracking ref. A fixed name no
+// remote can shadow keeps every installation reading the same shape.
 const urlRefNamespace = "update-source"
 
 // maxIncoming caps how many commits a status page lists; the count is reported
@@ -75,7 +80,7 @@ func ValidRemoteURL(s string) bool {
 	if strings.Contains(s, "::") {
 		return false
 	}
-	if strings.HasPrefix(s, "/") {
+	if strings.HasPrefix(s, "/") || filepath.IsAbs(s) {
 		return true
 	}
 	return urlSchemePattern.MatchString(s)
@@ -85,12 +90,12 @@ func ValidRemoteURL(s string) bool {
 // changed through the console or by hand. An update never overwrites them.
 var protectedDirs = []string{
 	"roles/", "skills/", "tools/", "agents/", "bundles/", "knowledge_base/",
-	"data/", "log/", "logs/", "tmp/", "venv/", ".upgrade-backup/",
+	"data/", "log/", "logs/", "tmp/", "venv/", ".venv/", "chat_uploads/", ".upgrade-backup/",
 }
 
 // protectedFiles are single files with the same rule - most importantly the live
 // configuration, which is never in the repository in the first place.
-var protectedFiles = []string{"config.yaml", "config.yml", ".env"}
+var protectedFiles = []string{"config.yaml", "config.yml", "config.local.yaml", ".env"}
 
 // Protected reports whether a repository-relative path belongs to the operator rather
 // than to the product.
@@ -109,19 +114,25 @@ func Protected(rel string) bool {
 	return false
 }
 
-// Options describes which installation to act on. Root is the only required field;
-// Remote, RemoteURL and Branch carry an explicit update source (config.yaml update
-// section) for a tree that tracks something other than its own upstream - either a remote
-// it already has, by name, or an address to fetch directly. When both are set, the
-// address wins.
+// Options describes which installation to act on. Root is the only required field; Repo
+// is the update source (config.yaml update.repo) - a repository address to fetch from.
+// Empty means the official repository, so an installation with no configuration at all
+// still has exactly one answer to "where does an update come from".
 type Options struct {
-	Root      string
-	Remote    string
-	RemoteURL string
-	Branch    string
+	Root string
+	Repo string
 	// BinaryName overrides the executable swapped after a successful update. Empty
 	// means "cyberstrike-ai" in Root; "none" means leave the binary alone.
 	BinaryName string
+}
+
+// repoURL is the effective update source. Trimmed here once so every caller sees the
+// same decision: configured address if there is one, the official repository otherwise.
+func (o Options) repoURL() string {
+	if repo := strings.TrimSpace(o.Repo); repo != "" {
+		return repo
+	}
+	return DefaultRepoURL
 }
 
 func (o Options) binaryName() string {
@@ -163,20 +174,23 @@ type Commit struct {
 type Snapshot struct {
 	Root      string `json:"root"`
 	Installed bool   `json:"installed"`
-	Branch    string `json:"branch"`
-	Remote    string `json:"remote"`
-	// RemoteURL is set when the update source is an explicit address (config.yaml
-	// update.remote_url) rather than a remote this tree already has.
-	RemoteURL   string `json:"remoteUrl,omitempty"`
-	Remotes     []string
-	Commit      string `json:"commit"`
-	Subject     string `json:"subject"`
-	CommittedAt string `json:"committedAt"`
+	// Branch is the local branch the install tree is on, for display only.
+	Branch string `json:"branch"`
+	// Repo is the effective update source address, and RepoConfigured says whether it
+	// came from config.yaml or is the built-in official repository.
+	Repo           string `json:"repo"`
+	RepoConfigured bool   `json:"repoConfigured"`
+	// TargetBranch is the update source's own default branch, learned from the source
+	// itself when the network answer arrives (empty until then).
+	TargetBranch string `json:"targetBranch,omitempty"`
+	Commit       string `json:"commit"`
+	Subject      string `json:"subject"`
+	CommittedAt  string `json:"committedAt"`
 
 	Behind int `json:"behind"`
 	Ahead  int `json:"ahead"`
-	// Diverged means this tree has commits the remote does not. Updating then is a
-	// merge decision, not a download, so Apply refuses it.
+	// Diverged means this tree has commits the incoming history does not. Updating then
+	// is a merge decision, not a download, so Apply refuses it.
 	Diverged bool `json:"diverged"`
 
 	UpdateAvailable bool     `json:"updateAvailable"`
@@ -197,6 +211,12 @@ type Snapshot struct {
 	HasRollback bool `json:"hasRollback"`
 	// RollbackTo is the commit the previous update came from, when there is one.
 	RollbackTo string `json:"rollbackTo"`
+	// BuildPending says the last update moved the source but never replaced the binary (a
+	// failed compile, or a machine without a toolchain). Such a tree has nothing left to
+	// pull and still owes a build, which is why this is visible without a network round
+	// trip: the page has to offer the click the failure message told the operator to make.
+	BuildPending    bool `json:"buildPending"`
+	RollbackPending bool `json:"rollbackPending"`
 
 	// CheckError carries a fetch or parse failure to the page instead of turning the
 	// whole endpoint into a 500: "offline" and "your token expired" are answers, not
@@ -239,7 +259,7 @@ func nulList(blob string) []string {
 	return out
 }
 
-// ValidName reports whether s can safely reach git's argv as a remote or branch name.
+// ValidName reports whether s can safely reach git's argv as a branch name.
 func ValidName(s string) bool { return namePattern.MatchString(s) }
 
 // Status reads the install tree without touching the network.
@@ -250,29 +270,31 @@ func Status(ctx context.Context, opts Options) (*Snapshot, error) {
 	}
 	snap := &Snapshot{
 		Root:            root,
+		Repo:            opts.repoURL(),
+		RepoConfigured:  strings.TrimSpace(opts.Repo) != "",
 		Incoming:        []Commit{},
 		LocalChanges:    []Change{},
 		BlockingChanges: []Change{},
 	}
-
-	if url := strings.TrimSpace(opts.RemoteURL); url != "" {
-		if !ValidRemoteURL(url) {
-			snap.CheckError = "配置的更新源地址不合法（只允许 https/http/ssh/git/file:// 或本机绝对路径）"
-			return snap, nil
-		}
-		snap.RemoteURL = url
+	if !ValidRemoteURL(snap.Repo) {
+		snap.CheckError = "配置的更新源仓库地址不合法（只允许 https/http/ssh/git/file:// 或本机绝对路径）"
+		return snap, nil
 	}
 
 	if _, err := gitCmd(ctx, root, "rev-parse", "--is-inside-work-tree"); err != nil {
 		// Not a git tree: the page still has to say something useful, so this is a
 		// state rather than an error.
 		snap.Installed = false
-		snap.CheckError = "这个目录不是 git 工作树：可以先配置更新源再接入（配置文件 update 段），或按发布包方式更新"
+		snap.CheckError = "这个目录不是 git 工作树：可以先配置更新源仓库再接入，或按发布包方式更新"
 		snap.GoToolchain, snap.CanBuild = toolchain(ctx, root)
 		snap.HasBinary = fileExists(filepath.Join(root, opts.binaryName()))
 		return snap, nil
 	}
 	snap.Installed = true
+	if err := repositoryRoot(ctx, root); err != nil {
+		snap.CheckError = err.Error()
+		return snap, nil
+	}
 
 	for _, q := range []struct {
 		args []string
@@ -287,99 +309,44 @@ func Status(ctx context.Context, opts Options) (*Snapshot, error) {
 			*q.dest = v
 		}
 	}
-	if opts.Branch != "" {
-		snap.Branch = opts.Branch
-	}
 
-	remotes, err := gitCmd(ctx, root, "remote")
-	if err == nil {
-		for _, r := range strings.Fields(remotes) {
-			if ValidName(r) {
-				snap.Remotes = append(snap.Remotes, r)
-			}
-		}
+	var changeErr error
+	snap.LocalChanges, snap.BlockingChanges, changeErr = localChanges(ctx, root)
+	if changeErr != nil {
+		snap.CheckError = "无法检查本地改动：" + changeErr.Error()
+		return snap, nil
 	}
-	snap.Remote = pickRemote(snap.Remotes, snap.Branch, opts.Remote)
-
-	if upstream, err := gitCmd(ctx, root, "rev-parse", "--abbrev-ref", "@{upstream}"); err == nil && ValidName(upstream) {
-		if i := strings.Index(upstream, "/"); i > 0 {
-			if snap.Remote == "" {
-				snap.Remote = upstream[:i]
-			}
-			if opts.Branch == "" && upstream[i+1:] != "HEAD" {
-				snap.Branch = upstream[i+1:]
-			}
-		}
-	}
-
-	snap.LocalChanges, snap.BlockingChanges = localChanges(ctx, root)
 	snap.GoToolchain, snap.CanBuild = toolchain(ctx, root)
 	bin := filepath.Join(root, opts.binaryName())
 	snap.HasBinary = fileExists(bin)
+	snap.BuildPending = buildPending(root)
 	if st, ok := readState(root); ok {
-		snap.HasRollback = fileExists(bin+".prev") && st.UpdatedCommit != ""
+		binaryAlreadyMatchesTarget := st.BinaryCommit != "" && st.BinaryCommit == st.PreviousCommit
+		snap.HasRollback = st.UpdatedCommit != "" && !st.PreviousBinaryAbsent && (binaryAlreadyMatchesTarget || fileExists(bin+".prev"))
 		snap.RollbackTo = st.PreviousCommit
+	}
+	if pending, err := readRollbackPending(root); err != nil {
+		snap.CheckError = "回滚恢复记录无法读取：" + err.Error()
+	} else if pending != nil {
+		snap.HasRollback = true
+		snap.RollbackPending = true
+		snap.RollbackTo = pending.State.PreviousCommit
 	}
 	return snap, nil
 }
 
-// pickRemote chooses which remote to pull from: an explicit option, then the usual
-// suspects in the order that matches how this project is actually cloned (a fork named
-// for its owner tracking the owner's work, with the upstream kept for reference).
-func pickRemote(remotes []string, branch, optsRemote string) string {
-	if optsRemote != "" && ValidName(optsRemote) {
-		return optsRemote
-	}
-	ranked := []string{"mine", "origin", "upstream"}
-	known := map[string]bool{}
-	for _, r := range remotes {
-		known[r] = true
-	}
-	for _, r := range ranked {
-		if known[r] {
-			return r
-		}
-	}
-	if len(remotes) > 0 {
-		return remotes[0]
-	}
-	_ = branch
-	return ""
-}
-
-// fetchTarget is what git is pointed at: the configured address, or the chosen remote.
-func (s *Snapshot) fetchTarget() string {
-	if s.RemoteURL != "" {
-		return s.RemoteURL
-	}
-	return s.Remote
-}
-
-// fetchNamespace is where the fetched branch is parked under refs/remotes/.
-func (s *Snapshot) fetchNamespace() string {
-	if s.RemoteURL != "" {
-		return urlRefNamespace
-	}
-	return s.Remote
-}
-
 // sourceRef is the remote-tracking ref a status or an update compares against.
-func (s *Snapshot) sourceRef() string { return s.fetchNamespace() + "/" + s.Branch }
+func (s *Snapshot) sourceRef() string { return urlRefNamespace + "/" + s.TargetBranch }
 
 // sourceLabel is the human-facing name of where an update would come from.
-func (s *Snapshot) sourceLabel() string {
-	if s.RemoteURL != "" {
-		return s.RemoteURL
-	}
-	return s.Remote
-}
+func (s *Snapshot) sourceLabel() string { return s.Repo }
 
 // localChanges lists modified and deleted tracked files, and splits them by who owns
 // the path.
-func localChanges(ctx context.Context, root string) (all, blocking []Change) {
+func localChanges(ctx context.Context, root string) (all, blocking []Change, err error) {
 	out, err := gitRaw(ctx, root, "status", "--porcelain=v1", "-z", "--no-renames", "--untracked-files=no")
 	if err != nil {
-		return all, blocking
+		return all, blocking, err
 	}
 	for _, entry := range nulList(out) {
 		if len(entry) < 4 {
@@ -397,7 +364,7 @@ func localChanges(ctx context.Context, root string) (all, blocking []Change) {
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].Path < all[j].Path })
 	sort.Slice(blocking, func(i, j int) bool { return blocking[i].Path < blocking[j].Path })
-	return all, blocking
+	return all, blocking, nil
 }
 
 func changeVerb(status string) string {
@@ -411,31 +378,42 @@ func changeVerb(status string) string {
 	}
 }
 
-// Check fetches the chosen remote and reports what would come in. The fetch is the only
-// network operation in this package, and a failure here is a readable answer rather than
-// a fault: the page has to distinguish "up to date" from "could not look".
+// Check asks the update source what it has and reports the gap. The two source calls are
+// the only network operations in this package, and a failure is a readable answer rather
+// than a fault: the page has to distinguish "up to date" from "could not look".
 func Check(ctx context.Context, opts Options) (*Snapshot, error) {
+	release, err := LockInstall(opts)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	return check(ctx, opts)
+}
+
+func check(ctx context.Context, opts Options) (*Snapshot, error) {
 	snap, err := Status(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
-	if !snap.Installed {
+	if !snap.Installed || snap.CheckError != "" {
 		return snap, nil
 	}
 	root := snap.Root
-	if snap.Remote == "" && snap.RemoteURL == "" {
-		snap.CheckError = "该安装没有配置任何 git remote，也没有配置更新源地址，无法检查更新"
+
+	// The branch to follow is the source repository's own default branch, so the
+	// operator never names one and a fork whose default differs from main still works.
+	target, err := resolveDefaultBranch(ctx, root, snap.Repo)
+	if err != nil {
+		snap.CheckError = err.Error()
 		return snap, nil
 	}
-	if snap.Branch == "" || snap.Branch == "HEAD" || !ValidName(snap.Branch) {
-		snap.CheckError = "当前不在可自动更新的分支上（游离 HEAD 或分支名不合规范），无法确定要跟踪哪个分支"
-		return snap, nil
-	}
+	snap.TargetBranch = target
+
 	// --recurse-submodules=no and --prune keep the fetch to this repository's own
-	// history. A detached fetch of one branch means a remote with many refs cannot
-	// turn the update check into a full clone.
+	// history. A branch-scoped fetch means a source with many refs cannot turn the
+	// update check into a full clone.
 	if _, err := gitCmd(ctx, root, "fetch", "--quiet", "--no-tags", "--prune", "--recurse-submodules=no",
-		snap.fetchTarget(), "+refs/heads/"+snap.Branch+":refs/remotes/"+snap.fetchNamespace()+"/"+snap.Branch); err != nil {
+		snap.Repo, "+refs/heads/"+target+":refs/remotes/"+urlRefNamespace+"/"+target); err != nil {
 		snap.CheckError = err.Error()
 		return snap, nil
 	}
@@ -449,13 +427,18 @@ func Check(ctx context.Context, opts Options) (*Snapshot, error) {
 	}
 	snap.RemoteSubject, _ = gitCmd(ctx, root, "log", "-1", "--format=%s", ref)
 
-	if counts, err := gitCmd(ctx, root, "rev-list", "--left-right", "--count", "HEAD..."+ref); err == nil {
-		var ahead, behind int
-		if _, scanErr := fmt.Sscanf(counts, "%d %d", &ahead, &behind); scanErr == nil {
-			snap.Ahead, snap.Behind = ahead, behind
-			snap.Diverged = ahead > 0 && behind > 0
-		}
+	counts, err := gitCmd(ctx, root, "rev-list", "--left-right", "--count", "HEAD..."+ref)
+	if err != nil {
+		snap.CheckError = err.Error()
+		return snap, nil
 	}
+	var ahead, behind int
+	if _, err := fmt.Sscanf(counts, "%d %d", &ahead, &behind); err != nil {
+		snap.CheckError = "无法解析更新提交差异：" + err.Error()
+		return snap, nil
+	}
+	snap.Ahead, snap.Behind = ahead, behind
+	snap.Diverged = ahead > 0 && behind > 0
 	snap.UpdateAvailable = snap.Behind > 0
 	snap.IncomingTotal = snap.Behind
 
@@ -474,4 +457,58 @@ func Check(ctx context.Context, opts Options) (*Snapshot, error) {
 		}
 	}
 	return snap, nil
+}
+
+// resolveDefaultBranch asks the source repository which branch it publishes as its
+// default. It is the one naming decision in the update path, and the source makes it,
+// so nothing needs configuring and a source whose default is not "main" still works.
+func resolveDefaultBranch(ctx context.Context, root, source string) (string, error) {
+	out, err := gitCmd(ctx, root, "ls-remote", "--symref", source, "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("无法访问更新源仓库 %s：%s", source, strings.TrimSpace(err.Error()))
+	}
+	branch := parseDefaultBranch(out)
+	if branch == "" {
+		return "", fmt.Errorf("无法确定更新源仓库的默认分支：%s", source)
+	}
+	return branch, nil
+}
+
+// parseDefaultBranch reads "ref: refs/heads/<name>\tHEAD" out of ls-remote --symref output.
+func parseDefaultBranch(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "ref: refs/heads/") {
+			continue
+		}
+		rest := strings.TrimPrefix(line, "ref: refs/heads/")
+		if i := strings.IndexAny(rest, "\t "); i >= 0 {
+			rest = rest[:i]
+		}
+		if ValidName(rest) {
+			return rest
+		}
+	}
+	return ""
+}
+
+// Git accepts any descendant of a work tree, but file backups and binary swaps
+// are rooted at the installation. Refuse descendants before touching that tree.
+func repositoryRoot(ctx context.Context, root string) error {
+	top, err := gitCmd(ctx, root, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return err
+	}
+	actual, err := os.Stat(root)
+	if err != nil {
+		return err
+	}
+	expected, err := os.Stat(top)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(actual, expected) {
+		return &Error{Reason: "bad_root", Message: "更新只能操作 git 仓库根目录，请使用：" + top}
+	}
+	return nil
 }

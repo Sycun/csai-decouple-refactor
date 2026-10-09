@@ -98,8 +98,15 @@ func TestEnsureSchemaFinalizesOnlyHistoricalPlaceholdersWithTerminalEvidence(t *
 	if err != nil {
 		t.Fatalf("create superseded placeholder: %v", err)
 	}
-	if _, err := database.NewConversations(db).AddMessage(supersededConversation.ID, "user", "继续", nil); err != nil {
+	later, err := database.NewConversations(db).AddMessage(supersededConversation.ID, "user", "继续", nil)
+	if err != nil {
 		t.Fatalf("create later message: %v", err)
+	}
+	// Coarse clocks (notably Windows) can give consecutive messages the same
+	// timestamp. Match the message ordering used by GetMessages: time, then rowid.
+	if _, err := db.Exec(`UPDATE messages SET created_at =
+		(SELECT created_at FROM messages WHERE id = ?) WHERE id = ?`, superseded.ID, later.ID); err != nil {
+		t.Fatalf("give consecutive messages equal timestamps: %v", err)
 	}
 
 	timeoutConversation, err := database.NewConversations(db).CreateConversation("timeout placeholder", database.ConversationCreateMeta{})
@@ -136,9 +143,17 @@ func TestEnsureSchemaFinalizesOnlyHistoricalPlaceholdersWithTerminalEvidence(t *
 	if err != nil {
 		t.Fatalf("create active conversation: %v", err)
 	}
+	earlier, err := database.NewConversations(db).AddMessage(activeConversation.ID, "user", "开始", nil)
+	if err != nil {
+		t.Fatalf("create preceding message: %v", err)
+	}
 	potentiallyActive, err := database.NewConversations(db).AddMessage(activeConversation.ID, "assistant", "处理中...", nil)
 	if err != nil {
 		t.Fatalf("create potentially active placeholder: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE messages SET created_at =
+		(SELECT created_at FROM messages WHERE id = ?) WHERE id = ?`, potentiallyActive.ID, earlier.ID); err != nil {
+		t.Fatalf("give preceding message equal timestamp: %v", err)
 	}
 
 	if err := manager.EnsureSchema(); err != nil {

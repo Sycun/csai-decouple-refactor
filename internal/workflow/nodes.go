@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"cyberstrike-ai/internal/agent"
 	"cyberstrike-ai/internal/agentmode"
 	"cyberstrike-ai/internal/config"
+	"cyberstrike-ai/internal/mcp"
 	"cyberstrike-ai/internal/multiagent"
 )
 
@@ -75,7 +77,24 @@ func runToolNode(ctx context.Context, args RunArgs, node graphNode, state *Workf
 			"args":   toolArgs,
 		})
 	}
-	result, err := args.Agent.ExecuteMCPToolForConversation(ctx, args.ConversationID, toolName, toolArgs)
+	toolCtx, cancel, err := workflowToolContext(ctx, cfgString(node.Config, "timeout_seconds"))
+	if err != nil {
+		errText := err.Error()
+		return outputMap(envelope("tool", node.ID, node.Type, "failed", ""), map[string]any{"tool_name": toolName, "error": errText}), false, "failed", errText
+	}
+	defer cancel()
+	result, err := args.Agent.ExecuteMCPToolForConversation(toolCtx, args.ConversationID, toolName, toolArgs)
+	if err == nil && toolCtx.Err() != nil {
+		err = toolCtx.Err()
+	}
+	// The MCP worker and caller have timers for the same absolute deadline.
+	// The worker may finish first while the caller's Done notification is still
+	// waiting to run; the deadline itself is authoritative in either ordering.
+	if err == nil {
+		if deadline, ok := toolCtx.Deadline(); ok && !time.Now().Before(deadline) {
+			err = context.DeadlineExceeded
+		}
+	}
 	if err != nil {
 		errText := err.Error()
 		return outputMap(envelope("tool", node.ID, node.Type, "failed", ""), map[string]any{"tool_name": toolName, "arguments": toolArgs, "error": errText}), false, "failed", errText
@@ -141,6 +160,21 @@ func checkNodeAgentMode(args RunArgs, mode string) error {
 	}
 	_, err := agentmode.Check(nil, false, mode)
 	return err
+}
+
+func workflowToolContext(parent context.Context, raw string) (context.Context, context.CancelFunc, error) {
+	if strings.TrimSpace(raw) == "" {
+		ctx, cancel := context.WithCancel(parent)
+		return ctx, cancel, nil
+	}
+	seconds, err := parsePositiveInt(raw)
+	if err != nil || int64(seconds) > int64((1<<63-1)/int64(time.Second)) {
+		return nil, nil, fmt.Errorf("工具节点超时时间必须是有效正整数秒")
+	}
+	ctx, cancel := context.WithTimeout(parent, time.Duration(seconds)*time.Second)
+	deadline, _ := ctx.Deadline()
+	ctx = mcp.WithToolExecutionDeadline(ctx, deadline)
+	return ctx, cancel, nil
 }
 
 func runAgentNode(ctx context.Context, args RunArgs, node graphNode, state *WorkflowLocalState) (map[string]any, bool, string, string) {

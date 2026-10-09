@@ -5,12 +5,14 @@ set -euo pipefail
 #
 # Two installation kinds, decided at runtime from this directory itself:
 #
-#  1. git work tree (the normal case, and the only honest one for a fork):
+#  1. git work tree (the normal case):
 #     the update is delegated to the platform binary, `./cyberstrike-ai -update`, which
-#     fetches the remote *this directory already tracks*, fast-forwards, rebuilds with
-#     `go build` and swaps the binary in atomically. No repository name is hardcoded on
-#     this path, so "upgrade" can never overwrite your work with somebody else's code.
-#     Refusals (local source edits, a diverged branch) come from that same implementation
+#     fetches the configured update source (config.yaml update.repo; empty = the official
+#     repository, and one field points it at a fork or a mirror) and follows that
+#     repository's own default branch, fast-forwards, rebuilds with `go build` and swaps
+#     the binary in atomically. The CLI reads the same config field the console page
+#     saves, so the keyboard and the button update from the same place.
+#     Refusals (local source edits, diverged history) come from that same implementation
 #     and name the files/commits involved.
 #
 #  2. Plain directory (Release tarball install, no git): falls back to downloading a
@@ -26,7 +28,7 @@ set -euo pipefail
 # - tools/ (user extensions; never overwritten by upgrade)
 # - roles/, skills/, agents/, bundles/
 # - the rollback points of an earlier one-click update:
-#   .update-backup/, .update-state.json, cyberstrike-ai.prev
+#   .update-backup/, .update-state.json, .update-build-pending, cyberstrike-ai.prev
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
@@ -43,7 +45,7 @@ UPGRADE_TMP_DIR=""
 
 # Built-in fallback, used ONLY when this directory is not a git work tree and neither
 # --repo nor GITHUB_REPO was given. See resolve_repo().
-DEFAULT_GITHUB_REPO="Ed1s0nZ/CyberStrikeAI"
+DEFAULT_GITHUB_REPO="AIPentest/CyberStrikeAI"
 GITHUB_REPO="${GITHUB_REPO:-}"
 REPO_ARG=""
 
@@ -65,11 +67,12 @@ Usage:
 
 What it does depends on the installation kind (detected automatically):
 
-  git work tree     Updates from the remote this directory already tracks, by calling
+  git work tree     Updates from the configured source repository (config.yaml
+                    update.repo; empty = the official repository) by calling
                     ./cyberstrike-ai -update (fetch, fast-forward, go build, swap binary).
                     --tag/--repo are ignored on this path. Your own roles/skills/tools/
                     agents/bundles/data/config are put aside and restored by the platform;
-                    local source edits or a diverged branch stop the update instead of
+                    local source edits or diverged history stop the update instead of
                     being overwritten.
   plain directory   (Release tarball install, no git) Downloads the Release tarball and
                     syncs it in with rsync --delete. --repo / GITHUB_REPO apply here.
@@ -165,22 +168,14 @@ resolve_install_kind() {
 
 show_git_source() {
   # Say out loud where the code is coming from: that is the whole point of this path.
+  # The source itself is one field (config.yaml update.repo, empty = the official
+  # repository) and the binary is the one that reads it - `-check-update` prints the
+  # exact repository and branch that would land, without changing anything.
   local branch
   branch="$(git -C "$ROOT_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
   info "Install directory: ${ROOT_DIR}"
-  info "Branch: ${branch:-unknown}"
-
-  local remotes name url
-  remotes="$(git -C "$ROOT_DIR" remote 2>/dev/null || true)"
-  if [[ -z "$remotes" ]]; then
-    warn "This repository has no git remote, so there is nothing to fetch. Add one (git remote add ...) before updating."
-    return 0
-  fi
-  info "Remotes this directory tracks (the update pulls from its own remote, never from a hardcoded third-party one):"
-  for name in $remotes; do
-    url="$(git -C "$ROOT_DIR" config --get "remote.${name}.url" 2>/dev/null || true)"
-    info "  - ${name}: ${url:-unknown}"
-  done
+  info "Local branch: ${branch:-unknown}"
+  info "Update source: config.yaml update.repo (empty = the official repository); ./${BINARY_NAME} -check-update prints it exactly."
 }
 
 explain_no_go() {
@@ -270,10 +265,10 @@ confirm_or_exit() {
   fi
 
   if [[ "$INSTALL_KIND" == "git" ]]; then
-    warn "About to update this installation from the remote it already tracks:"
+    warn "About to update this installation from its configured update source:"
     info " - git fetch + fast-forward of ${ROOT_DIR}"
     info "   (refused with file names if source files are modified locally, or if the"
-    info "    branch has diverged - that is a merge decision, not a download)"
+    info "    local history has diverged from the source - that is a merge decision, not a download)"
     info " - go build, then the binary is swapped; the previous one is kept as ${BINARY_NAME}.prev"
     info " - your content (roles/skills/tools/agents/bundles/knowledge_base/data/config.yaml)"
     info "   is put aside before the merge and restored after it; the result lists what was kept"
@@ -291,7 +286,7 @@ confirm_or_exit() {
     fi
     info " - Preserve tools/: yes (always)"
     info " - Preserve roles/skills/agents/bundles: yes (always)"
-    info " - Preserve rollback points (.update-backup/, .update-state.json, ${BINARY_NAME}.prev): yes"
+    info " - Preserve rollback points (.update-backup/, .update-state.json, .update-build-pending, ${BINARY_NAME}.prev): yes"
     info " - Stop service: ${STOP_SERVICE}"
   fi
 
@@ -508,30 +503,83 @@ check_tarball_install() {
 }
 
 update_config_version() {
-  # Replace config.yaml's version: ... with the specified tag.
+  # Replace config.yaml's top-level version with the specified tag. The line matching
+  # mirrors the Go writer (internal/config.WriteVersion): top-level key only, in every
+  # spelling YAML accepts (version / "version" / 'version'), first occurrence only - a
+  # nested key or a later duplicate belongs to the file's own structure and must not be
+  # rewritten. A value the line cannot replace safely (block scalar / multi-line scalar)
+  # leaves the file alone on purpose: a stale version number is a display problem, a
+  # config that no longer loads is an installation that no longer starts.
   local new_tag="$1"
-  python3 - "$CONFIG_FILE" "$new_tag" <<PY
-import re, sys
-path=sys.argv[1]
-tag=sys.argv[2]
+  python3 - "$CONFIG_FILE" "$new_tag" <<'PY'
+import os, re, stat, sys, tempfile
+
+path = sys.argv[1]
+tag = sys.argv[2]
+# Same value rule as the Go writer (internal/config.versionValuePattern): what lands here
+# is a live config, and a tag with a quote or newline in it must never reach it.
+if not re.match(r"^[A-Za-z0-9][A-Za-z0-9._+-]*$", tag):
+    sys.stderr.write("版本号 %r 不合法（只允许字母、数字与 . _ + -），未写入 config.yaml\n" % tag)
+    sys.exit(0)
 with open(path, "r", encoding="utf-8") as f:
-    lines=f.readlines()
+    lines = f.readlines()
 
-out=[]
-replaced=False
-for line in lines:
-    if re.match(r'^\s*version\s*:', line):
-        out.append(f'version: "{tag}"\n')
-        replaced=True
-    else:
-        out.append(line)
+key = re.compile(r"^(['\"]?version['\"]?)\s*:(.*)$")
+replaced = False
+refused = False
+out = []
+for i, line in enumerate(lines):
+    if not replaced:
+        m = key.match(line)
+        if m:
+            value = m.group(2).strip()
+            nxt = lines[i + 1] if i + 1 < len(lines) else ""
+            # Without a YAML parser, only replace a complete scalar on one
+            # line. An open quote or flow/anchor value may continue below.
+            simple_value = re.fullmatch(r"(?:[A-Za-z0-9._+-]+|'[^'\n]*'|\"[^\"\\\n]*\")?(?:[ \t]+#.*)?", value)
+            if simple_value is None or (value == "" and nxt[:1] in (" ", "\t")):
+                sys.stderr.write("版本号未写入：config.yaml 的 version 是多行/块标量写法，无法就地替换（原文件未改动）\n")
+                refused = True
+                break
+            out.append('version: "%s"\n' % tag)
+            replaced = True
+            continue
+    out.append(line)
 
-if not replaced:
-    # If no version field is found, insert at the beginning (near the top).
-    out.insert(0, f'version: "{tag}"\n')
+if not refused:
+    if not replaced:
+        insert_at = 0
+        for i, line in enumerate(lines):
+            first = line.rstrip("\r\n").lstrip("\ufeff")
+            rest = first[3:] if first.startswith("---") else None
+            if rest is not None and (not rest.strip(" \t") or rest[:1] in (" ", "\t") and rest.lstrip(" \t").startswith("#")):
+                insert_at = i + 1
+                if not line.endswith(("\n", "\r")):
+                    out[i] += "\n"
+                break
+            trimmed = first.strip()
+            if trimmed and not trimmed.startswith("#") and not first.startswith("%"):
+                # Only a block mapping at column zero can accept a new key.
+                if not re.match(r"^[A-Za-z_][A-Za-z0-9_-]*[ \t]*:", first):
+                    sys.stderr.write("版本号未写入：无法安全地在此 YAML 文档插入字段，原文件未改动\n")
+                    sys.exit(0)
+                break
+        out.insert(insert_at, 'version: "%s"\n' % tag)
 
-with open(path, "w", encoding="utf-8") as f:
-    f.writelines(out)
+    original_mode = stat.S_IMODE(os.stat(path).st_mode)
+    tmp_fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".", suffix=".tmp", dir=os.path.dirname(os.path.abspath(path)))
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            f.writelines(out)
+            f.flush()
+            os.fchmod(f.fileno(), original_mode)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+        raise
 PY
 }
 
@@ -549,9 +597,9 @@ sync_code() {
 
   local -a rsync_excludes
   rsync_excludes+=( "--exclude=.upgrade-backup/" )
-  rsync_excludes+=( "--exclude=config.yaml" )
+  rsync_excludes+=( "--exclude=config.yaml" "--exclude=config.yml" "--exclude=config.local.yaml" "--exclude=.env" )
   rsync_excludes+=( "--exclude=data/" )
-  rsync_excludes+=( "--exclude=tmp/" )
+  rsync_excludes+=( "--exclude=tmp/" "--exclude=chat_uploads/" "--exclude=log/" "--exclude=logs/" "--exclude=bundles/" "--exclude=.venv/" )
 
   if [[ "$PRESERVE_VENV" -eq 1 ]]; then
     rsync_excludes+=( "--exclude=venv/" )
@@ -566,16 +614,20 @@ sync_code() {
   rsync_excludes+=( "--exclude=tools/" )
   rsync_excludes+=( "--exclude=roles/" )
   rsync_excludes+=( "--exclude=skills/" )
-  # Markdown agents and capability bundles are operator content too, and the platform's
-  # own update protects the same set.
+  # Markdown agents are operator content too, and the platform's own update protects the
+  # same set (capability bundles are already excluded above, with the other runtime
+  # directories that never come from a Release tarball).
   rsync_excludes+=( "--exclude=agents/" )
-  rsync_excludes+=( "--exclude=bundles/" )
 
   # Rollback points written by a one-click update: an rsync --delete that ate them would
-  # leave the installation with no way back.
+  # leave the installation with no way back - and eating .update-build-pending would make it
+  # forget a compile it still owes, so the next click reports "already up to date".
   rsync_excludes+=( "--exclude=.update-backup/" )
   rsync_excludes+=( "--exclude=.update-staging/" )
-  rsync_excludes+=( "--exclude=.update-state.json" )
+  rsync_excludes+=( "--exclude=.update-state.json" "--exclude=.update-lock" "--exclude=.update-rollback-pending.json" "--exclude=.update-rollback-pending.json.tmp" )
+  rsync_excludes+=( "--exclude=.update-state.json.tmp" )
+  rsync_excludes+=( "--exclude=.update-build-pending" )
+  rsync_excludes+=( "--exclude=.update-build-pending.tmp" )
   rsync_excludes+=( "--exclude=${BINARY_NAME}.prev" )
 
   # Ensure this upgrade script itself is not deleted.
