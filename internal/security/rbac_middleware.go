@@ -309,6 +309,11 @@ func isProcessGlobalMutationPath(path string) bool {
 		strings.HasPrefix(path, "/external-mcp") || strings.HasPrefix(path, "/robot") {
 		return true
 	}
+	if strings.HasPrefix(path, "/plugins") {
+		// Installing or unplugging a pack, detaching a unit, flipping its switch: every one of
+		// them changes which capabilities each session of this process can use.
+		return true
+	}
 	if strings.HasPrefix(path, "/workflows") {
 		// Workflow runs inherit conversation access; definitions are global.
 		return !strings.HasPrefix(path, "/workflows/runs/") && path != "/workflows/validate" && path != "/workflows/dry-run" && path != "/workflows/generate-draft"

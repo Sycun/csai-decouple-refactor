@@ -324,3 +324,37 @@ func TestAssignedScopeCannotMutateProcessGlobalAssets(t *testing.T) {
 		})
 	}
 }
+
+// Installing a pack, unplugging it, detaching a unit or flipping its switch changes which roles,
+// tools, MCP servers and modes every session of this process can use - the plugins:install /
+// plugins:write descriptions say as much. That is process-global by definition, so an
+// assigned/own-scoped grant of those permissions must not be enough, same as PUT /api/roles.
+func TestAssignedScopeCannotMutateCapabilityPacks(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct{ method, path string }{
+		{http.MethodPost, "/api/plugins/install"},
+		{http.MethodDelete, "/api/plugins/bundles/demo"},
+		{http.MethodDelete, "/api/plugins/units/role/demo"},
+		{http.MethodPost, "/api/plugins/units/role/demo/enabled"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.method+" "+tc.path, func(t *testing.T) {
+			permission := permissionForRequest(tc.method, tc.path)
+			if permission == "" {
+				t.Fatalf("%s %s maps no permission - the gate would pass vacuously", tc.method, tc.path)
+			}
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set(ContextSessionKey, Session{UserID: "operator", Scope: database.RBACScopeAssigned, Permissions: map[string]bool{permission: true}, PermissionScopes: map[string]string{permission: database.RBACScopeAssigned}})
+				c.Next()
+			})
+			router.Use(RBACMiddleware(&database.DB{}))
+			router.Handle(tc.method, tc.path, func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, httptest.NewRequest(tc.method, tc.path, nil))
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("capability-pack mutation by an assigned-scope session: status = %d, want 403", w.Code)
+			}
+		})
+	}
+}
