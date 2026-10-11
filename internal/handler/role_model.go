@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 
 	"cyberstrike-ai/internal/config"
@@ -85,4 +87,37 @@ func effectiveAIChannelID(fallback *config.Config, explicitChannel, roleName str
 		return id
 	}
 	return roleAIChannel(fallback, roleName, logger)
+}
+
+// resolveRunConfig returns a copy of the live snapshot whose OpenAI block is the channel this
+// run resolved to. It is a free function rather than an AgentHandler method because the workflow
+// paths need the same resolution and do not hang off that type.
+//
+// The copy matters: everything downstream reads it, so writing the resolved channel into the
+// snapshot instead would leak one run's model into every other run in the process.
+func resolveRunConfig(fallback *config.Config, explicitChannel, roleName string, logger *zap.Logger) (*config.Config, string, error) {
+	live := currentConfig(fallback)
+	if live == nil {
+		return nil, "", errors.New("服务器配置未加载")
+	}
+	oa, resolvedID, ok := live.ResolveAIChannel(effectiveAIChannelID(fallback, explicitChannel, roleName, logger))
+	if !ok {
+		return nil, resolvedID, fmt.Errorf("AI 通道不存在: %s", resolvedID)
+	}
+	cfgCopy := *live
+	cfgCopy.OpenAI = oa
+	return &cfgCopy, resolvedID, nil
+}
+
+// runConfigForRole is resolveRunConfig for callers that used to run on the raw snapshot and had
+// no channel resolution at all - the role-bound workflow paths. Those keep working unchanged when
+// nothing resolves, rather than gaining a brand-new way to fail: the only error resolveRunConfig
+// can return here is "the default channel itself is unusable", which those paths already surfaced
+// later, from inside the model client. A role binding that does not resolve is not an error either;
+// roleAIChannel downgrades it to the default and logs.
+func runConfigForRole(fallback *config.Config, explicitChannel, roleName string, logger *zap.Logger) *config.Config {
+	if cfg, _, err := resolveRunConfig(fallback, explicitChannel, roleName, logger); err == nil && cfg != nil {
+		return cfg
+	}
+	return currentConfig(fallback)
 }

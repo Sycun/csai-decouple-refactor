@@ -60,7 +60,7 @@ enabled: true
   - **设置后**：该角色发起的运行使用这个通道自带的 `provider` / `base_url` / `api_key` / `model` / `reasoning`，因此换一个模型只需要改通道，不必逐个角色改
   - 优先级：**对话页手动选择的通道 > 角色绑定的通道 > `ai.default_channel`**（对话页的通道下拉只有在用户真的选过时才会随请求发出，所以显式选择永远是一次有意的覆盖）
   - 绑定的通道若已被删除或改名，运行时**回落默认通道**并记一条 warning，不会让对话失败；控制台保存角色时会直接拒绝不存在的通道
-  - 生效范围：对话页单代理（`/api/eino-agent*`）、多代理（deep / plan_execute / supervisor）以及批量任务队列
+  - 生效范围：对话页单代理（`/api/eino-agent*`）、多代理（deep / plan_execute / supervisor）、角色绑定的工作流（含审批后续跑）以及批量任务队列
 - **enabled**: 是否启用该角色（必填，true/false）
 
 ## 示例

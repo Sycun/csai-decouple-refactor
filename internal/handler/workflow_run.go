@@ -166,7 +166,7 @@ func (h *WorkflowHandler) ResumeRun(c *gin.Context) {
 		DB:             workflowrunner.Store{Store: projectStore(h.projects, h.facts), Ledger: h.runs},
 		Logger:         h.logger,
 		Role:           role,
-		AppCfg:         h.cfg,
+		AppCfg:         runConfigForRole(h.cfg, "", role.Name, h.logger),
 		Agent:          h.agent,
 		ConversationID: run.ConversationID,
 		ProjectID:      run.ProjectID,

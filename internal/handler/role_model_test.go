@@ -100,6 +100,37 @@ func TestConfigForAIChannelAppliesRoleModel(t *testing.T) {
 	}
 }
 
+func TestRunConfigForRoleNeverFails(t *testing.T) {
+	cfg := roleModelTestConfig()
+	logger := zap.NewNop()
+
+	got := runConfigForRole(cfg, "", "分析师", logger)
+	if got == nil || got.OpenAI.Model != "model-deep" {
+		t.Fatalf("role-bound workflow run resolved to %+v, want the deep channel's model", got)
+	}
+	if got == cfg {
+		t.Fatal("must be a copy: workflow nodes read AppCfg.OpenAI, so writing the resolved " +
+			"channel into the snapshot would leak one run's model into every other run")
+	}
+
+	// The chat-initiated workflow paths pass the request's channel through, so an explicit
+	// session choice still wins over the role's binding there too.
+	if got = runConfigForRole(cfg, "fast", "分析师", logger); got == nil || got.OpenAI.Model != "model-fast" {
+		t.Fatalf("explicit channel resolved to %+v, want the fast channel's model", got)
+	}
+
+	// A deployment with no usable channel at all degrades to the raw snapshot rather than
+	// returning nil: these paths ran on the snapshot before and have no error branch to put
+	// a failure in, so they must not gain a new way to crash.
+	bare := &config.Config{}
+	if got = runConfigForRole(bare, "", "分析师", logger); got == nil {
+		t.Fatal("runConfigForRole returned nil")
+	}
+	if got != bare {
+		t.Fatalf("with nothing resolvable the raw snapshot must be handed through unchanged, got %+v", got.OpenAI)
+	}
+}
+
 func TestNormalizeRoleAIChannelKeepsEmptyEmpty(t *testing.T) {
 	// config.NormalizeAIChannelID("") == "default". Passing an unbound role's empty field
 	// through it would pin every "follow the default" role to a channel named default.

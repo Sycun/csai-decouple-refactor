@@ -445,16 +445,10 @@ func (h *AgentHandler) configForAIChannel(channelID, roleName string) (*config.C
 		return nil, "", fmt.Errorf("服务器配置未加载")
 	}
 	live := currentConfig(h.config)
-	oa, resolvedID, ok := live.ResolveAIChannel(effectiveAIChannelID(h.config, channelID, roleName, h.logger))
-	if !ok {
-		return nil, resolvedID, fmt.Errorf("AI 通道不存在: %s", resolvedID)
+	if live == nil {
+		return nil, "", fmt.Errorf("服务器配置未加载")
 	}
-	// Cloned from the live snapshot, not from the boot config: everything downstream of this
-	// (sub-agent role bindings, tool sets a bundle adds) reads the copy, so this one line is
-	// what makes a plugged-in capability reach a run without a restart.
-	cfgCopy := *live
-	cfgCopy.OpenAI = oa
-	return &cfgCopy, resolvedID, nil
+	return resolveRunConfig(live, channelID, roleName, h.logger)
 }
 
 func chatReasoningToClientIntent(r *ChatReasoningRequest) *reasoning.ClientIntent {
