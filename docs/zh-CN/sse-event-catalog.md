@@ -12,72 +12,72 @@
 
 | 事件名 | 流 | 发射点 | 前端消费点 |
 |---|---|---|---|
-| `cancelled` | agent | `agent_stream.go:97`(forwarded), `task_lifecycle.go:35`(forwarded), `internal/handler/eino_single_agent.go:313`(conduit), `internal/handler/multi_agent.go:327`(conduit), `internal/handler/workflow_integration.go:131`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3644` |
-| `conversation` | agent | `agent_stream.go:97`(forwarded), `task_lifecycle.go:35`(forwarded), `internal/handler/eino_single_agent.go:65`(conduit), `internal/handler/multi_agent.go:75`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3553` |
-| `done` | agent | `agent_stream.go:97`(forwarded), `task_lifecycle.go:35`(forwarded), `internal/handler/agent.go:1460`(handled), `internal/handler/eino_single_agent.go:34`(conduit), `internal/handler/multi_agent.go:34`(conduit), `internal/handler/task_lifecycle.go:26`(handled), `internal/handler/workflow_integration.go:88`(conduit), `internal/workflow/nodes.go:253`(handled) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3651` |
-| `eino_agent_reply` | agent | `internal/multiagent/eino_sub_agent_reply_emitter.go:93`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3858` |
-| `eino_agent_reply_stream_delta` | agent | `internal/handler/agent.go:1559`(handled), `internal/multiagent/eino_sub_agent_reply_emitter.go:56`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3811` |
-| `eino_agent_reply_stream_end` | agent | `internal/handler/agent.go:1387`(handled), `internal/multiagent/eino_sub_agent_reply_emitter.go:72`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3836` |
-| `eino_agent_reply_stream_start` | agent | `internal/handler/agent.go:1558`(handled), `internal/multiagent/eino_sub_agent_reply_emitter.go:48`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3794` |
+| `cancelled` | agent | `agent_stream.go:97`(forwarded), `task_lifecycle.go:51`(forwarded), `internal/handler/eino_single_agent.go:313`(conduit), `internal/handler/multi_agent.go:327`(conduit), `internal/handler/workflow_integration.go:131`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3647` |
+| `conversation` | agent | `agent_stream.go:97`(forwarded), `task_lifecycle.go:51`(forwarded), `internal/handler/eino_single_agent.go:65`(conduit), `internal/handler/multi_agent.go:75`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3556` |
+| `done` | agent | `agent_stream.go:97`(forwarded), `task_lifecycle.go:51`(forwarded), `internal/handler/agent.go:1459`(handled), `internal/handler/eino_single_agent.go:34`(conduit), `internal/handler/multi_agent.go:34`(conduit), `internal/handler/task_lifecycle.go:26`(handled), `internal/handler/workflow_integration.go:88`(conduit), `internal/workflow/nodes.go:287`(handled) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3654` |
+| `eino_agent_reply` | agent | `internal/multiagent/eino_sub_agent_reply_emitter.go:93`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3861` |
+| `eino_agent_reply_stream_delta` | agent | `internal/handler/agent.go:1558`(handled), `internal/multiagent/eino_sub_agent_reply_emitter.go:56`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3814` |
+| `eino_agent_reply_stream_end` | agent | `internal/handler/agent.go:1386`(handled), `internal/multiagent/eino_sub_agent_reply_emitter.go:72`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3839` |
+| `eino_agent_reply_stream_start` | agent | `internal/handler/agent.go:1557`(handled), `internal/multiagent/eino_sub_agent_reply_emitter.go:48`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3797` |
 | `eino_context_overflow_retry` | agent | `internal/multiagent/eino_context_overflow_retry.go:83`(conduit) | —（页面未分支） |
-| `eino_empty_response_continue` | agent | `internal/handler/eino_empty_response_continue.go:57`(conduit) | `web/static/js/monitor.js:2968` |
-| `eino_model_failover` | agent | `internal/multiagent/eino_model_resilience.go:528`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3631` |
-| `eino_model_retry` | agent | `internal/multiagent/eino_native_model_retry_progress.go:25`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3625` |
-| `eino_pending_orphaned` | agent | `internal/multiagent/eino_run_completion_handler.go:61`(conduit) | `web/static/js/monitor.js:2968` |
-| `eino_run_retry` | agent | `internal/multiagent/eino_transient_run_retry_handler.go:136`(conduit) | `web/static/js/monitor.js:2968` |
-| `eino_stream_error` | agent | `internal/multiagent/eino_stream_error_handler.go:60`(conduit) | `web/static/js/monitor.js:2968` |
-| `eino_trace_end` | agent | `internal/einoobserve/attach.go:258`(conduit), `internal/handler/agent.go:1556`(handled) | `web/static/js/monitor.js:2968`, `web/static/js/monitor.js:3224` |
-| `eino_trace_error` | agent | `internal/einoobserve/attach.go:304`(conduit), `internal/handler/agent.go:1557`(handled) | `web/static/js/monitor.js:2968`, `web/static/js/monitor.js:3225` |
-| `eino_trace_run` | agent | `internal/einoobserve/attach.go:62`(conduit), `internal/handler/agent.go:1554`(handled) | `web/static/js/monitor.js:2968`, `web/static/js/monitor.js:3222` |
-| `eino_trace_start` | agent | `internal/einoobserve/attach.go:208`(conduit), `internal/handler/agent.go:1555`(handled) | `web/static/js/monitor.js:2968`, `web/static/js/monitor.js:3223` |
-| `eino_usage_summary` | agent | `internal/multiagent/eino_run_usage_accumulator.go:94`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3637` |
+| `eino_empty_response_continue` | agent | `internal/handler/eino_empty_response_continue.go:57`(conduit) | `web/static/js/monitor.js:2981` |
+| `eino_model_failover` | agent | `internal/multiagent/eino_model_resilience.go:528`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3634` |
+| `eino_model_retry` | agent | `internal/multiagent/eino_native_model_retry_progress.go:25`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3628` |
+| `eino_pending_orphaned` | agent | `internal/multiagent/eino_run_completion_handler.go:61`(conduit) | `web/static/js/monitor.js:2981` |
+| `eino_run_retry` | agent | `internal/multiagent/eino_transient_run_retry_handler.go:136`(conduit) | `web/static/js/monitor.js:2981` |
+| `eino_stream_error` | agent | `internal/multiagent/eino_stream_error_handler.go:60`(conduit) | `web/static/js/monitor.js:2981` |
+| `eino_trace_end` | agent | `internal/einoobserve/attach.go:258`(conduit), `internal/handler/agent.go:1555`(handled) | `web/static/js/monitor.js:2981`, `web/static/js/monitor.js:3237` |
+| `eino_trace_error` | agent | `internal/einoobserve/attach.go:304`(conduit), `internal/handler/agent.go:1556`(handled) | `web/static/js/monitor.js:2981`, `web/static/js/monitor.js:3238` |
+| `eino_trace_run` | agent | `internal/einoobserve/attach.go:62`(conduit), `internal/handler/agent.go:1553`(handled) | `web/static/js/monitor.js:2981`, `web/static/js/monitor.js:3235` |
+| `eino_trace_start` | agent | `internal/einoobserve/attach.go:208`(conduit), `internal/handler/agent.go:1554`(handled) | `web/static/js/monitor.js:2981`, `web/static/js/monitor.js:3236` |
+| `eino_usage_summary` | agent | `internal/multiagent/eino_run_usage_accumulator.go:94`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3640` |
 | `err` | terminal | `terminal_stream_windows.go:48`(struct) | —（页面未分支） |
-| `error` | agent | `agent_stream.go:97`(forwarded), `task_lifecycle.go:31`(literal), `task_lifecycle.go:35`(forwarded), `internal/handler/eino_single_agent.go:33`(conduit), `internal/handler/multi_agent.go:33`(conduit), `internal/handler/task_lifecycle.go:31`(conduit), `internal/handler/workflow_integration.go:77`(conduit), `internal/multiagent/eino_adk_run_loop.go:211`(conduit), `internal/multiagent/eino_run_cancellation_handler.go:46`(conduit), `internal/multiagent/eino_run_error_handler.go:118`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3639` |
+| `error` | agent | `agent_stream.go:97`(forwarded), `task_lifecycle.go:31`(literal), `task_lifecycle.go:51`(forwarded), `internal/handler/eino_single_agent.go:33`(conduit), `internal/handler/multi_agent.go:33`(conduit), `internal/handler/task_lifecycle.go:31`(conduit), `internal/handler/workflow_integration.go:77`(conduit), `internal/multiagent/eino_adk_run_loop.go:211`(conduit), `internal/multiagent/eino_run_cancellation_handler.go:46`(conduit), `internal/multiagent/eino_run_error_handler.go:118`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3642` |
 | `exit` | terminal | `terminal_stream_unix.go:21`(struct), `terminal_stream_unix.go:45`(struct), `terminal_stream_windows.go:17`(struct), `terminal_stream_windows.go:22`(struct), `terminal_stream_windows.go:26`(struct), `terminal_stream_windows.go:64`(struct) | —（页面未分支） |
-| `finalization_auto_continue` | agent | `internal/handler/finalization_auto_continue.go:57`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3623` |
-| `finalization_check` | agent | `agent_stream.go:97`(forwarded), `batch_queue_executor.go:319`(literal), `task_lifecycle.go:35`(forwarded), `internal/handler/batch_queue_executor.go:319`(conduit), `internal/handler/eino_single_agent.go:379`(conduit), `internal/handler/multi_agent.go:393`(conduit), `internal/handler/workflow_integration.go:180`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3620` |
-| `finalization_pending_tools_cancelled` | agent | `internal/handler/finalization_auto_continue.go:111`(conduit) | `web/static/js/monitor.js:2968` |
-| `heartbeat` | agent | `sse_keepalive.go:73`(literal) | `web/static/js/monitor.js:2968` |
-| `hitl_audit_agent` | agent | `hitl.go:607`(literal) | `web/static/js/monitor.js:2968` |
-| `hitl_audit_agent_started` | agent | `hitl.go:591`(literal) | `web/static/js/monitor.js:2968` |
-| `hitl_interrupt` | agent | `hitl.go:650`(literal) | `web/static/js/monitor.js:2968` |
-| `hitl_rejected` | agent | `hitl.go:621`(literal), `hitl.go:692`(literal) | `web/static/js/monitor.js:2968` |
-| `hitl_resumed` | agent | `hitl.go:634`(literal), `hitl.go:706`(literal) | `web/static/js/monitor.js:2968` |
-| `iteration` | agent | `internal/handler/eino_single_agent.go:170`(handled), `internal/handler/multi_agent.go:183`(handled), `internal/multiagent/eino_run_progress_tracker.go:135`(conduit), `internal/multiagent/runner.go:965`(conduit), `internal/workflow/nodes.go:258`(handled) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3663` |
-| `iteration_limit_reached` | agent | `internal/multiagent/eino_run_error_handler.go:63`(conduit) | `web/static/js/monitor.js:2968` |
-| `message_saved` | agent | `agent_stream.go:97`(forwarded), `task_lifecycle.go:35`(forwarded), `internal/handler/eino_single_agent.go:78`(conduit), `internal/handler/multi_agent.go:88`(conduit) | `web/static/js/monitor.js:2926` |
-| `model_output_rejected` | agent | `internal/handler/agent.go:961`(handled) | —（页面未分支） |
+| `finalization_auto_continue` | agent | `internal/handler/finalization_auto_continue.go:57`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3626` |
+| `finalization_check` | agent | `agent_stream.go:97`(forwarded), `batch_queue_executor.go:319`(literal), `task_lifecycle.go:51`(forwarded), `internal/handler/batch_queue_executor.go:319`(conduit), `internal/handler/eino_single_agent.go:379`(conduit), `internal/handler/multi_agent.go:393`(conduit), `internal/handler/workflow_integration.go:171`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3623` |
+| `finalization_pending_tools_cancelled` | agent | `internal/handler/finalization_auto_continue.go:111`(conduit) | `web/static/js/monitor.js:2981` |
+| `heartbeat` | agent | `sse_keepalive.go:73`(literal) | `web/static/js/monitor.js:2981` |
+| `hitl_audit_agent` | agent | `hitl.go:607`(literal) | `web/static/js/monitor.js:2981` |
+| `hitl_audit_agent_started` | agent | `hitl.go:591`(literal) | `web/static/js/monitor.js:2981` |
+| `hitl_interrupt` | agent | `hitl.go:650`(literal) | `web/static/js/monitor.js:2981` |
+| `hitl_rejected` | agent | `hitl.go:621`(literal), `hitl.go:692`(literal) | `web/static/js/monitor.js:2981` |
+| `hitl_resumed` | agent | `hitl.go:634`(literal), `hitl.go:706`(literal) | `web/static/js/monitor.js:2981` |
+| `iteration` | agent | `internal/handler/eino_single_agent.go:170`(handled), `internal/handler/multi_agent.go:183`(handled), `internal/multiagent/eino_run_progress_tracker.go:135`(conduit), `internal/multiagent/runner.go:965`(conduit), `internal/workflow/nodes.go:292`(handled) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3666` |
+| `iteration_limit_reached` | agent | `internal/multiagent/eino_run_error_handler.go:63`(conduit) | `web/static/js/monitor.js:2981` |
+| `message_saved` | agent | `agent_stream.go:97`(forwarded), `task_lifecycle.go:51`(forwarded), `internal/handler/eino_single_agent.go:78`(conduit), `internal/handler/multi_agent.go:88`(conduit) | `web/static/js/monitor.js:2939` |
+| `model_output_rejected` | agent | `internal/handler/agent.go:960`(handled) | —（页面未分支） |
 | `out` | terminal | `terminal_stream_unix.go:32`(struct), `terminal_stream_windows.go:41`(struct) | —（页面未分支） |
-| `progress` | agent | `agent_stream.go:97`(forwarded), `task_lifecycle.go:35`(forwarded), `internal/handler/agent.go:963`(handled), `internal/handler/eino_single_agent.go:103`(conduit), `internal/handler/multi_agent.go:113`(conduit), `internal/multiagent/eino_checkpoint_resume_handler.go:65`(conduit), `internal/multiagent/eino_initial_iterator_start_handler.go:48`(conduit), `internal/multiagent/eino_run_cancellation_handler.go:40`(conduit), `internal/multiagent/eino_run_progress_tracker.go:89`(conduit), `internal/multiagent/eino_turn_loop_event_bridge.go:79`(conduit), `internal/multiagent/eino_turn_loop_iterator_starter.go:149`(conduit), `internal/multiagent/runner.go:113`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3658` |
-| `reasoning_chain` | agent | `internal/handler/agent.go:1528`(handled), `internal/multiagent/eino_reasoning_stream_emitter.go:103`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/monitor.js:3268`, `web/static/js/monitor.js:3269`, `web/static/js/monitor.js:3305`, `web/static/js/monitor.js:3327`, `web/static/js/monitor.js:3328`, `web/static/js/webshell.js:3726`, `web/static/js/webshell.js:3731` |
-| `reasoning_chain_stream_delta` | agent | `internal/handler/agent.go:1496`(handled), `internal/multiagent/eino_reasoning_stream_emitter.go:70`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3697` |
-| `reasoning_chain_stream_end` | agent | `internal/handler/agent.go:1467`(handled), `internal/multiagent/eino_reasoning_stream_emitter.go:84`(conduit) | `web/static/js/webshell.js:3715` |
-| `reasoning_chain_stream_start` | agent | `internal/handler/agent.go:1474`(handled), `internal/multiagent/eino_reasoning_stream_emitter.go:62`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/monitor.js:3246`, `web/static/js/webshell.js:3677`, `web/static/js/webshell.js:3678` |
-| `response` | agent | `agent_stream.go:97`(forwarded), `batch_queue_executor.go:321`(literal), `task_lifecycle.go:35`(forwarded), `internal/handler/agent.go:1455`(handled), `internal/handler/batch_queue_executor.go:321`(conduit), `internal/handler/eino_single_agent.go:383`(conduit), `internal/handler/multi_agent.go:397`(conduit), `internal/handler/workflow_integration.go:195`(conduit), `internal/workflow/nodes.go:253`(handled) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3593` |
-| `response_delta` | agent | `internal/handler/agent.go:1423`(handled), `internal/multiagent/eino_main_response_stream_emitter.go:42`(conduit), `internal/workflow/nodes.go:253`(handled) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3577` |
-| `response_start` | agent | `internal/handler/agent.go:1398`(handled), `internal/multiagent/eino_main_response_stream_emitter.go:62`(conduit), `internal/workflow/nodes.go:253`(handled) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3569` |
-| `thinking` | agent | `internal/handler/agent.go:1528`(handled) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3726` |
-| `thinking_stream_delta` | agent | `internal/handler/agent.go:1496`(handled) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3697` |
-| `thinking_stream_end` | agent | `internal/handler/agent.go:1467`(handled) | `web/static/js/webshell.js:3715` |
-| `thinking_stream_start` | agent | `internal/handler/agent.go:1474`(handled) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3677` |
-| `tool_call` | agent | `internal/handler/agent.go:1156`(handled), `internal/multiagent/runner.go:1032`(conduit) | `web/static/js/monitor.js:2877`, `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3751` |
-| `tool_calls_detected` | agent | `internal/multiagent/runner.go:994`(conduit) | `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3743` |
-| `tool_result` | agent | `internal/handler/agent.go:1156`(handled), `internal/multiagent/eino_pending_tool_calls.go:112`(conduit), `internal/multiagent/eino_tool_result_progress_emitter.go:150`(conduit) | `web/static/js/monitor.js:2877`, `web/static/js/monitor.js:2968`, `web/static/js/webshell.js:3765` |
-| `tool_result_delta` | agent | `internal/handler/agent.go:1178`(handled) | `web/static/js/monitor.js:2968` |
-| `user_interrupt_continue` | agent | `internal/handler/eino_single_agent.go:270`(conduit), `internal/handler/multi_agent.go:284`(conduit), `internal/multiagent/eino_turn_loop_iterator_starter.go:141`(conduit) | `web/static/js/monitor.js:2968` |
-| `workflow_agent_output` | agent | `internal/workflow/nodes.go:217`(conduit) | `web/static/js/monitor.js:2968` |
-| `workflow_branch_skipped` | agent | `internal/workflow/node_exec.go:141`(assigned) | `web/static/js/monitor.js:2968` |
-| `workflow_branch_taken` | agent | `internal/workflow/node_exec.go:141`(assigned) | `web/static/js/monitor.js:2968`, `web/static/js/monitor.js:3136` |
-| `workflow_done` | agent | `internal/workflow/eino_compile.go:233`(conduit), `internal/workflow/runner.go:204`(conduit) | `web/static/js/monitor.js:2968` |
-| `workflow_hitl_checkpoint` | agent | `internal/workflow/nodes.go:342`(conduit) | `web/static/js/monitor.js:2968` |
-| `workflow_hitl_rejected` | agent | `internal/workflow/eino_compile.go:175`(conduit), `internal/workflow/runner.go:156`(conduit) | `web/static/js/monitor.js:2968` |
-| `workflow_hitl_resumed` | agent | `internal/workflow/eino_compile.go:189`(conduit), `internal/workflow/runner.go:169`(conduit) | `web/static/js/monitor.js:2968` |
-| `workflow_hitl_waiting` | agent | `internal/workflow/eino_compile.go:77`(conduit) | `web/static/js/monitor.js:2968` |
-| `workflow_node_result` | agent | `internal/workflow/node_exec.go:106`(conduit) | `web/static/js/monitor.js:2968` |
-| `workflow_node_start` | agent | `internal/workflow/node_exec.go:49`(conduit) | `web/static/js/monitor.js:2968` |
-| `workflow_paused` | agent | `internal/workflow/runner.go:126`(conduit) | `web/static/js/monitor.js:2968` |
-| `workflow_start` | agent | `internal/workflow/runner.go:78`(conduit) | `web/static/js/monitor.js:2968` |
-| `workflow_tool_start` | agent | `internal/workflow/nodes.go:72`(conduit) | `web/static/js/monitor.js:2968` |
+| `progress` | agent | `agent_stream.go:97`(forwarded), `task_lifecycle.go:51`(forwarded), `internal/handler/agent.go:962`(handled), `internal/handler/eino_single_agent.go:103`(conduit), `internal/handler/multi_agent.go:113`(conduit), `internal/multiagent/eino_checkpoint_resume_handler.go:65`(conduit), `internal/multiagent/eino_initial_iterator_start_handler.go:48`(conduit), `internal/multiagent/eino_run_cancellation_handler.go:40`(conduit), `internal/multiagent/eino_run_progress_tracker.go:89`(conduit), `internal/multiagent/eino_turn_loop_event_bridge.go:79`(conduit), `internal/multiagent/eino_turn_loop_iterator_starter.go:149`(conduit), `internal/multiagent/runner.go:113`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3661` |
+| `reasoning_chain` | agent | `internal/handler/agent.go:1527`(handled), `internal/multiagent/eino_reasoning_stream_emitter.go:103`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/monitor.js:3281`, `web/static/js/monitor.js:3282`, `web/static/js/monitor.js:3318`, `web/static/js/monitor.js:3340`, `web/static/js/monitor.js:3341`, `web/static/js/webshell.js:3729`, `web/static/js/webshell.js:3734` |
+| `reasoning_chain_stream_delta` | agent | `internal/handler/agent.go:1495`(handled), `internal/multiagent/eino_reasoning_stream_emitter.go:70`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3700` |
+| `reasoning_chain_stream_end` | agent | `internal/handler/agent.go:1466`(handled), `internal/multiagent/eino_reasoning_stream_emitter.go:84`(conduit) | `web/static/js/webshell.js:3718` |
+| `reasoning_chain_stream_start` | agent | `internal/handler/agent.go:1473`(handled), `internal/multiagent/eino_reasoning_stream_emitter.go:62`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/monitor.js:3259`, `web/static/js/webshell.js:3680`, `web/static/js/webshell.js:3681` |
+| `response` | agent | `agent_stream.go:97`(forwarded), `batch_queue_executor.go:321`(literal), `task_lifecycle.go:51`(forwarded), `internal/handler/agent.go:1454`(handled), `internal/handler/batch_queue_executor.go:321`(conduit), `internal/handler/eino_single_agent.go:383`(conduit), `internal/handler/multi_agent.go:397`(conduit), `internal/handler/workflow_integration.go:186`(conduit), `internal/workflow/nodes.go:287`(handled) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3596` |
+| `response_delta` | agent | `internal/handler/agent.go:1422`(handled), `internal/multiagent/eino_main_response_stream_emitter.go:42`(conduit), `internal/workflow/nodes.go:287`(handled) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3580` |
+| `response_start` | agent | `internal/handler/agent.go:1397`(handled), `internal/multiagent/eino_main_response_stream_emitter.go:62`(conduit), `internal/workflow/nodes.go:287`(handled) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3572` |
+| `thinking` | agent | `internal/handler/agent.go:1527`(handled) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3729` |
+| `thinking_stream_delta` | agent | `internal/handler/agent.go:1495`(handled) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3700` |
+| `thinking_stream_end` | agent | `internal/handler/agent.go:1466`(handled) | `web/static/js/webshell.js:3718` |
+| `thinking_stream_start` | agent | `internal/handler/agent.go:1473`(handled) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3680` |
+| `tool_call` | agent | `internal/handler/agent.go:1155`(handled), `internal/multiagent/runner.go:1032`(conduit) | `web/static/js/monitor.js:2890`, `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3754` |
+| `tool_calls_detected` | agent | `internal/multiagent/runner.go:994`(conduit) | `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3746` |
+| `tool_result` | agent | `internal/handler/agent.go:1155`(handled), `internal/multiagent/eino_pending_tool_calls.go:112`(conduit), `internal/multiagent/eino_tool_result_progress_emitter.go:150`(conduit) | `web/static/js/monitor.js:2890`, `web/static/js/monitor.js:2981`, `web/static/js/webshell.js:3768` |
+| `tool_result_delta` | agent | `internal/handler/agent.go:1177`(handled) | `web/static/js/monitor.js:2981` |
+| `user_interrupt_continue` | agent | `internal/handler/eino_single_agent.go:270`(conduit), `internal/handler/multi_agent.go:284`(conduit), `internal/multiagent/eino_turn_loop_iterator_starter.go:141`(conduit) | `web/static/js/monitor.js:2981` |
+| `workflow_agent_output` | agent | `internal/workflow/nodes.go:251`(conduit) | `web/static/js/monitor.js:2981` |
+| `workflow_branch_skipped` | agent | `internal/workflow/node_exec.go:141`(assigned) | `web/static/js/monitor.js:2981` |
+| `workflow_branch_taken` | agent | `internal/workflow/node_exec.go:141`(assigned) | `web/static/js/monitor.js:2981`, `web/static/js/monitor.js:3149` |
+| `workflow_done` | agent | `internal/workflow/eino_compile.go:233`(conduit), `internal/workflow/runner.go:204`(conduit) | `web/static/js/monitor.js:2981` |
+| `workflow_hitl_checkpoint` | agent | `internal/workflow/nodes.go:376`(conduit) | `web/static/js/monitor.js:2981` |
+| `workflow_hitl_rejected` | agent | `internal/workflow/eino_compile.go:175`(conduit), `internal/workflow/runner.go:156`(conduit) | `web/static/js/monitor.js:2981` |
+| `workflow_hitl_resumed` | agent | `internal/workflow/eino_compile.go:189`(conduit), `internal/workflow/runner.go:169`(conduit) | `web/static/js/monitor.js:2981` |
+| `workflow_hitl_waiting` | agent | `internal/workflow/eino_compile.go:77`(conduit) | `web/static/js/monitor.js:2981` |
+| `workflow_node_result` | agent | `internal/workflow/node_exec.go:106`(conduit) | `web/static/js/monitor.js:2981` |
+| `workflow_node_start` | agent | `internal/workflow/node_exec.go:49`(conduit) | `web/static/js/monitor.js:2981` |
+| `workflow_paused` | agent | `internal/workflow/runner.go:126`(conduit) | `web/static/js/monitor.js:2981` |
+| `workflow_start` | agent | `internal/workflow/runner.go:78`(conduit) | `web/static/js/monitor.js:2981` |
+| `workflow_tool_start` | agent | `internal/workflow/nodes.go:74`(conduit) | `web/static/js/monitor.js:2981` |
 
 ## 双向差集
 

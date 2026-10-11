@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"cyberstrike-ai/internal/audit"
 	"cyberstrike-ai/internal/plugin"
@@ -20,9 +21,12 @@ import (
 // unplug it, switch a unit on or off - all against the live capability table, so none of it
 // restarts the process.
 type PluginHandler struct {
-	table     *plugin.Table
-	bundles   string // the only directory a bundle may be installed from
-	republish catalogPublisher
+	// Serialise the entire mutation, including files, runtime provisioning and persistence.
+	// Table's own lock only protects each individual table update.
+	mutationMu sync.RWMutex
+	table      *plugin.Table
+	bundles    string // the only directory a bundle may be installed from
+	republish  catalogPublisher
 	// tools rebuilds the recipe layer plus the MCP tool surface after a mutation that touched a
 	// tool unit. It is a constructor argument for the same reason the audit service is: leaving
 	// it out is not an error, it is a bundle whose recipe silently never becomes executable
@@ -81,7 +85,7 @@ type toolLayerRebuilder interface {
 // owns it today; the point of naming it here is that installing must never be able to leave the
 // table and the live catalog disagreeing.
 type catalogPublisher interface {
-	Reload() (int, error)
+	Publish() (int, error)
 }
 
 // NewPluginHandler takes the audit service as a constructor argument rather than through a
@@ -232,6 +236,8 @@ func (h *PluginHandler) bundleView(b *plugin.Bundle) gin.H {
 
 // GetState answers GET /api/plugins: bundles, standalone units, table generation, and drift.
 func (h *PluginHandler) GetState(c *gin.Context) {
+	h.mutationMu.RLock()
+	defer h.mutationMu.RUnlock()
 	if h == nil || h.table == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "capability table unavailable"})
 		return
@@ -298,6 +304,8 @@ type installRequest struct {
 
 // Install handles POST /api/plugins/install: the one-click extend, whole pack or a chosen subset.
 func (h *PluginHandler) Install(c *gin.Context) {
+	h.mutationMu.Lock()
+	defer h.mutationMu.Unlock()
 	var req installRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "无效的请求参数（需要 {\"bundle\":\"<包名>\"}）: " + err.Error()})
@@ -343,6 +351,15 @@ func (h *PluginHandler) Install(c *gin.Context) {
 				}
 			}
 		}
+		selection, err := resolveUnitSelection(snapBundle, units)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		if status, err := h.preflightSelection(selection); err != nil {
+			c.JSON(status, gin.H{"error": err.Error()})
+			return
+		}
 		if err := h.restoreRollback(dir, from); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -359,26 +376,8 @@ func (h *PluginHandler) Install(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	// The pre-flight checks and the declare step see only the units this call installs: the manifest
-	// may list units that are staying out, and a check aimed at one of those would refuse a request
-	// whose own units are fine.
-	narrowed := withUnits(bundle, sel.units)
-	if err := h.checkMCPConflicts(narrowed); err != nil {
-		// Refused before anything changed: a pack must not be able to replace a server the
-		// operator declared in config.yaml, whose tools may be in use right now.
-		c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-		return
-	}
-	if err := h.checkPluginUnits(narrowed); err != nil {
-		// Same rule for code: a pack whose plugin declaration does not resolve, or whose capability
-		// list is unusable, is refused before it can be half-installed.
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := h.checkModeUnits(narrowed); err != nil {
-		// Same rule for modes: a declaration whose id does not match its file name, or names a
-		// mode the kernel does not know, is a unit that would never appear in the catalog.
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+	if status, err := h.preflightSelection(sel); err != nil {
+		c.JSON(status, gin.H{"error": err.Error()})
 		return
 	}
 	out, err := h.applySelection(c, sel)
@@ -494,6 +493,8 @@ func replaceUnits(units []plugin.Unit, refreshed []plugin.Unit) []plugin.Unit {
 
 // Uninstall handles DELETE /api/plugins/bundles/:id.
 func (h *PluginHandler) Uninstall(c *gin.Context) {
+	h.mutationMu.Lock()
+	defer h.mutationMu.Unlock()
 	id := strings.TrimSpace(c.Param("id"))
 	if id == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "能力包 ID 不能为空"})
@@ -548,6 +549,8 @@ func (h *PluginHandler) Uninstall(c *gin.Context) {
 // bundle unit it is the only switch available, because editing a pack's file would make the
 // installed content disagree with its recorded digest.
 func (h *PluginHandler) EnableUnit(c *gin.Context) {
+	h.mutationMu.Lock()
+	defer h.mutationMu.Unlock()
 	id, ok := unitIDFromPath(c)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "kind 与 name 不能为空"})
@@ -734,6 +737,8 @@ func (h *PluginHandler) forgetInstall(bundleID string) (bool, string) {
 // back. Removing a pack's last unit is an uninstall, and it is performed as one instead of being
 // half-done (the record would otherwise claim an installation with nothing in it).
 func (h *PluginHandler) RemoveLocalUnit(c *gin.Context) {
+	h.mutationMu.Lock()
+	defer h.mutationMu.Unlock()
 	id, ok := unitIDFromPath(c)
 	if !ok {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "kind 与 name 不能为空"})
@@ -845,7 +850,7 @@ func (h *PluginHandler) republishCatalog(c *gin.Context, wantTools bool) republi
 		// would be the paper contract this response exists to avoid.
 		report.refreshed = false
 	} else {
-		roles, err := h.republish.Reload()
+		roles, err := h.republish.Publish()
 		if err != nil {
 			h.logger.Warn("能力表已变更，但角色目录未能刷新", zap.Error(err))
 			c.Set("pluginRefreshError", err.Error())
@@ -920,6 +925,18 @@ func (h *PluginHandler) resolveBundleDir(ref string) (string, error) {
 	if _, err := os.Stat(filepath.Join(candidate, plugin.ManifestFileName)); err != nil {
 		return "", fmt.Errorf("在 %s 找不到 %s", candidate, plugin.ManifestFileName)
 	}
+	realRoot, err := filepath.EvalSymlinks(absRoot)
+	if err != nil {
+		return "", err
+	}
+	realCandidate, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", err
+	}
+	rel, err = filepath.Rel(realRoot, realCandidate)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("能力包符号链接不能指向 %s 之外", absRoot)
+	}
 	return candidate, nil
 }
 
@@ -986,6 +1003,8 @@ type availableBundle struct {
 // click. It reads only directory names and their manifests under the configured bundles root, and
 // never returns a path that escapes it.
 func (h *PluginHandler) ListAvailable(c *gin.Context) {
+	h.mutationMu.RLock()
+	defer h.mutationMu.RUnlock()
 	if h == nil || h.table == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "capability table unavailable"})
 		return

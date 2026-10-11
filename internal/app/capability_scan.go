@@ -459,6 +459,23 @@ func applyPersistedSwitches(table *plugin.Table, switches *store.CapabilitySwitc
 	return applied, notes
 }
 
+// restoreSwitchCatalog publishes every successfully restored switch, even when cleanup of an
+// unrelated stale row fails. Notes are diagnostics, not a reason to keep serving old state.
+func restoreSwitchCatalog(table *plugin.Table, switches *store.CapabilitySwitches, roles *handler.RoleHandler, logger *zap.Logger) int {
+	applied, notes := applyPersistedSwitches(table, switches, logger)
+	if len(notes) > 0 {
+		logger.Warn("部分能力单元开关无法恢复", zap.Strings("notes", notes))
+	}
+	if applied > 0 {
+		if published, err := roles.Publish(); err != nil {
+			logger.Warn("按开关恢复后刷新角色目录失败", zap.Error(err))
+		} else {
+			logger.Info("角色目录已按能力表重新发布", zap.Int("roles", published), zap.Int("switched_off", applied))
+		}
+	}
+	return applied
+}
+
 // ensureSkillStatsSchema creates the skill_stats table through the store that owns it. The data
 // layer used to create every table in one start-up sweep; a domain whose SQL lives elsewhere has to
 // take its schema with it, or the store queries a table nobody makes.

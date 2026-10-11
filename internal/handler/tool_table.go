@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -30,10 +31,7 @@ import (
 // recipes, and a recipe with no `capability:` manifest is still refused there and still fails
 // closed when something tries to execute it.
 type ToolLayer struct {
-	// mu serialises the whole rebuild: ClearTools empties the server before the re-registration
-	// refills it, so two overlapping rebuilds would let one caller's ClearTools land inside the
-	// other's window. The window *inside* one rebuild is pre-existing (it is what /config/apply
-	// has always done) and is not widened here.
+	// mu serialises recipe reload, policy refresh and publication of the prepared directory.
 	//
 	// injectMu guards the injected closures, and a rebuild never holds both: a registrar closure
 	// that turns around and calls a Set* method would otherwise self-deadlock, because this mutex
@@ -209,7 +207,7 @@ func (l *ToolLayer) refreshCapabilityLayer(inj toolInject) error {
 // ErrToolLayerStep says which step of a tool-layer rebuild failed, so the HTTP layer can keep its
 // distinct messages instead of matching on error strings.
 type ErrToolLayerStep struct {
-	Step string // "reload" | "capability"
+	Step string // "reload" | "capability" | "registration"
 	Err  error
 }
 
@@ -222,6 +220,9 @@ func toolLayerUserError(err error) (message, auditAction, detail string) {
 	var step ErrToolLayerStep
 	if !errors.As(err, &step) {
 		return "重新加载工具配置失败", "应用配置失败：重新加载工具", err.Error()
+	}
+	if step.Step == "registration" {
+		return "重建工具目录失败，保留原目录", "应用配置失败：工具目录", step.Err.Error()
 	}
 	if step.Step == "capability" {
 		return "重建能力策略注册表失败", "应用配置失败：能力策略注册表", step.Err.Error()
@@ -251,80 +252,51 @@ func (l *ToolLayer) Rebuild() error {
 	if err := l.refreshCapabilityLayer(inj); err != nil {
 		return ErrToolLayerStep{Step: "capability", Err: err}
 	}
-	l.reregisterToolSurface(inj)
+	if err := l.reregisterToolSurface(inj); err != nil {
+		return ErrToolLayerStep{Step: "registration", Err: err}
+	}
 	l.log.Info("工具层已按能力表重建", zap.Int("tools_count", len(l.cfg.Security.Tools)))
 	return nil
 }
 
-// reregisterToolSurface is the tail of a rebuild: wipe the MCP tool table, then re-register the
-// recipe tools and every built-in registrar. ClearTools wipes the built-ins too, so this list is
-// the whole surface and the order is the one ApplyConfig has always used. Pack plugin capabilities
-// come last, so a pack can never take over a name the shipped binary already answers to.
-func (l *ToolLayer) reregisterToolSurface(inj toolInject) {
-	l.srv.ClearTools()
-
+// reregisterToolSurface prepares the entire directory before replacing the live one. A failed
+// registrar leaves the served tools intact. Pack plugins come last so built-in names win.
+func (l *ToolLayer) reregisterToolSurface(inj toolInject) error {
+	prepared := mcp.NewServer(l.log)
 	l.exec.SetToolOutputMaxBytes(l.cfg.MultiAgent.EinoMiddleware.ReductionMaxLengthForTruncEffective())
 	l.exec.SetToolOutputSpillRoot(l.cfg.MultiAgent.EinoMiddleware.ReductionRootDir)
-	l.exec.RegisterTools(l.srv)
-	mcp.RegisterExecutionControlTools(l.srv, l.ext)
+	l.exec.RegisterTools(prepared)
+	mcp.RegisterExecutionControlToolsInto(prepared, l.srv, l.ext)
 
-	if inj.vulnerability != nil {
-		l.log.Info("重新注册漏洞记录工具")
-		if err := inj.vulnerability(); err != nil {
-			l.log.Error("重新注册漏洞记录工具失败", zap.Error(err))
-		} else {
-			l.log.Info("漏洞记录工具已重新注册")
+	registrars := []struct {
+		name     string
+		register func(*mcp.Server) error
+	}{
+		{"漏洞记录", inj.vulnerability},
+		{"WebShell", inj.webshell},
+		{"Skills", inj.skills},
+		{"批量任务", inj.batch},
+		{"C2", inj.c2},
+	}
+	if l.cfg.Knowledge.Enabled {
+		registrars = append(registrars, struct {
+			name     string
+			register func(*mcp.Server) error
+		}{"知识库", inj.knowledge})
+	}
+	for _, registrar := range registrars {
+		if registrar.register == nil {
+			continue
+		}
+		if err := registrar.register(prepared); err != nil {
+			return fmt.Errorf("注册%s工具失败: %w", registrar.name, err)
 		}
 	}
-
-	if inj.webshell != nil {
-		l.log.Info("重新注册 WebShell 工具")
-		if err := inj.webshell(); err != nil {
-			l.log.Error("重新注册 WebShell 工具失败", zap.Error(err))
-		} else {
-			l.log.Info("WebShell 工具已重新注册")
-		}
-	}
-
-	if inj.skills != nil {
-		l.log.Info("重新注册Skills工具")
-		if err := inj.skills(); err != nil {
-			l.log.Error("重新注册Skills工具失败", zap.Error(err))
-		} else {
-			l.log.Info("Skills工具已重新注册")
-		}
-	}
-
-	if inj.batch != nil {
-		l.log.Info("重新注册批量任务 MCP 工具")
-		if err := inj.batch(); err != nil {
-			l.log.Error("重新注册批量任务 MCP 工具失败", zap.Error(err))
-		} else {
-			l.log.Info("批量任务 MCP 工具已重新注册")
-		}
-	}
-
-	if inj.c2 != nil {
-		l.log.Info("重新注册 C2 MCP 工具")
-		if err := inj.c2(); err != nil {
-			l.log.Error("重新注册 C2 MCP 工具失败", zap.Error(err))
-		} else {
-			l.log.Info("C2 MCP 工具已处理")
-		}
-	}
-
-	if l.cfg.Knowledge.Enabled && inj.knowledge != nil {
-		l.log.Info("重新注册知识库工具")
-		if err := inj.knowledge(); err != nil {
-			l.log.Error("重新注册知识库工具失败", zap.Error(err))
-		} else {
-			l.log.Info("知识库工具已重新注册")
-		}
-	}
-
-	if n := l.registerPackPluginTools(); n > 0 {
+	if n := l.registerPackPluginTools(prepared); n > 0 {
 		l.log.Info("包内插件能力已挂上工具面", zap.Int("capabilities", n))
 	}
+	l.srv.ReplaceTools(prepared)
+	return nil
 }
 
 // registerPackPluginTools puts the capabilities a pack's plugin binary proved it provides onto the
@@ -336,12 +308,12 @@ func (l *ToolLayer) reregisterToolSurface(inj toolInject) {
 // It is recomposed from the registry on every rebuild, so switching a unit off (which drops its
 // subset) takes its tools back with no separate unregister path to forget. It runs last so the
 // shipped surface wins any name clash: a pack may add an entry point, never answer one itself.
-func (l *ToolLayer) registerPackPluginTools() int {
-	if l.srv == nil || l.exec == nil {
+func (l *ToolLayer) registerPackPluginTools(target *mcp.Server) int {
+	if target == nil || l.exec == nil {
 		return 0
 	}
 	taken := map[string]bool{}
-	for _, tool := range l.srv.GetAllTools() {
+	for _, tool := range target.GetAllTools() {
 		taken[tool.Name] = true
 	}
 	registered := 0
@@ -373,7 +345,7 @@ func (l *ToolLayer) registerPackPluginTools() int {
 		handler := func(ctx context.Context, args map[string]interface{}) (*mcp.ToolResult, error) {
 			return l.exec.ExecuteTool(ctx, toolName, args)
 		}
-		l.srv.RegisterTool(mcp.Tool{
+		target.RegisterTool(mcp.Tool{
 			Name:             toolName,
 			Description:      description,
 			ShortDescription: strings.TrimSpace(spec.Title),

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -182,6 +183,9 @@ type Proxy struct {
 
 	mu       sync.Mutex
 	lastAddr string
+	closed   bool
+	tunnels  map[net.Conn]net.Conn
+	client   *http.Client
 }
 
 // ProxyOption configures a Proxy.
@@ -201,7 +205,15 @@ func NewProxy(allowlist *Allowlist, opts ...ProxyOption) (*Proxy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pluginhost: listen egress proxy: %w", err)
 	}
-	p := &Proxy{allowlist: allowlist, listener: listener}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// The host must dial the approved destination itself, without inheriting another proxy.
+	transport.Proxy = nil
+	p := &Proxy{allowlist: allowlist, listener: listener, tunnels: map[net.Conn]net.Conn{},
+		client: &http.Client{Transport: transport, Timeout: 60 * time.Second,
+			// Forward redirects to the caller. Its next request re-enters this proxy and is
+			// checked against the approved target, port and method before any upstream dial.
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse },
+		}}
 	for _, opt := range opts {
 		opt(p)
 	}
@@ -229,9 +241,17 @@ func (p *Proxy) Addr() string {
 	return p.lastAddr
 }
 
-// Close stops the proxy. A plugin left with a dead proxy simply fails its next
-// request; it cannot reach the network by any other route.
+// Close stops accepting requests and closes hijacked CONNECT connections, which
+// http.Server.Shutdown does not track.
 func (p *Proxy) Close() error {
+	p.mu.Lock()
+	p.closed = true
+	for client, upstream := range p.tunnels {
+		_ = client.Close()
+		_ = upstream.Close()
+	}
+	p.mu.Unlock()
+	p.client.CloseIdleConnections()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	return p.server.Shutdown(ctx)
@@ -248,8 +268,12 @@ func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, ErrEgressDenied.Error(), http.StatusForbidden)
 		return
 	}
-	target := r.URL.Host
-	allowed, reason := p.allow(target, r.Method)
+	target, err := httpTarget(r.URL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	allowed, reason := p.allowlist.Allow(target, r.Method)
 	if !allowed {
 		p.record(target, false, reason)
 		http.Error(w, ErrEgressDenied.Error(), http.StatusForbidden)
@@ -271,7 +295,7 @@ func (p *Proxy) handle(w http.ResponseWriter, r *http.Request) {
 			outRequest.Header.Add(key, value)
 		}
 	}
-	response, err := (&http.Client{Timeout: 60 * time.Second}).Do(outRequest)
+	response, err := p.client.Do(outRequest)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("host-side request failed: %v", err), http.StatusBadGateway)
 		return
@@ -310,29 +334,75 @@ func (p *Proxy) connect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "hijack unsupported", http.StatusInternalServerError)
 		return
 	}
-	client, _, err := hijacker.Hijack()
+	client, buffered, err := hijacker.Hijack()
 	if err != nil {
 		upstream.Close()
 		return
 	}
 
-	_, _ = client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		_ = upstream.Close()
+		_ = client.Close()
+		return
+	}
+	p.tunnels[client] = upstream
+	p.mu.Unlock()
+	defer func() {
+		_ = upstream.Close()
+		_ = client.Close()
+		p.mu.Lock()
+		delete(p.tunnels, client)
+		p.mu.Unlock()
+	}()
+	if _, err := client.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n")); err != nil {
+		return
+	}
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); _, _ = io.Copy(upstream, client) }()
-	go func() { defer wg.Done(); _, _ = io.Copy(client, upstream) }()
+	// When either peer disconnects, release both copy loops instead of waiting
+	// indefinitely for an upstream that keeps its half of the connection open.
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(upstream, buffered)
+		_ = upstream.Close()
+		_ = client.Close()
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(client, upstream)
+		_ = client.Close()
+		_ = upstream.Close()
+	}()
 	wg.Wait()
-	_ = upstream.Close()
-	_ = client.Close()
+}
+
+// httpTarget derives the same port the HTTP transport will actually dial.
+func httpTarget(u *url.URL) (string, error) {
+	if u == nil || u.Hostname() == "" {
+		return "", errors.New("missing HTTP target")
+	}
+	port := u.Port()
+	switch u.Scheme {
+	case "http":
+		if port == "" {
+			port = "80"
+		}
+	case "https":
+		if port == "" {
+			port = "443"
+		}
+	default:
+		return "", fmt.Errorf("unsupported proxy scheme %q", u.Scheme)
+	}
+	return net.JoinHostPort(u.Hostname(), port), nil
 }
 
 func (p *Proxy) allow(target, method string) (bool, string) {
 	host := target
-	if _, _, err := splitHostPort(target); err == nil {
-		host = target
-	}
 	if !strings.Contains(host, ":") {
-		host = host + ":443"
+		host = net.JoinHostPort(host, "443")
 	}
 	return p.allowlist.Allow(host, method)
 }

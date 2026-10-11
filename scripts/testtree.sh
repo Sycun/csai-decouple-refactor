@@ -187,7 +187,7 @@ check_generated() {
 	done
 	rm -f "$gen_diff"
 	if [ -n "$drift" ]; then
-		die "生成物过期，CI 的 regenerate-and-diff 会红：$drift。在开发树里从 $TEST 拷回这些路径并提交（开发树不编译）。"
+		die "生成物过期，CI 的 regenerate-and-diff 会红：${drift}。在开发树里从 $TEST 拷回这些路径并提交（开发树不编译）。"
 	fi
 	echo "generate-diff ok：三套生成物与源码一致"
 }

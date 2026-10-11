@@ -167,6 +167,9 @@ func (r *recordingInstalls) Forget(bundleID string) error {
 func newPluginTestEnv(t *testing.T, withBuiltInBundle bool) *pluginTestEnv {
 	t.Helper()
 	roles, _, table, dir := newRoleTestEnv(t)
+	if _, err := roles.Reload(); err != nil {
+		t.Fatal(err)
+	}
 	bundlesDir := filepath.Join(dir, "bundles")
 	env := &pluginTestEnv{
 		roles:   roles,

@@ -230,6 +230,35 @@ func (s *Server) RegisterTool(tool Tool, handler ToolHandler) {
 	}
 }
 
+// ReplaceTools publishes a prepared tool directory in one lock acquisition. Runtime execution
+// state and non-tool resources belong to this server and are retained. Registrars must bind
+// their handlers to the live runtime, not the temporary directory used to collect registrations.
+func (s *Server) ReplaceTools(prepared *Server) {
+	prepared.mu.RLock()
+	tools := make(map[string]ToolHandler, len(prepared.tools))
+	defs := make(map[string]Tool, len(prepared.toolDefs))
+	resources := make(map[string]*Resource)
+	for name, handler := range prepared.tools {
+		tools[name] = handler
+		defs[name] = prepared.toolDefs[name]
+	}
+	for uri, resource := range prepared.resources {
+		if strings.HasPrefix(uri, "tool://") {
+			resources[uri] = resource
+		}
+	}
+	prepared.mu.RUnlock()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for uri, resource := range s.resources {
+		if !strings.HasPrefix(uri, "tool://") {
+			resources[uri] = resource
+		}
+	}
+	s.tools, s.toolDefs, s.resources = tools, defs, resources
+}
+
 // ClearTools 清空所有工具（用于重新加载配置）
 func (s *Server) ClearTools() {
 	s.mu.Lock()

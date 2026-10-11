@@ -2,6 +2,7 @@ package handler
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 
 	"cyberstrike-ai/internal/plugin"
@@ -78,6 +79,28 @@ func resolveUnitSelection(bundle *plugin.Bundle, raw []string) (unitSelection, e
 	}
 	sel.whole = len(sel.units) == len(bundle.Units)
 	return sel, nil
+}
+
+// preflightSelection checks only the requested units before installation or rollback writes.
+// The table checks ownership again at commit time; this earlier check keeps a rejected rollback
+// from replacing the live pack's files before that conflict is reported.
+func (h *PluginHandler) preflightSelection(sel unitSelection) (int, error) {
+	for _, u := range sel.units {
+		if owner, ok := h.table.Unit(u.ID); ok && owner.Bundle != sel.bundle.ID {
+			return http.StatusConflict, &plugin.ErrConflict{ID: u.ID, Owner: owner.Bundle, Incoming: sel.bundle.ID}
+		}
+	}
+	narrowed := withUnits(sel.bundle, sel.units)
+	if err := h.checkMCPConflicts(narrowed); err != nil {
+		return http.StatusConflict, err
+	}
+	if err := h.checkPluginUnits(narrowed); err != nil {
+		return http.StatusBadRequest, err
+	}
+	if err := h.checkModeUnits(narrowed); err != nil {
+		return http.StatusBadRequest, err
+	}
+	return 0, nil
 }
 
 // withUnits narrows a bundle copy to a subset of its units, keeping the directory and metadata.

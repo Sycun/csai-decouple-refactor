@@ -35,25 +35,25 @@ import (
 )
 
 // KnowledgeToolRegistrar 知识库工具注册器接口
-type KnowledgeToolRegistrar func() error
+type KnowledgeToolRegistrar func(target *mcp.Server) error
 
 // VulnerabilityToolRegistrar 漏洞工具注册器接口
-type VulnerabilityToolRegistrar func() error
+type VulnerabilityToolRegistrar func(target *mcp.Server) error
 
 // WebshellToolRegistrar WebShell 工具注册器接口（ApplyConfig 时重新注册）
-type WebshellToolRegistrar func() error
+type WebshellToolRegistrar func(target *mcp.Server) error
 
 // SkillsToolRegistrar Skills工具注册器接口
-type SkillsToolRegistrar func() error
+type SkillsToolRegistrar func(target *mcp.Server) error
 
 // BatchTaskToolRegistrar 批量任务 MCP 工具注册器（ApplyConfig 时重新注册）
-type BatchTaskToolRegistrar func() error
+type BatchTaskToolRegistrar func(target *mcp.Server) error
 
 // CapabilityRefreshFunc rebuilds the recipe layer of the capability registry.
 type CapabilityRefreshFunc func(tools []config.ToolConfig) error
 
-// C2ToolRegistrar C2 MCP 工具注册器（ApplyConfig 时 ClearTools 之后调用）
-type C2ToolRegistrar func() error
+// C2ToolRegistrar C2 MCP 工具注册器（ApplyConfig 时写入待发布目录）
+type C2ToolRegistrar func(target *mcp.Server) error
 
 // C2Runtime ApplyConfig 时按配置启停 C2 子系统（由 internal/app.App 实现）
 type C2Runtime interface {

@@ -607,7 +607,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	if installed, refused := installBundlesFromDisk(pluginTable, filepath.Join(configDir, "bundles"), installedBundles, log.Logger); installed > 0 || len(refused) > 0 {
 		// Republish so the packs' roles reach the served catalog in this same boot, rather than
 		// waiting for somebody to install or unplug something.
-		if published, err := roleHandler.Reload(); err != nil {
+		if published, err := roleHandler.Publish(); err != nil {
 			log.Logger.Warn("能力包装入后刷新角色目录失败", zap.Error(err))
 		} else {
 			log.Logger.Info("角色目录已按能力表重新发布", zap.Int("roles", published), zap.Int("bundles", installed))
@@ -622,18 +622,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	if err := unitSwitches.EnsureSchema(); err != nil {
 		log.Logger.Warn("初始化能力单元开关表失败，本次启动的开关不会持久化", zap.Error(err))
 	}
-	switchesApplied, switchNotes := applyPersistedSwitches(pluginTable, unitSwitches, log.Logger)
-	if len(switchNotes) > 0 {
-		log.Logger.Warn("部分能力单元开关无法恢复", zap.Strings("notes", switchNotes))
-	} else if switchesApplied > 0 {
-		// The overlay changed table state, so the served catalog has to be rebuilt from it - a
-		// switched-off role would otherwise stay in the snapshot until the next mutation.
-		if published, err := roleHandler.Reload(); err != nil {
-			log.Logger.Warn("按开关恢复后刷新角色目录失败", zap.Error(err))
-		} else {
-			log.Logger.Info("角色目录已按能力表重新发布", zap.Int("roles", published), zap.Int("switched_off", switchesApplied))
-		}
-	}
+	switchesApplied := restoreSwitchCatalog(pluginTable, unitSwitches, roleHandler, log.Logger)
 	// A pack that declares an MCP server has to re-declare it on every boot: the manager's own
 	// configuration comes from config.yaml, which a pack does not edit. Declared, never started -
 	// the same rule the install endpoint follows.
@@ -729,11 +718,11 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	go robotHandler.RunVulnerabilityAlertWorker(alertCtx)
 
 	// 设置漏洞工具注册器（内置工具，必须设置）
-	vulnerabilityRegistrar := func() error {
-		registerVulnerabilityTools(mcpServer, db, log.Logger, vulnAlerts)
-		registerAssetTools(mcpServer, db, log.Logger)
-		registerProjectFactTools(mcpServer, db, cfg, log.Logger)
-		registerVisionTools(mcpServer, cfg, log.Logger)
+	vulnerabilityRegistrar := func(target *mcp.Server) error {
+		registerVulnerabilityTools(target, db, log.Logger, vulnAlerts)
+		registerAssetTools(target, db, log.Logger)
+		registerProjectFactTools(target, db, cfg, log.Logger)
+		registerVisionTools(target, cfg, log.Logger)
 		return nil
 	}
 	configHandler.Tools.SetVulnerabilityToolRegistrar(vulnerabilityRegistrar)
@@ -747,19 +736,19 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	})
 
 	// 设置 WebShell 工具注册器（ApplyConfig 时重新注册）
-	webshellRegistrar := func() error {
-		registerWebshellTools(mcpServer, db, webshellHandler, log.Logger)
-		registerWebshellManagementTools(mcpServer, db, webshellHandler, log.Logger)
+	webshellRegistrar := func(target *mcp.Server) error {
+		registerWebshellTools(target, db, webshellHandler, log.Logger)
+		registerWebshellManagementTools(target, db, webshellHandler, log.Logger)
 		return nil
 	}
 	configHandler.Tools.SetWebshellToolRegistrar(webshellRegistrar)
 
 	// Skills 由 Eino ADK skill 中间件提供（多代理）；此处不注册 MCP 形态的技能工具
-	configHandler.Tools.SetSkillsToolRegistrar(func() error { return nil })
+	configHandler.Tools.SetSkillsToolRegistrar(func(target *mcp.Server) error { return nil })
 
 	handler.RegisterBatchTaskMCPTools(mcpServer, agentHandler, log.Logger)
-	batchTaskToolRegistrar := func() error {
-		handler.RegisterBatchTaskMCPTools(mcpServer, agentHandler, log.Logger)
+	batchTaskToolRegistrar := func(target *mcp.Server) error {
+		handler.RegisterBatchTaskMCPTools(target, agentHandler, log.Logger)
 		return nil
 	}
 	configHandler.Tools.SetBatchTaskToolRegistrar(batchTaskToolRegistrar)
@@ -775,8 +764,8 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 		// 这样后续 ApplyConfig 时就能重新注册工具了
 		if app.knowledgeRetriever != nil && app.knowledgeManager != nil {
 			// 创建闭包，捕获knowledgeRetriever和knowledgeManager的引用
-			registrar := func() error {
-				knowledge.RegisterKnowledgeTool(mcpServer, app.knowledgeRetriever, app.knowledgeManager, log.Logger)
+			registrar := func(target *mcp.Server) error {
+				knowledge.RegisterKnowledgeTool(target, app.knowledgeRetriever, app.knowledgeManager, log.Logger)
 				return nil
 			}
 			configHandler.Tools.SetKnowledgeToolRegistrar(registrar)
@@ -791,8 +780,8 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	// 如果知识库已启用，设置知识库工具注册器和检索器更新器
 	if cfg.Knowledge.Enabled && knowledgeRetriever != nil && knowledgeManager != nil {
 		// 创建闭包，捕获knowledgeRetriever和knowledgeManager的引用
-		registrar := func() error {
-			knowledge.RegisterKnowledgeTool(mcpServer, knowledgeRetriever, knowledgeManager, log.Logger)
+		registrar := func(target *mcp.Server) error {
+			knowledge.RegisterKnowledgeTool(target, knowledgeRetriever, knowledgeManager, log.Logger)
 			return nil
 		}
 		configHandler.Tools.SetKnowledgeToolRegistrar(registrar)
@@ -806,9 +795,9 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	wechatRobotHandler := handler.NewWechatRobotHandler(cfg, configHandler, log.Logger)
 
 	configHandler.SetC2Runtime(app)
-	configHandler.Tools.SetC2ToolRegistrar(func() error {
+	configHandler.Tools.SetC2ToolRegistrar(func(target *mcp.Server) error {
 		if app.config.C2.EnabledEffective() && app.c2Manager != nil {
-			registerC2Tools(mcpServer, app.c2Manager, log.Logger, app.config.Server.Port)
+			registerC2Tools(target, app.c2Manager, log.Logger, app.config.Server.Port)
 		}
 		return nil
 	})
@@ -818,7 +807,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	// the tool surface was built from tools_dir at config load, and the pack's recipe only appears
 	// after somebody presses 应用配置 - which is "installed" reading as "in effect", the exact
 	// thing this layer exists to prevent. It runs here, after every registrar is wired, because
-	// rebuilding clears the MCP tool table and refills it.
+	// rebuilding publishes a complete MCP tool directory.
 	//
 	// A restored unit switch is the other reason to rebuild: the table can hold a saved "off" for a
 	// recipe that came from tools_dir, and the live tool surface was built from that file at config
