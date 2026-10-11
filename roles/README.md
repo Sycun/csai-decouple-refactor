@@ -12,6 +12,7 @@ name: 角色名称
 description: 角色描述
 user_prompt: 用户提示词（追加到用户消息前，用于引导AI行为）
 icon: "图标（可选）"
+# ai_channel: qwen-max   # 可选：该角色专用模型通道（ai.channels 的键）；留空跟随 ai.default_channel
 tools:
     # 添加你需要的工具...
     # ⚠️ 重要：建议包含以下核心内置 MCP 工具（漏洞与知识库）
@@ -54,6 +55,12 @@ enabled: true
 - **tools**: 工具列表，指定该角色可用的工具（可选）
   - **如果不设置 `tools` 字段**：默认会选中**全部MCP管理中已开启的工具**
   - **如果设置了 `tools` 字段**：只使用列表中指定的工具（建议至少包含上述核心内置工具）
+- **ai_channel**: 角色专用 AI 通道 ID，取值为 `config.yaml` 里 `ai.channels` 的键（可选）——「一个角色一个模型」就是靠它表达的
+  - **不设置或留空**：跟随全局默认通道 `ai.default_channel`
+  - **设置后**：该角色发起的运行使用这个通道自带的 `provider` / `base_url` / `api_key` / `model` / `reasoning`，因此换一个模型只需要改通道，不必逐个角色改
+  - 优先级：**对话页手动选择的通道 > 角色绑定的通道 > `ai.default_channel`**（对话页的通道下拉只有在用户真的选过时才会随请求发出，所以显式选择永远是一次有意的覆盖）
+  - 绑定的通道若已被删除或改名，运行时**回落默认通道**并记一条 warning，不会让对话失败；控制台保存角色时会直接拒绝不存在的通道
+  - 生效范围：对话页单代理（`/api/eino-agent*`）、多代理（deep / plan_execute / supervisor）以及批量任务队列
 - **enabled**: 是否启用该角色（必填，true/false）
 
 ## 示例

@@ -4068,7 +4068,11 @@
     "workflowPolicyOff": "Off",
     "noWorkflowBind": "No workflow",
     "workflowDisabledSuffix": " (disabled)",
-    "workflowMissing": "missing or unavailable"
+    "workflowMissing": "missing or unavailable",
+    "aiChannel": "Model channel",
+    "aiChannelHint": "Bind this role to a dedicated model channel; leave empty to follow the global default. A channel picked on the chat page takes precedence over this.",
+    "noAIChannelBind": "Follow default channel",
+    "aiChannelMissing": "missing or unavailable"
   },
   "workflows": {
     "title": "Workflows",

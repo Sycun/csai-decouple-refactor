@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -270,16 +269,17 @@ func (h *AgentHandler) executeOneBatchSubTask(queueID string, queue *BatchTaskQu
 
 	var resultMA *multiagent.RunResult
 	var runErr error
-	runCfg := currentConfig(h.config)
+	// Batch sub-tasks carry a role but no session channel picker, so the role's own binding is
+	// the only thing standing between a queue and the global default. This used to run on the
+	// raw snapshot, which meant a queue could never use a different model from the chat page.
+	runCfg, _, cfgErr := h.configForAIChannel("", queue.Role)
 	switch {
+	case cfgErr != nil:
+		runErr = cfgErr
 	case useBatchMulti:
 		resultMA, runErr = multiagent.RunDeepAgent(taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.projects, h.facts), h.logger, conversationID, h.conversationProjectID(conversationID), finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, h.agentsMarkdownDir, batchOrch, nil, h.agentSessionContextBlock(conversationID))
 	default:
-		if runCfg == nil {
-			runErr = fmt.Errorf("服务器配置未加载")
-		} else {
-			resultMA, runErr = multiagent.RunEinoSingleChatModelAgent(taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.projects, h.facts), h.logger, conversationID, h.conversationProjectID(conversationID), finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, nil, h.agentSessionContextBlock(conversationID))
-		}
+		resultMA, runErr = multiagent.RunEinoSingleChatModelAgent(taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.projects, h.facts), h.logger, conversationID, h.conversationProjectID(conversationID), finalMessage, []agent.ChatMessage{}, roleTools, progressCallback, nil, h.agentSessionContextBlock(conversationID))
 	}
 
 	if runErr != nil {

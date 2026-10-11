@@ -53,5 +53,17 @@ func (h *RoleHandler) validateRole(role config.RoleConfig) error {
 			return fmt.Errorf("角色绑定的工作流不存在")
 		}
 	}
+	// Refusing an unknown channel here is what keeps a typo from becoming a silent downgrade:
+	// at run time roleAIChannel falls back to the default channel rather than failing the run,
+	// so a binding that was never valid would otherwise just look like "the role ignores it".
+	if id := normalizeRoleAIChannel(role.AIChannel); id != "" {
+		live := currentConfig(h.config)
+		if live == nil {
+			return fmt.Errorf("配置不可用，无法验证 AI 通道绑定")
+		}
+		if _, _, ok := live.AI.ResolveChannel(id); !ok {
+			return fmt.Errorf("角色绑定的 AI 通道 %q 不存在，请先在「系统设置 → AI 通道」中创建", id)
+		}
+	}
 	return nil
 }

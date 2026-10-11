@@ -2676,6 +2676,7 @@ type RoleConfig struct {
 	Icon            string   `yaml:"icon,omitempty" json:"icon,omitempty"`                         // 角色图标（可选）
 	Tools           []string `yaml:"tools,omitempty" json:"tools,omitempty"`                       // 关联的工具列表（toolKey格式，如 "toolName" 或 "mcpName::toolName"）
 	MCPs            []string `yaml:"mcps,omitempty" json:"mcps,omitempty"`                         // 向后兼容：关联的MCP服务器列表（已废弃，使用tools替代）
+	AIChannel       string   `yaml:"ai_channel,omitempty" json:"ai_channel,omitempty"`             // 可选：角色专用 AI 通道 ID（ai.channels 的键）；空表示跟随全局默认通道
 	WorkflowID      string   `yaml:"workflow_id,omitempty" json:"workflow_id,omitempty"`           // 可选：绑定工作流 ID
 	WorkflowVersion string   `yaml:"workflow_version,omitempty" json:"workflow_version,omitempty"` // latest 或具体版本号；空等同 latest
 	WorkflowPolicy  string   `yaml:"workflow_policy,omitempty" json:"workflow_policy,omitempty"`   // auto | off；空且 workflow_id 非空时按 auto

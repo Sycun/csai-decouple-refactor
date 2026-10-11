@@ -435,12 +435,17 @@ type ChatRequest struct {
 	Orchestration string `json:"orchestration,omitempty"`
 }
 
-func (h *AgentHandler) configForAIChannel(channelID string) (*config.Config, string, error) {
+// configForAIChannel resolves the configuration one run executes with.
+//
+// roleName is what makes a role's own model binding take effect: when the caller did not name
+// a channel for this session, the role's ai_channel decides, and only then does the global
+// default apply. See role_model.go for the precedence and for why an explicit choice wins.
+func (h *AgentHandler) configForAIChannel(channelID, roleName string) (*config.Config, string, error) {
 	if h == nil || h.config == nil {
 		return nil, "", fmt.Errorf("服务器配置未加载")
 	}
 	live := currentConfig(h.config)
-	oa, resolvedID, ok := live.ResolveAIChannel(channelID)
+	oa, resolvedID, ok := live.ResolveAIChannel(effectiveAIChannelID(h.config, channelID, roleName, h.logger))
 	if !ok {
 		return nil, resolvedID, fmt.Errorf("AI 通道不存在: %s", resolvedID)
 	}

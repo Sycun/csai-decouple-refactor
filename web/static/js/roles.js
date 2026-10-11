@@ -4,11 +4,14 @@ const ROLE_COPY_FALLBACK = {
     'roles.noDescription': '暂无描述',
     'roles.noDescriptionShort': '无描述',
     'roles.defaultRoleDescription': '默认角色，不额外携带用户提示词，使用默认MCP',
+    'roleModal.aiChannel': '模型通道',
+    'roleModal.noAIChannelBind': '跟随默认通道',
+    'roleModal.aiChannelMissing': '不存在或不可用',
 };
 
 function _t(key, opts) { return CSAI.tFallback(key, opts, ROLE_COPY_FALLBACK); }
 
-const ROLE_MODAL_SELECT_IDS = ['role-workflow-id', 'role-workflow-policy'];
+const ROLE_MODAL_SELECT_IDS = ['role-ai-channel', 'role-workflow-id', 'role-workflow-policy'];
 const roleModalSelectMap = {};
 let roleModalSelectDocBound = false;
 const ROLE_FORM_SELECT_CARET = '<svg class="role-form-select-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -649,6 +652,11 @@ function renderRolesList() {
                 <span class="role-card-tools-label">${_t('roleModal.toolsLabel')}</span>
                 <span class="role-card-tools-value">${toolsDisplay}</span>
             </div>
+            ${role.ai_channel ? `
+            <div class="role-card-tools role-card-channel">
+                <span class="role-card-tools-label">${_t('roleModal.aiChannel')}</span>
+                <span class="role-card-tools-value">${escapeHtml(role.ai_channel)}</span>
+            </div>` : ''}
             <div class="role-card-actions">
                 <button class="btn-secondary btn-small" onclick="editRole(${escapeJsStringAttr(role.name)})">${_t('common.edit')}</button>
                 ${role.name !== '默认' ? `<button class="btn-secondary btn-small btn-danger" onclick="deleteRole(${escapeJsStringAttr(role.name)})">${_t('common.delete')}</button>` : ''}
@@ -1277,6 +1285,47 @@ function setSelectedRoleTools(selectedToolKeys) {
 }
 
 // 显示添加角色模态框
+// 角色弹窗「模型通道」下拉的清单来自 /api/config 的 ai.channels，需要 config:read。
+// 拉不到清单（无权限 / 请求失败）时仍保留已绑定的值并标注不可用，而不是静默清空：
+// 清空会让下一次保存把绑定抹掉，运维者看不出发生了什么。
+async function loadAIChannelOptionsForRoleModal(selectedId) {
+    const select = document.getElementById('role-ai-channel');
+    if (!select) return;
+    const current = selectedId !== undefined ? String(selectedId || '').trim() : select.value.trim();
+    let channels = {};
+    const canReadConfig = typeof hasPermission !== 'function' || hasPermission('config:read');
+    if (canReadConfig) {
+        try {
+            const response = await apiFetch('/api/config');
+            if (response && response.ok) {
+                const cfg = await response.json();
+                const ai = (cfg && cfg.ai) || {};
+                if (ai.channels && typeof ai.channels === 'object') channels = ai.channels;
+            }
+        } catch (_) { /* 按「无清单」处理，下面仍会保留已绑定值 */ }
+    }
+    select.innerHTML = '';
+    const follow = document.createElement('option');
+    follow.value = '';
+    follow.textContent = _t('roleModal.noAIChannelBind');
+    select.appendChild(follow);
+    Object.keys(channels).sort().forEach(function (id) {
+        const ch = channels[id] || {};
+        const opt = document.createElement('option');
+        opt.value = id;
+        opt.textContent = (ch.name || id) + (ch.model ? ' · ' + ch.model : '');
+        select.appendChild(opt);
+    });
+    if (current && !channels[current]) {
+        const missing = document.createElement('option');
+        missing.value = current;
+        missing.textContent = current + ' (' + _t('roleModal.aiChannelMissing') + ')';
+        select.appendChild(missing);
+    }
+    select.value = current || '';
+    refreshRoleModalSelects();
+}
+
 async function showAddRoleModal() {
     if (typeof requirePermission === 'function' && !requirePermission('roles:write')) return;
     const modal = document.getElementById('role-modal');
@@ -1289,6 +1338,7 @@ async function showAddRoleModal() {
     document.getElementById('role-icon').value = '';
     document.getElementById('role-user-prompt').value = '';
     document.getElementById('role-enabled').checked = true;
+    await loadAIChannelOptionsForRoleModal('');
     if (typeof loadWorkflowOptionsForRoleModal === 'function') {
         await loadWorkflowOptionsForRoleModal('');
     }
@@ -1383,6 +1433,7 @@ async function editRole(roleName) {
     document.getElementById('role-icon').value = iconValue;
     document.getElementById('role-user-prompt').value = role.user_prompt || '';
     document.getElementById('role-enabled').checked = role.enabled !== false;
+    await loadAIChannelOptionsForRoleModal(role.ai_channel || '');
     if (typeof loadWorkflowOptionsForRoleModal === 'function') {
         await loadWorkflowOptionsForRoleModal(role.workflow_id || '');
     }
@@ -1651,6 +1702,8 @@ async function saveRole() {
     const workflowPolicyEl = document.getElementById('role-workflow-policy');
     const workflowId = workflowIdEl ? workflowIdEl.value.trim() : '';
     const workflowPolicy = workflowPolicyEl ? workflowPolicyEl.value.trim() : 'auto';
+    const aiChannelEl = document.getElementById('role-ai-channel');
+    const aiChannel = aiChannelEl ? aiChannelEl.value.trim() : '';
 
     const isEdit = document.getElementById('role-name').disabled;
     
@@ -1760,7 +1813,8 @@ async function saveRole() {
         enabled: enabled,
         workflow_id: workflowId || undefined,
         workflow_version: workflowId ? 'latest' : undefined,
-        workflow_policy: workflowId ? (workflowPolicy || 'auto') : undefined
+        workflow_policy: workflowId ? (workflowPolicy || 'auto') : undefined,
+        ai_channel: aiChannel || undefined
     };
     const url = isEdit ? `/api/roles/${encodeURIComponent(name)}` : '/api/roles';
     const method = isEdit ? 'PUT' : 'POST';
