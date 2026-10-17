@@ -46,7 +46,7 @@ func TestSettingsSaveReachesTheLiveSnapshot(t *testing.T) {
 	rolesDir := filepath.Join(dir, "roles")
 	cfg.RolesDir = rolesDir
 	writeTestFile(t, filepath.Join(rolesDir, "内置角色.yaml"), "name: 内置角色\ndescription: shipped\nuser_prompt: shipped\nenabled: true\n")
-	roles := NewRoleHandler(cfg, configPath, zap.NewNop(), plugin.NewTable())
+	roles := NewRoleHandler(cfg, configPath, zap.NewNop(), plugin.NewTable(), nil)
 	if _, err := roles.Reload(); err != nil {
 		t.Fatalf("boot role publish: %v", err)
 	}
