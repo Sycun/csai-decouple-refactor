@@ -551,7 +551,7 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	authHandler := handler.NewAuthHandler(authManager, cfg, configPath, log.Logger)
 	bindAudit(authHandler, auditSvc)
 	attackChainHandler := handler.NewAttackChainHandler(db, &cfg.OpenAI, log.Logger)
-	vulnerabilityHandler := handler.NewVulnerabilityHandler(db, log.Logger, vulnAlerts)
+	vulnerabilityHandler := handler.NewVulnerabilityHandler(db, log.Logger, vulnAlerts, agentHandler)
 	assetHandler := handler.NewAssetHandler(db, log.Logger)
 	projectHandler := handler.NewProjectHandler(db, log.Logger)
 	rbacHandler := handler.NewRBACHandler(db, log.Logger)

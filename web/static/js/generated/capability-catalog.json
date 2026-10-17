@@ -4320,6 +4320,17 @@
     "source": "builtin"
   },
   {
+    "id": "core.update_vulnerability_status",
+    "name": "update_vulnerability_status",
+    "title": "更新漏洞状态与复测结果",
+    "class": "mutating",
+    "runtime": "go-builtin",
+    "permission": "vulnerability:write",
+    "approval": "inherited",
+    "evidence": true,
+    "source": "builtin"
+  },
+  {
     "id": "core.upsert_project_fact",
     "name": "upsert_project_fact",
     "title": "写入项目事实",

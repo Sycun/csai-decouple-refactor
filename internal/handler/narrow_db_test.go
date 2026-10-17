@@ -59,7 +59,7 @@ var storeOwnedHandlers = []struct {
 	}},
 	// RBAC 域交回 store 之后，这四个 handler 的 RBAC 字段自己就是 *store.RBAC（没有 db 接口字段了）。
 	{"RBACHandler", "rbac", func(db *database.DB) interface{} { return NewRBACHandler(db, zap.NewNop()) }},
-	{"VulnerabilityHandler", "rbac", func(db *database.DB) interface{} { return NewVulnerabilityHandler(db, zap.NewNop(), nil) }},
+	{"VulnerabilityHandler", "rbac", func(db *database.DB) interface{} { return NewVulnerabilityHandler(db, zap.NewNop(), nil, nil) }},
 	{"ConfigHandler", "rbac", func(db *database.DB) interface{} {
 		h := &ConfigHandler{logger: zap.NewNop()}
 		h.SetDB(db)

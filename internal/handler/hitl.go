@@ -101,6 +101,7 @@ func NewHITLManager(db *database.DB, logger *zap.Logger) *HITLManager {
 	return m
 }
 
+// EnsureSchema performs historical recovery after NewDB has checked all tables.
 func (m *HITLManager) EnsureSchema() error {
 	if m.interrupts == nil {
 		return errors.New("hitl store unavailable")

@@ -15,4 +15,5 @@ type (
 	ProcessDetailsToolExecution = store.ProcessDetailsToolExecution
 	ConversationCreateMeta      = store.ConversationCreateMeta
 	ConversationCreateHook      = store.ConversationCreateHook
+	VulnerabilityRetest         = store.VulnerabilityRetest
 )

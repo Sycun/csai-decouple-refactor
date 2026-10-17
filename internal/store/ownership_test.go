@@ -166,12 +166,13 @@ func TestFindingsTableHasOneWriter(t *testing.T) {
 		}
 	}
 
-	// Six statements as this slice landed: the insert, the update, the two deletes (single row and by
-	// filter), the retired-conversation source stamp and the project unlink. The count is an exact
-	// expectation rather than a floor because the claim being pinned is "these and only these change
-	// the table"; a new write belongs here deliberately, with the sentence above it updated.
-	if ownWrites != 6 {
-		t.Fatalf("internal/store writes the findings table in %d statements, want exactly 6 - "+
+	// Seven statements as this slice landed: the insert, the update, the two deletes (single row and by
+	// filter), the retired-conversation source stamp, the project unlink and the retest result append.
+	// The count is an exact expectation rather than a floor because the claim being pinned is "these and
+	// only these change the table"; a new write belongs here deliberately, with the sentence above it
+	// updated.
+	if ownWrites != 7 {
+		t.Fatalf("internal/store writes the findings table in %d statements, want exactly 7 - "+
 			"a scan that finds fewer (or none) here is not a claim about ownership", ownWrites)
 	}
 	if len(offenders) > 0 {
@@ -217,7 +218,6 @@ var writeLedger = map[string][]string{
 	"projects":                          {"projects.go"},
 	"webshell_connections":              {"webshell.go"},
 	"webshell_connection_states":        {"webshell.go"},
-	"vulnerabilities_new":               {"vulnerability_schema.go"},
 	"assets":                            {"assets.go"},
 	"batch_task_queues":                 {"batch_task.go"},
 	"batch_tasks":                       {"batch_task.go"},
@@ -236,6 +236,7 @@ var writeLedger = map[string][]string{
 	"vulnerabilities":                   {"vulnerability.go"},
 	"vulnerability_alert_deliveries":    {"vulnerability_alerts.go"},
 	"vulnerability_alert_subscriptions": {"vulnerability_alerts.go"},
+	"vulnerability_retests":             {"vulnerability_retest.go"},
 	"workflow_definitions":              {"workflows.go", "workflow_package.go"},
 	"workflow_node_runs":                {"workflows.go"},
 	"workflow_package_imports":          {"workflow_package.go"},
@@ -310,8 +311,10 @@ func TestStoreWritesOnlyTablesItOwns(t *testing.T) {
 		t.Fatalf("the write ledger lists %d tables, want exactly 53 - 35 measured 2026-10-06 when the blackboard "+
 			"arrived, 41 after the C2 ledger, 43 after tool_executions / tool_stats, 49 after the six "+
 			"rbac_* tables, 50 after the conversations table, 51 after the projects table, 52 after "+
-			"installed_bundles on 2026-10-07 and 53 after c2_http_session_auth on 2026-10-09: %d statements over %d tables "+
-			"from %d files",
+			"installed_bundles on 2026-10-07 and 53 after c2_http_session_auth on 2026-10-09; still 53 on 2026-10-17, "+
+			"when vulnerability_retests arrived and the vulnerabilities_new rebuild left for the start-up schema repair "+
+			"in internal/database, which derives the new table from the latest definition instead of a second copy of it: "+
+			"%d statements over %d tables from %d files",
 			len(writeLedger), statements, distinct, len(writes))
 	}
 	if len(writes) < 20 {
@@ -529,10 +532,11 @@ func TestProjectFactsHasOneWriter(t *testing.T) {
 		"project_facts":      "internal/store/facts_ledger.go",
 		"project_fact_edges": "internal/store/facts_edges.go",
 	}
-	// Six statements for the facts (insert, four updates including the unlink this test exists for,
-	// delete) and nine for the edges (two inserts, three updates, four deletes - measured with the
-	// count this test prints when it goes red).
-	wants := map[string]int{"project_facts": 6, "project_fact_edges": 9}
+	// Seven statements for the facts (two inserts - the upsert and the conversation-bound checkpoint
+	// write, four updates including the unlink this test exists for, delete) and nine for the edges
+	// (two inserts, three updates, four deletes - measured with the count this test prints when it
+	// goes red).
+	wants := map[string]int{"project_facts": 7, "project_fact_edges": 9}
 
 	counts := map[string]int{}
 	var offenders []string

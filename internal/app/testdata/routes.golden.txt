@@ -243,6 +243,7 @@ POST /api/terminal/run
 POST /api/terminal/run/stream
 POST /api/tool-guard/test
 POST /api/vulnerabilities
+POST /api/vulnerabilities/{id}/retest
 POST /api/webshell/connections
 POST /api/webshell/exec
 POST /api/webshell/file

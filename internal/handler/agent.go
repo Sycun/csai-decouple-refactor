@@ -190,10 +190,15 @@ type AgentHandler struct {
 	conversations *store.Conversations
 	rbac          *store.RBAC
 	projects      *store.Projects
+	// retests 回答"这一轮是不是复测分支"：占位符解析与待发送提示词的读写都从这里走，
+	// 不再经过连接包装。
+	retests *store.VulnerabilityRetests
 	// runs 是 workflow 五张表的主人：绑角色的工作流从这里落运行与节点状态
 	runs *store.Workflows
 	// facts 是黑板两张表的账本：会话里生成的项目事实与边从这里读写，不再经过连接包装。
 	facts *store.Facts
+	// findings 只用于续接摘要里那段"项目关联漏洞"预览：读条数与最近若干条，不写。
+	findings *store.Vulnerabilities
 	// webshells 是 WebShell 连接与状态表的主人：AI 助手上下文里那条连接从这里取。
 	webshells *store.Webshell
 	// skillStats is the skill_stats table, reached through its store rather than the connection wrapper.
@@ -347,10 +352,12 @@ func NewAgentHandler(agent *agent.Agent, db *database.DB, cfg *config.Config, lo
 		db:    database.Narrow[database.AgentStore](db),
 
 		conversations: database.NewConversations(db), rbac: database.NewRBAC(db),
+		retests:          database.NewVulnerabilityRetests(db),
 		stats:            newSkillStatsStore(db),
 		hitlStore:        newHITLStore(db),
 		runs:             newWorkflowStore(db),
 		facts:            database.NewFacts(db),
+		findings:         database.NewFindings(db),
 		webshells:        database.NewWebshell(db),
 		hitlQueue:        newHITLQueue(database.NewRBAC(db), newHITLStore(db), cfg, hitlManager),
 		sessions:         newSessionStore(db),
@@ -791,7 +798,7 @@ func (h *AgentHandler) runRobotEinoSingleWithRetry(
 ) (string, string, error) {
 	runCfg := currentConfig(h.config)
 	resultMA, errMA := multiagent.RunEinoSingleChatModelAgent(
-		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.projects, h.facts), h.logger,
+		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.projects, h.facts, h.findings, h.conversations), h.logger,
 		conversationID, h.conversationProjectID(conversationID), finalMessage, history, roleTools, progressCallback, nil, h.agentSessionContextBlock(conversationID),
 	)
 	if errMA != nil {
@@ -812,7 +819,7 @@ func (h *AgentHandler) runRobotMultiAgentWithRetry(
 ) (string, string, error) {
 	runCfg := currentConfig(h.config)
 	resultMA, errMA := multiagent.RunDeepAgent(
-		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.projects, h.facts), h.logger,
+		taskCtx, runCfg, &runCfg.MultiAgent, h.agent, projectStore(h.projects, h.facts, h.findings, h.conversations), h.logger,
 		conversationID, h.conversationProjectID(conversationID), finalMessage, history, roleTools, progressCallback,
 		h.agentsMarkdownDir, orchestration, nil, h.agentSessionContextBlock(conversationID),
 	)
@@ -2512,13 +2519,12 @@ func (h *AgentHandler) loadHistoryFromAgentTrace(conversationID string) ([]agent
 
 	dataSource := "database_last_agent_trace"
 
-	var messagesArray []map[string]interface{}
-	if err := json.Unmarshal([]byte(traceInputJSON), &messagesArray); err != nil {
+	parsed, err := agent.ParseTraceMessages(traceInputJSON)
+	if err != nil {
 		return nil, fmt.Errorf("解析代理轨迹 JSON 失败: %w", err)
 	}
 
-	messageCount := len(messagesArray)
-	modelFacingTrace := agent.IsModelFacingTraceJSON(traceInputJSON)
+	messageCount := len(parsed)
 
 	h.logger.Info("使用保存的代理轨迹恢复历史上下文",
 		zap.String("conversationId", conversationID),
@@ -2527,97 +2533,7 @@ func (h *AgentHandler) loadHistoryFromAgentTrace(conversationID string) ([]agent
 		zap.Int("messageCount", messageCount),
 		zap.Int("assistantOutSize", len(assistantOut)),
 	)
-	// fmt.Println("messagesArray:", messagesArray)//debug
-
-	// 转换为Agent消息格式
-	agentMessages := make([]agent.ChatMessage, 0, len(messagesArray))
-	for _, msgMap := range messagesArray {
-		msg := agent.ChatMessage{}
-		msg.ModelFacingTrace = modelFacingTrace
-
-		// 解析role
-		if role, ok := msgMap["role"].(string); ok {
-			msg.Role = role
-		} else {
-			continue // 跳过无效消息
-		}
-
-		// 跳过 system 消息（由 Eino Instruction 提供）
-		if msg.Role == "system" {
-			continue
-		}
-
-		// 解析content
-		if content, ok := msgMap["content"].(string); ok {
-			msg.Content = content
-		}
-		// DeepSeek 思考模式：含工具调用的 assistant 须在后续请求中回传 reasoning_content
-		if rc, ok := msgMap["reasoning_content"].(string); ok && strings.TrimSpace(rc) != "" {
-			msg.ReasoningContent = rc
-		}
-
-		// 解析tool_calls（如果存在）
-		if toolCallsRaw, ok := msgMap["tool_calls"]; ok && toolCallsRaw != nil {
-			if toolCallsArray, ok := toolCallsRaw.([]interface{}); ok {
-				msg.ToolCalls = make([]agent.ToolCall, 0, len(toolCallsArray))
-				for _, tcRaw := range toolCallsArray {
-					if tcMap, ok := tcRaw.(map[string]interface{}); ok {
-						toolCall := agent.ToolCall{}
-
-						// 解析ID
-						if id, ok := tcMap["id"].(string); ok {
-							toolCall.ID = id
-						}
-
-						// 解析Type
-						if toolType, ok := tcMap["type"].(string); ok {
-							toolCall.Type = toolType
-						}
-
-						// 解析Function
-						if funcMap, ok := tcMap["function"].(map[string]interface{}); ok {
-							toolCall.Function = agent.FunctionCall{}
-
-							// 解析函数名
-							if name, ok := funcMap["name"].(string); ok {
-								toolCall.Function.Name = name
-							}
-
-							// 解析arguments（可能是字符串或对象）
-							if argsRaw, ok := funcMap["arguments"]; ok {
-								if argsStr, ok := argsRaw.(string); ok {
-									// 如果是字符串，解析为JSON
-									var argsMap map[string]interface{}
-									if err := json.Unmarshal([]byte(argsStr), &argsMap); err == nil {
-										toolCall.Function.Arguments = argsMap
-									}
-								} else if argsMap, ok := argsRaw.(map[string]interface{}); ok {
-									// 如果已经是对象，直接使用
-									toolCall.Function.Arguments = argsMap
-								}
-							}
-						}
-
-						if toolCall.ID != "" {
-							msg.ToolCalls = append(msg.ToolCalls, toolCall)
-						}
-					}
-				}
-			}
-		}
-
-		// 解析tool_call_id（tool角色消息）
-		if toolCallID, ok := msgMap["tool_call_id"].(string); ok {
-			msg.ToolCallID = toolCallID
-		}
-		if tn, ok := msgMap["tool_name"].(string); ok && strings.TrimSpace(tn) != "" {
-			msg.ToolName = strings.TrimSpace(tn)
-		} else if tn, ok := msgMap["name"].(string); ok && strings.TrimSpace(tn) != "" && strings.EqualFold(msg.Role, "tool") {
-			msg.ToolName = strings.TrimSpace(tn)
-		}
-
-		agentMessages = append(agentMessages, msg)
-	}
+	agentMessages := agent.TraceMessagesForResume(parsed)
 
 	// 若存在 last_react_output（助手摘要），合并为最后一条 assistant（与保存格式一致）
 	if assistantOut != "" {

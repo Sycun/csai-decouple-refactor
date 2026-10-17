@@ -22,7 +22,7 @@ import (
 // same JSON, from the same rows, under the same reachability rules.
 
 const usageContractPayload = `{"source":"agent","orchestration":"react","reason":"final","model":"gpt-test",` +
-	`"modelCalls":2,"promptTokens":100,"completionTokens":50,"totalTokens":150,"cachedTokens":7,"reasoningTokens":3}`
+	`"modelCalls":2,"promptTokens":100,"completionTokens":50,"totalTokens":150,"cachedTokens":7,"cacheWriteTokens":4,"reasoningTokens":3}`
 
 func newUsageContractHandler(t *testing.T) (*ConversationHandler, *database.DB) {
 	t.Helper()
@@ -117,11 +117,12 @@ func equalKeys(got []string, want []string) bool {
 
 var usageTopLevelKeys = []string{"byDay", "byModel", "byOrchestration", "recent", "summary", "today"}
 
-var usageSummaryKeys = []string{"cachedTokens", "completionTokens", "events", "modelCalls", "promptTokens", "reasoningTokens", "totalTokens"}
+var usageSummaryKeys = []string{"cacheWriteTokens", "cachedTokens", "completionTokens", "events", "modelCalls", "promptTokens", "reasoningTokens", "totalTokens"}
 
 var usageRecentItemKeys = []string{
-	"cachedTokens", "completionTokens", "conversationId", "createdAt", "id", "messageId", "model", "modelCalls",
-	"orchestration", "processDetailId", "promptTokens", "reason", "reasoningTokens", "source", "totalTokens", "updatedAt",
+	"cacheWriteTokens", "cachedTokens", "completionTokens", "conversationId", "createdAt", "id", "messageId", "model",
+	"modelCalls", "orchestration", "processDetailId", "promptTokens", "reason", "reasoningTokens", "source",
+	"totalTokens", "updatedAt",
 }
 
 // The dashboard reads summary/today/recent and the three groupings, and each recent item by name.
@@ -140,7 +141,7 @@ func TestUsageStatsWireShapeForTheConversationOwner(t *testing.T) {
 	if got := keySet(summary); !equalKeys(got, usageSummaryKeys) {
 		t.Fatalf("summary keys = %v, want %v", got, usageSummaryKeys)
 	}
-	if summary["events"] != float64(1) || summary["totalTokens"] != float64(150) {
+	if summary["events"] != float64(1) || summary["totalTokens"] != float64(150) || summary["cacheWriteTokens"] != float64(4) {
 		t.Fatalf("summary = %v", summary)
 	}
 	recent, ok := body["recent"].([]any)
@@ -161,6 +162,9 @@ func TestUsageStatsWireShapeForTheConversationOwner(t *testing.T) {
 	}
 	if item["model"] != "gpt-test" || item["source"] != "agent" || item["orchestration"] != "react" {
 		t.Fatalf("text columns = %v", item)
+	}
+	if item["cacheWriteTokens"] != float64(4) || item["cachedTokens"] != float64(7) {
+		t.Fatalf("cache counters = %v, want 4 written and 7 read", item)
 	}
 }
 

@@ -14,7 +14,7 @@ import (
 // the data layer always used, so the consumers that switch to this half change a type, not a call.
 type BlackboardLedger interface {
 	ListProjectFactsForSparseCheck(projectID string) ([]store.ProjectFactSparseRow, error)
-	ListProjectFactsForIndex(projectID string, includeDeprecated bool) ([]*store.ProjectFact, error)
+	ListProjectFactsForIndex(projectID string, includeDeprecated bool, conversationIDs ...string) ([]*store.ProjectFact, error)
 	ListProjectFacts(projectID string, filter store.ProjectFactListFilter, limit, offset int) ([]*store.ProjectFact, error)
 	GetProjectFactByKey(projectID, factKey string) (*store.ProjectFact, error)
 	UpsertProjectFact(f *store.ProjectFact) (*store.ProjectFact, error)
@@ -23,6 +23,7 @@ type BlackboardLedger interface {
 	ReplaceOutgoingProjectFactEdges(projectID, sourceFactKey, sourceConversationID string, inputs []store.ProjectFactEdgeInput) error
 	ReplaceIncomingProjectFactEdges(projectID, targetFactKey string, inputs []store.ProjectFactEdgeFromInput) error
 	AddProjectFactEdge(projectID string, in store.ProjectFactEdgeInput, sourceFactKey, sourceConversationID string) (*store.ProjectFactEdge, error)
+	SaveContextCheckpoint(f *store.ProjectFact) error
 }
 
 // Deliberately absent from both: Close. A consumer of the shared handle must not be able to shut it

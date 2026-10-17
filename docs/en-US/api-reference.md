@@ -262,3 +262,12 @@ curl -k https://127.0.0.1:8080/api/eino-agent \
 - Multi-agent: `internal/handler/multi_agent.go`
 - Asset endpoints: `internal/handler/asset.go`
 - Asset storage and deduplication: `internal/database/asset.go`
+
+## Missing deletes and empty lists
+
+After authentication and permission checks, with the requested module available:
+
+- `DELETE /api/c2/profiles/:id` and `DELETE /api/webshell/connections/:id` return `404` for missing or already deleted objects, with `profile not found` and `connection not found` respectively. Genuine database failures return `500` with a generic message; SQL details stay in server logs.
+- Successful `GET /api/vulnerabilities` and `GET /api/batch-tasks` queries with no matching records return `200`, with `"vulnerabilities": []` or `"queues": []` and a normal count of `"total": 0`.
+
+Clients can distinguish failed calls from successful empty results using the HTTP status. Empty collections for these two list endpoints now use `[]` instead of `null`.

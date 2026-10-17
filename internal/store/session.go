@@ -401,3 +401,57 @@ func (s *Session) BackfillMessageUpdatedAt() error {
 	}
 	return nil
 }
+
+// CopyVisibleMessagesInto re-inserts one conversation's visible messages under another conversation id,
+// in chronological order. Execution records belong to the source and are deliberately not shared with a
+// branch that can still be edited.
+func (s *Session) CopyVisibleMessagesInto(tx *sql.Tx, destinationConversationID, sourceConversationID string) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	rows, err := tx.Query(`SELECT role, content, reasoning_content, created_at, updated_at FROM messages WHERE conversation_id=? ORDER BY created_at, rowid`, sourceConversationID)
+	if err != nil {
+		return err
+	}
+	type snapshotMessage struct {
+		role, content               string
+		reasoning, created, updated sql.NullString
+	}
+	var messages []snapshotMessage
+	for rows.Next() {
+		var m snapshotMessage
+		if err := rows.Scan(&m.role, &m.content, &m.reasoning, &m.created, &m.updated); err != nil {
+			rows.Close()
+			return err
+		}
+		messages = append(messages, m)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, m := range messages {
+		if _, err := tx.Exec(`INSERT INTO messages (id, conversation_id, role, content, reasoning_content, created_at, updated_at) VALUES (?,?,?,?,?,?,?)`,
+			uuid.NewString(), destinationConversationID, m.role, m.content, m.reasoning, copiedTime(m.created), copiedTime(m.updated)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// copiedTime re-binds a scanned timestamp as time.Time so a copied row is written in the same format
+// InsertMessage uses. Left as the scanned string it would carry whatever layout the driver answered
+// with - RFC3339Nano for one row, "2006-01-02 15:04:05" for another - and the message list orders by
+// that text, so mixed formats sort a copied branch ahead of the history it follows.
+func copiedTime(value sql.NullString) interface{} {
+	if !value.Valid || strings.TrimSpace(value.String) == "" {
+		return nil
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05.999999999-07:00", "2006-01-02 15:04:05"} {
+		if parsed, err := time.Parse(layout, value.String); err == nil {
+			return parsed
+		}
+	}
+	return value.String
+}

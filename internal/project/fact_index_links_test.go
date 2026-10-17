@@ -105,6 +105,18 @@ func TestBuildFactPathOverviewSection(t *testing.T) {
 	}
 }
 
+func TestBuildFactPathOverviewSectionFailsClosedWithoutIndexedFacts(t *testing.T) {
+	t.Parallel()
+	edges := []*store.ProjectFactEdge{
+		{EdgeType: "discovered_on", SourceFactKey: "target/dev", TargetFactKey: "finding/sqli"},
+	}
+	for name, keys := range map[string]map[string]struct{}{"nil": nil, "empty": {}} {
+		if section := BuildFactPathOverviewSection(edges, keys, 800); section != "" {
+			t.Fatalf("%s indexed set still related facts: %q", name, section)
+		}
+	}
+}
+
 func TestBuildFactIndexBlock_withLinksAndPathOverview(t *testing.T) {
 	t.Parallel()
 	dbPath := filepath.Join(t.TempDir(), "facts.db")
@@ -146,7 +158,7 @@ func TestBuildFactIndexBlock_withLinksAndPathOverview(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	block, err := BuildFactIndexBlock(NewStore(database.NewProjects(db), database.NewFacts(db)), proj.ID, config.ProjectConfig{Enabled: true, FactIndexMaxRunes: 6500, FactIndexPathMaxRunes: 1000})
+	block, err := BuildFactIndexBlock(NewStore(database.NewProjects(db), database.NewFacts(db), database.NewFindings(db), database.NewConversations(db)), proj.ID, config.ProjectConfig{Enabled: true, FactIndexMaxRunes: 6500, FactIndexPathMaxRunes: 1000})
 	if err != nil {
 		t.Fatal(err)
 	}

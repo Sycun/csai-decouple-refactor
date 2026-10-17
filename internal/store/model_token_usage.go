@@ -62,6 +62,7 @@ type TokenUsage struct {
 	PromptTokens     int64     `json:"promptTokens"`
 	CompletionTokens int64     `json:"completionTokens"`
 	TotalTokens      int64     `json:"totalTokens"`
+	CacheWriteTokens int64     `json:"cacheWriteTokens"`
 	CachedTokens     int64     `json:"cachedTokens"`
 	ReasoningTokens  int64     `json:"reasoningTokens"`
 	CreatedAt        time.Time `json:"createdAt"`
@@ -75,6 +76,7 @@ type TokenUsageSummary struct {
 	PromptTokens     int64 `json:"promptTokens"`
 	CompletionTokens int64 `json:"completionTokens"`
 	TotalTokens      int64 `json:"totalTokens"`
+	CacheWriteTokens int64 `json:"cacheWriteTokens"`
 	CachedTokens     int64 `json:"cachedTokens"`
 	ReasoningTokens  int64 `json:"reasoningTokens"`
 }
@@ -89,6 +91,7 @@ type TokenUsageBreakdown struct {
 	PromptTokens     int64  `json:"promptTokens"`
 	CompletionTokens int64  `json:"completionTokens"`
 	TotalTokens      int64  `json:"totalTokens"`
+	CacheWriteTokens int64  `json:"cacheWriteTokens"`
 	CachedTokens     int64  `json:"cachedTokens"`
 	ReasoningTokens  int64  `json:"reasoningTokens"`
 }
@@ -131,6 +134,7 @@ const modelTokenUsageSchema = `
 		completion_tokens INTEGER NOT NULL DEFAULT 0,
 		total_tokens INTEGER NOT NULL DEFAULT 0,
 		cached_tokens INTEGER NOT NULL DEFAULT 0,
+		cache_write_tokens INTEGER NOT NULL DEFAULT 0,
 		reasoning_tokens INTEGER NOT NULL DEFAULT 0,
 		created_at DATETIME NOT NULL,
 		updated_at DATETIME NOT NULL,
@@ -178,6 +182,7 @@ func usageFromProcessDetail(messageID, conversationID, processDetailID string, d
 		CompletionTokens: asInt64(m["completionTokens"]),
 		TotalTokens:      asInt64(m["totalTokens"]),
 		CachedTokens:     asInt64(m["cachedTokens"]),
+		CacheWriteTokens: asInt64(m["cacheWriteTokens"]),
 		ReasoningTokens:  asInt64(m["reasoningTokens"]),
 	}
 	if usage.TotalTokens == 0 && (usage.PromptTokens > 0 || usage.CompletionTokens > 0) {
@@ -186,7 +191,7 @@ func usageFromProcessDetail(messageID, conversationID, processDetailID string, d
 	if usage.ProcessDetailID == "" || usage.MessageID == "" || usage.ConversationID == "" {
 		return TokenUsage{}, false
 	}
-	if usage.ModelCalls == 0 && usage.TotalTokens == 0 && usage.PromptTokens == 0 && usage.CompletionTokens == 0 && usage.CachedTokens == 0 && usage.ReasoningTokens == 0 {
+	if usage.ModelCalls == 0 && usage.TotalTokens == 0 && usage.PromptTokens == 0 && usage.CompletionTokens == 0 && usage.CachedTokens == 0 && usage.CacheWriteTokens == 0 && usage.ReasoningTokens == 0 {
 		return TokenUsage{}, false
 	}
 	return usage, true
@@ -321,9 +326,9 @@ func (m *ModelTokenUsage) Upsert(usage TokenUsage) error {
 INSERT INTO model_token_usage (
 	id, process_detail_id, message_id, conversation_id, project_id,
 	source, orchestration, reason, model, model_calls,
-	prompt_tokens, completion_tokens, total_tokens, cached_tokens, reasoning_tokens,
+	prompt_tokens, completion_tokens, total_tokens, cached_tokens, cache_write_tokens, reasoning_tokens,
 	created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(process_detail_id) DO UPDATE SET
 	message_id = excluded.message_id,
 	conversation_id = excluded.conversation_id,
@@ -337,12 +342,13 @@ ON CONFLICT(process_detail_id) DO UPDATE SET
 	completion_tokens = excluded.completion_tokens,
 	total_tokens = excluded.total_tokens,
 	cached_tokens = excluded.cached_tokens,
+	cache_write_tokens = excluded.cache_write_tokens,
 	reasoning_tokens = excluded.reasoning_tokens,
 	created_at = excluded.created_at,
 	updated_at = excluded.updated_at`,
 		usage.ID, usage.ProcessDetailID, usage.MessageID, usage.ConversationID, projectValue,
 		usage.Source, usage.Orchestration, usage.Reason, usage.Model, usage.ModelCalls,
-		usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens, usage.CachedTokens, usage.ReasoningTokens,
+		usage.PromptTokens, usage.CompletionTokens, usage.TotalTokens, usage.CachedTokens, usage.CacheWriteTokens, usage.ReasoningTokens,
 		createdAt, now,
 	)
 	if err != nil {
@@ -407,7 +413,8 @@ COALESCE(SUM(%sprompt_tokens), 0),
 COALESCE(SUM(%scompletion_tokens), 0),
 COALESCE(SUM(%stotal_tokens), 0),
 COALESCE(SUM(%scached_tokens), 0),
-COALESCE(SUM(%sreasoning_tokens), 0)`, p, p, p, p, p, p, p)
+COALESCE(SUM(%scache_write_tokens), 0),
+COALESCE(SUM(%sreasoning_tokens), 0)`, p, p, p, p, p, p, p, p)
 }
 
 // where builds the shared predicate for every read on this table. The conversation JOIN above is what
@@ -447,7 +454,7 @@ func (m *ModelTokenUsage) querySummary(query string, args ...any) (TokenUsageSum
 	var s TokenUsageSummary
 	err := m.db.QueryRow(query, args...).Scan(
 		&s.Events, &s.ModelCalls, &s.PromptTokens, &s.CompletionTokens,
-		&s.TotalTokens, &s.CachedTokens, &s.ReasoningTokens,
+		&s.TotalTokens, &s.CachedTokens, &s.CacheWriteTokens, &s.ReasoningTokens,
 	)
 	if err != nil {
 		return s, fmt.Errorf("查询模型Token用量汇总失败: %w", err)
@@ -466,7 +473,7 @@ func (m *ModelTokenUsage) queryBreakdown(query string, args ...any) ([]TokenUsag
 		var row TokenUsageBreakdown
 		if err := rows.Scan(
 			&row.Key, &row.Label, &row.Events, &row.ModelCalls, &row.PromptTokens,
-			&row.CompletionTokens, &row.TotalTokens, &row.CachedTokens, &row.ReasoningTokens,
+			&row.CompletionTokens, &row.TotalTokens, &row.CachedTokens, &row.CacheWriteTokens, &row.ReasoningTokens,
 		); err != nil {
 			return nil, fmt.Errorf("扫描模型Token用量分组失败: %w", err)
 		}
@@ -479,7 +486,9 @@ func (m *ModelTokenUsage) queryBreakdown(query string, args ...any) ([]TokenUsag
 }
 
 // Stats answers the usage dashboard in one call: totals, today's totals, three groupings and the
-// recent rows. Days and Limit fall back to 7 and 10 the way the API has always done it.
+// recent rows. Days and Limit fall back to 7 and 10 the way the API has always done it. The day
+// buckets are cut in local time because Today above is a local midnight: a UTC bucket would put the
+// evening's rows in a day the dashboard has already closed.
 func (m *ModelTokenUsage) Stats(filter TokenUsageFilter) (*TokenUsageStats, error) {
 	if err := m.requireDB(); err != nil {
 		return nil, err
@@ -504,7 +513,7 @@ func (m *ModelTokenUsage) Stats(filter TokenUsageFilter) (*TokenUsageStats, erro
 		return nil, err
 	}
 	byDay, err := m.queryBreakdown(
-		"SELECT date(mtu.created_at) AS k, date(mtu.created_at) AS label, "+summarySelect("mtu")+usageFrom+where+" GROUP BY date(mtu.created_at) ORDER BY k DESC LIMIT ?",
+		"SELECT date(mtu.created_at, 'localtime') AS k, date(mtu.created_at, 'localtime') AS label, "+summarySelect("mtu")+usageFrom+where+" GROUP BY date(mtu.created_at, 'localtime') ORDER BY k DESC LIMIT ?",
 		append(args, filter.Days)...,
 	)
 	if err != nil {
@@ -556,7 +565,7 @@ func (m *ModelTokenUsage) List(filter TokenUsageFilter) ([]TokenUsage, error) {
 SELECT mtu.id, mtu.process_detail_id, mtu.message_id, mtu.conversation_id,
 	COALESCE(mtu.project_id, ''), mtu.source, mtu.orchestration, mtu.reason, mtu.model,
 	mtu.model_calls, mtu.prompt_tokens, mtu.completion_tokens, mtu.total_tokens,
-	mtu.cached_tokens, mtu.reasoning_tokens, mtu.created_at, mtu.updated_at
+	mtu.cached_tokens, mtu.cache_write_tokens, mtu.reasoning_tokens, mtu.created_at, mtu.updated_at
 FROM model_token_usage mtu
 JOIN conversations c ON c.id = mtu.conversation_id`+where+`
 ORDER BY mtu.created_at DESC, mtu.rowid DESC
@@ -573,7 +582,7 @@ LIMIT ?`, args...)
 			&u.ID, &u.ProcessDetailID, &u.MessageID, &u.ConversationID, &u.ProjectID,
 			&u.Source, &u.Orchestration, &u.Reason, &u.Model, &u.ModelCalls,
 			&u.PromptTokens, &u.CompletionTokens, &u.TotalTokens, &u.CachedTokens,
-			&u.ReasoningTokens, &createdAt, &updatedAt,
+			&u.CacheWriteTokens, &u.ReasoningTokens, &createdAt, &updatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("扫描模型Token用量明细失败: %w", err)
 		}

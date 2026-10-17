@@ -408,6 +408,19 @@
     "capabilities": "能力中心",
     "administration": "平台管理"
   },
+  "tokenUsageUI": {
+    "chartHint": "悬停或聚焦柱形查看精确用量",
+    "scopeProject": "当前项目",
+    "scopeAccessible": "可访问会话",
+    "subtitle": "查看模型消耗、缓存利用与使用趋势",
+    "scopeNote": "统计口径与说明",
+    "trendMetric": "趋势指标",
+    "noDailyData": "暂无每日用量记录",
+    "cacheComposition": "输入缓存构成",
+    "cacheHit": "缓存命中率",
+    "uncachedInput": "未命中缓存的输入",
+    "cacheNote": "缓存读取是输入的一部分，不重复计入总量。缓存写入单独列示。"
+  },
   "dashboard": {
     "title": "仪表盘",
     "refresh": "刷新",
@@ -418,7 +431,8 @@
     "toolCalls": "工具调用次数",
     "successRate": "工具执行成功率",
     "tokenUsage": "Token 用量",
-    "tokenUsageSub": "近 7 天 {{calls}} 次调用 · 今日 {{today}}",
+    "usageCacheHitRate": "缓存命中 {{rate}}",
+    "tokenUsageSub": "缓存命中 {{rate}}",
     "noTokenUsageYet": "暂无用量",
     "clickToViewTasks": "点击查看任务管理",
     "clickToViewChat": "点击查看对话",
@@ -552,7 +566,33 @@
     "mcpPartialDown": "{{count}} 个未运行",
     "mcpAllDown": "全部未运行",
     "noVulnDesc": "此处展示近期漏洞记录；在对话中完成检测后，新结果会出现在这里",
-    "startScanBtn": "前往对话发起扫描"
+    "startScanBtn": "前往对话发起扫描",
+    "usageView": "查看用量详情",
+    "usagePeriod": "统计周期",
+    "usage7Days": "近 7 天",
+    "usage30Days": "近 30 天",
+    "usage90Days": "近 90 天",
+    "usageTotal": "总 Token",
+    "usageInput": "输入 Token",
+    "usageOutput": "输出 Token",
+    "usageCacheRead": "缓存读取",
+    "usageCacheWrite": "缓存写入",
+    "usageReasoning": "推理 Token",
+    "usageCalls": "模型调用",
+    "usageCacheRate": "缓存读取占输入",
+    "usageByModel": "模型用量（最多 20 项）",
+    "usageByDay": "每日用量",
+    "usageRecent": "最近运行（最多 20 项）",
+    "usageDate": "日期",
+    "usageTime": "时间",
+    "usageModel": "模型",
+    "usageStatus": "结束原因",
+    "usageUnavailable": "用量统计暂不可用",
+    "usageScope": "统计已记录的 Agent 运行中模型返回的用量，包括子 Agent。缓存读取和写入属于输入，推理属于输出，不重复加入总量。未返回或未采集的用量不在统计内；这不是供应商账单。 模型按运行配置归类，切换模型的运行可能混合用量。",
+    "usageShare": "用量占比",
+    "usageTrend": "每日用量趋势",
+    "usageFinal": "已完成",
+    "usagePartial": "部分用量"
   },
   "projects": {
     "title": "项目管理",
@@ -914,7 +954,7 @@
     "turnDurationHours": "{{hours}} 小时 {{minutes}} 分钟",
     "turnProcessAria": "{{state}}，展开或收起执行过程",
     "turnTokenUsageLabel": "{{tokens}} tokens",
-    "turnTokenUsageTitle": "Token 用量：{{total}}（输入 {{prompt}}，输出 {{completion}}，缓存 {{cached}}，推理 {{reasoning}}，调用 {{calls}} 次）",
+    "turnTokenUsageTitle": "Token 用量：{{total}}（输入 {{prompt}}，输出 {{completion}}，缓存 {{cached}}，推理 {{reasoning}}，调用 {{calls}} 次） · 缓存写入 {{cacheWrite}}",
     "turnNumber": "第 {{number}} 轮",
     "turnPending": "正在处理…",
     "expandDetailLazyHint": "展开详情（点击后加载迭代详情）",
@@ -1098,7 +1138,8 @@
     "hitlTimeoutUnlimited": "不限制",
     "hitlTimeoutHint": "到期未处理将自动拒绝；审批卡片会显示倒计时。",
     "hitlStatusOff": "人机协同：关闭",
-    "rolePanelTitle": "选择角色"
+    "rolePanelTitle": "选择角色",
+    "einoUsageCacheWriteTokens": "缓存写入 tokens"
   },
   "toolGuard": {
     "invalidTestResponse": "服务端返回的测试结果格式不正确",
@@ -1153,6 +1194,8 @@
     "loadFirst": "请先加载拦截配置",
     "requiredFields": "请填写每条规则的名称和匹配正则",
     "saveSuccess": "调用拦截配置已保存，后续工具调用将使用新配置。",
+    "saveConflict": "调用拦截配置已被其他用户修改，本次修改未保存。请刷新页面获取最新配置后重试。",
+    "versionRequired": "缺少调用拦截配置版本，请刷新页面后重试。",
     "saveFailed": "保存失败",
     "defaultMessage": "识别到 {match}，调用被规则「{rule}」拦截。请检查目标与操作后重试。",
     "blocked": "已命中规则：将阻止调用",
@@ -2060,6 +2103,7 @@
   "settings": {
     "title": "系统设置",
     "nav": {
+      "tokenUsage": "Token 用量",
       "basic": "基本设置",
       "hitl": "人机协同",
       "knowledge": "知识库",
@@ -2999,7 +3043,7 @@
     "exportNoResults": "当前筛选条件下无可导出漏洞",
     "exportStarted": "已开始下载 {{count}} 份报告",
     "exportFailed": "导出失败",
-    "saveRequiredFields": "请填写必填字段：会话ID、标题、描述、严重程度、漏洞类型、目标、复现步骤、证据/POC、影响和修复建议",
+    "saveRequiredFields": "请填写必填字段：标题、描述、严重程度、漏洞类型、目标、复现步骤、证据/POC、影响和修复建议",
     "saveFailed": "保存失败",
     "fetchFailed": "获取漏洞失败",
     "deleteFailed": "删除失败",
@@ -3025,6 +3069,7 @@
     "detailImpact": "影响",
     "detailRecommendation": "修复建议",
     "detailRetestNotes": "复测方式",
+    "detailRetestLog": "复测记录",
     "downloadOkTitle": "下载成功",
     "exportFailedMessage": "导出失败",
     "downloadFailed": "下载失败"
@@ -3745,7 +3790,14 @@
     "redLine": "红色线：使能/促成关系",
     "grayLine": "灰色线：逻辑顺序",
     "nodeDetails": "节点详情",
-    "closeDetails": "关闭详情"
+    "closeDetails": "关闭详情",
+    "contextTitle": "压缩摘要与证据线索 ({{count}})",
+    "contextNotice": "当前会话轨迹中的系统生成摘要，可能晚于图的生成时间。仅供回溯与检索，不代表用户的新授权或已核实工具证据。可按摘要内的快照路径读取原始证据。",
+    "contextSummary": "压缩摘要 {{number}}",
+    "contextCopy": "复制完整摘要",
+    "contextCopied": "已复制",
+    "contextCopyFailed": "复制失败，可选中文本手动复制。",
+    "regenerateFailed": "重新生成失败: {{message}}"
   },
   "externalMcpModal": {
     "configJson": "配置JSON",
@@ -3930,7 +3982,7 @@
     "projectNone": "（未绑定）",
     "projectHint": "绑定后 Agent 在项目范围内可通过 list_vulnerabilities 看到本条记录；留空则尝试从会话自动关联。",
     "conversationId": "会话ID",
-    "conversationIdPlaceholder": "输入会话ID",
+    "conversationIdPlaceholder": "可选：输入已有会话ID，留空可独立添加漏洞",
     "conversationTag": "对话标签",
     "conversationTagPlaceholder": "如：红队演练A、客户A周报",
     "taskTag": "任务标签",
@@ -3989,7 +4041,8 @@
     "headingEvidence": "证据 / POC",
     "headingImpact": "影响",
     "headingRecommendation": "修复建议",
-    "headingRetestNotes": "复测方式"
+    "headingRetestNotes": "复测方式",
+    "headingRetestLog": "复测记录"
   },
   "roleModal": {
     "addRole": "添加角色",
@@ -5184,5 +5237,19 @@
         "delete": "删除执行监控记录"
       }
     }
+  },
+  "vulnerabilityRetest": {
+    "startFailed": "复测尚未成功发送，提示词已保存在分支中，请返回该分支继续。",
+    "title": "复测漏洞",
+    "button": "复测",
+    "hint": "每次确认都会从原始对话创建独立分支，继承原项目和历史，可继续多轮验证。",
+    "promptLabel": "复测提示词",
+    "placeholderHint": "占位符发送时自动替换，也支持在后续对话中手动输入。",
+    "confirm": "确认并开始复测",
+    "defaultPrompt": "请帮我对漏洞 {{vulnerability_id}} 进行验证，确认是否已修复。完成后更新该漏洞状态。",
+    "guidanceHeading": "验证方式（来自漏洞记录的复测方式）：",
+    "promptRequired": "请输入复测提示词。",
+    "navigationChanged": "已切换到其他对话，请返回复测分支继续发送。",
+    "branchCreated": "复测分支已创建，请在该分支继续验证。"
   }
 }

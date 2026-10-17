@@ -27,6 +27,7 @@ type fakeDeps struct {
 	resources    map[string]bool
 	executions   map[string]bool
 	projects     map[string]string
+	retests      map[string]RetestSnapshot
 	err          error
 }
 
@@ -43,6 +44,22 @@ func (d fakeDeps) ProjectFilter(context.Context) string { return d.filter }
 func (d fakeDeps) ResourceProjectID(resourceType, id string) (string, bool, error) {
 	project, ok := d.projects[resourceType+"/"+id]
 	return project, ok, d.err
+}
+
+func (d fakeDeps) RetestSnapshotOf(conversationID string) (RetestSnapshot, bool, error) {
+	if d.err != nil {
+		return RetestSnapshot{}, false, d.err
+	}
+	snapshot, ok := d.retests[conversationID]
+	return snapshot, ok, nil
+}
+
+func (d fakeDeps) FindingProjectID(id string) (string, bool, error) {
+	if d.err != nil {
+		return "", false, d.err
+	}
+	project, ok := d.projects["vulnerability/"+id]
+	return project, ok, nil
 }
 
 func (d fakeDeps) ConversationProjectID(string) (string, error) {

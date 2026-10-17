@@ -31,14 +31,15 @@ type ProjectHandler struct {
 	conversations *store.Conversations
 	rbac          *store.RBAC
 	projects      *store.Projects
-	facts         *store.Facts       // 黑板两张表的账本：事实与边都从它读写，不再经过连接包装
-	chain         *store.AttackChain // 把对话攻击链沉淀成项目事实时，节点与边从这张表读
+	facts         *store.Facts           // 黑板两张表的账本：事实与边都从它读写，不再经过连接包装
+	findings      *store.Vulnerabilities // 续接摘要读项目关联漏洞的条数与最近若干条，只读
+	chain         *store.AttackChain     // 把对话攻击链沉淀成项目事实时，节点与边从这张表读
 	logger        *zap.Logger
 }
 
 // NewProjectHandler 创建项目管理处理器。
 func NewProjectHandler(db *database.DB, logger *zap.Logger) *ProjectHandler {
-	return &ProjectHandler{projects: database.NewProjects(db), rbac: database.NewRBAC(db), conversations: database.NewConversations(db), facts: database.NewFacts(db), chain: newAttackChainStore(db), logger: logger}
+	return &ProjectHandler{projects: database.NewProjects(db), rbac: database.NewRBAC(db), conversations: database.NewConversations(db), facts: database.NewFacts(db), findings: database.NewFindings(db), chain: newAttackChainStore(db), logger: logger}
 }
 
 type createProjectRequest struct {
@@ -141,7 +142,7 @@ func (h *ProjectHandler) ListProjects(c *gin.Context) {
 
 // GetProjectStats GET /api/projects/:id/stats
 func (h *ProjectHandler) GetProjectStats(c *gin.Context) {
-	stats, err := project.GetProjectStats(projectStore(h.projects, h.facts), c.Param("id"))
+	stats, err := project.GetProjectStats(projectStore(h.projects, h.facts, h.findings, h.conversations), c.Param("id"))
 	if err != nil {
 		if strings.Contains(err.Error(), "不存在") {
 			c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
@@ -313,14 +314,14 @@ func (h *ProjectHandler) applyFactLinksAfterUpsert(projectID string, fact *store
 		if err != nil {
 			return err
 		}
-		return project.PersistFactLinksFromParsed(projectStore(h.projects, h.facts), projectID, fact.FactKey, fact.SourceConversationID, parsed, true)
+		return project.PersistFactLinksFromParsed(projectStore(h.projects, h.facts, h.findings, h.conversations), projectID, fact.FactKey, fact.SourceConversationID, parsed, true)
 	}
 	if parseBody {
 		inputs := project.ParseLinksFromBody(fact.Body)
 		if inputs == nil {
 			return nil
 		}
-		return project.PersistFactIncomingLinks(projectStore(h.projects, h.facts), projectID, fact.FactKey, inputs, true)
+		return project.PersistFactIncomingLinks(projectStore(h.projects, h.facts, h.findings, h.conversations), projectID, fact.FactKey, inputs, true)
 	}
 	return nil
 }
@@ -384,7 +385,7 @@ func (h *ProjectHandler) ListFacts(c *gin.Context) {
 		c.JSON(http.StatusOK, list)
 		return
 	}
-	counts, err := project.LoadProjectFactLinkCounts(projectStore(h.projects, h.facts), projectID)
+	counts, err := project.LoadProjectFactLinkCounts(projectStore(h.projects, h.facts, h.findings, h.conversations), projectID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -413,7 +414,7 @@ func (h *ProjectHandler) GetFactGraph(c *gin.Context) {
 	if v := c.Query("exclude_deprecated"); v == "0" || v == "false" {
 		excludeDeprecated = false
 	}
-	graph, err := project.BuildProjectFactGraph(projectStore(h.projects, h.facts), projectID, view, excludeDeprecated)
+	graph, err := project.BuildProjectFactGraph(projectStore(h.projects, h.facts, h.findings, h.conversations), projectID, view, excludeDeprecated)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -427,11 +428,18 @@ func (h *ProjectHandler) GetFactGraph(c *gin.Context) {
 	c.JSON(http.StatusOK, graph)
 }
 
+// note/context-* 由压缩流程独占写入；手工改写会让目标会话把它当成当前工作记录。
+const reservedContextCheckpointError = "note/context-* 为系统续接记录，不能在控制台创建或改写；项目共享事实请使用独立 fact_key"
+
 // CreateFact POST /api/projects/:id/facts
 func (h *ProjectHandler) CreateFact(c *gin.Context) {
 	var req upsertFactRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if store.IsContextCheckpointKey(req.FactKey) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": reservedContextCheckpointError})
 		return
 	}
 	projectID := c.Param("id")
@@ -468,6 +476,10 @@ func (h *ProjectHandler) UpdateFact(c *gin.Context) {
 		return
 	}
 	oldFactKey := existing.FactKey
+	if store.IsContextCheckpointKey(oldFactKey) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": reservedContextCheckpointError})
+		return
+	}
 	var req updateFactRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -475,6 +487,10 @@ func (h *ProjectHandler) UpdateFact(c *gin.Context) {
 	}
 	if req.FactKey != nil {
 		if k := strings.TrimSpace(*req.FactKey); k != "" {
+			if store.IsContextCheckpointKey(k) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": reservedContextCheckpointError})
+				return
+			}
 			existing.FactKey = k
 		}
 	}
@@ -656,7 +672,7 @@ func (h *ProjectHandler) PromoteAttackChain(c *gin.Context) {
 		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问目标项目或来源对话"})
 		return
 	}
-	result, err := attackchain.PromoteToProject(h.projects, h.conversations, h.chain, h.facts, projectID, conversationID)
+	result, err := attackchain.PromoteToProject(h.projects, h.conversations, h.chain, h.facts, h.findings, projectID, conversationID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

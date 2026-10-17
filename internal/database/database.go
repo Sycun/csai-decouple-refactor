@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	// SQLite 在 WAL 模式下建议使用较保守的连接数，降低长读快照导致 checkpoint 饥饿的概率。
-	sqliteMaxOpenConns = 25
-	sqliteMaxIdleConns = 5
+	// WAL permits concurrent readers but only one writer; keep the pool modest.
+	sqliteMaxOpenConns  = 8
+	sqliteMaxIdleConns  = 4
+	sqliteBusyTimeoutMS = 30000
 	// 以页为单位的自动 checkpoint 触发阈值（默认 1000 页，约 4MB @ 4KB/page）。
 	sqliteWALAutoCheckpointPages = 1000
 	// 控制 WAL 目标上限，避免异常场景持续膨胀（256MB）。
@@ -28,9 +29,15 @@ const (
 	sqlitePassiveCheckpointInterval = 300 * time.Second
 )
 
-// configureDBPool 设置 SQLite 连接池参数，提升并发稳定性
+func sqliteOpenDSN(path string) string {
+	// Reserve the writer at Begin, before read-modify-write transactions take a
+	// snapshot. DEFERRED upgrades may fail immediately without busy_timeout.
+	// Let SQLite wait once; retrying after each timeout multiplies lock latency.
+	return fmt.Sprintf("%s?_journal_mode=WAL&_foreign_keys=1&_busy_timeout=%d&_synchronous=NORMAL&_txlock=immediate", path, sqliteBusyTimeoutMS)
+}
+
+// configureDBPool 设置 SQLite 连接池，保留少量连接给 WAL 并发读。
 func configureDBPool(db *sql.DB) {
-	// SQLite 同一时间只允许一个写入者；过高连接数会放大锁竞争和 WAL 回收延迟。
 	db.SetMaxOpenConns(sqliteMaxOpenConns)
 	db.SetMaxIdleConns(sqliteMaxIdleConns)
 	db.SetConnMaxLifetime(30 * time.Minute)
@@ -64,7 +71,7 @@ type DB struct {
 
 // NewDB 创建数据库连接
 func NewDB(dbPath string, logger *zap.Logger) (*DB, error) {
-	db, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_foreign_keys=1&_busy_timeout=5000&_synchronous=NORMAL")
+	db, err := sql.Open("sqlite3", sqliteOpenDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
@@ -169,6 +176,10 @@ func (db *DB) initTables() error {
 	if err := store.NewVulnerabilities(db.DB, nil).EnsureSchema(); err != nil {
 		return fmt.Errorf("创建vulnerabilities表失败: %w", err)
 	}
+	// 复测绑定表的主键外键指向 conversations 并随它级联删除，所以同样只能排在 conversations 之后。
+	if err := store.NewVulnerabilityRetests(db.DB, nil).EnsureSchema(); err != nil {
+		return fmt.Errorf("创建vulnerability_retests表失败: %w", err)
+	}
 	// 外键指向 projects，所以顺序不能提前到它之前。建表、补列、建索引三步的先后由 store 自己保证。
 	if err := store.NewAssets(db.DB).EnsureSchema(); err != nil {
 		return fmt.Errorf("初始化assets表失败: %w", err)
@@ -231,14 +242,6 @@ func (db *DB) initTables() error {
 		db.logger.Warn("迁移vulnerabilities表失败", zap.Error(err))
 		// 不返回错误，允许继续运行
 	}
-	rebuilt, fkErr := store.NewVulnerabilities(db.DB, nil).MigrateConversationFK()
-	if fkErr != nil {
-		db.logger.Warn("迁移vulnerabilities会话外键失败", zap.Error(fkErr))
-	}
-	if rebuilt {
-		// 原来这句 Info 由迁移函数自己打；现在由启动这一侧打，内容不变。
-		db.logger.Info("vulnerabilities 表已迁移：删除对话时保留漏洞记录")
-	}
 
 	if err := store.NewFacts(db.DB).DropLegacyTables(); err != nil {
 		db.logger.Warn("清理project_fact_versions表失败", zap.Error(err))
@@ -281,13 +284,34 @@ func (db *DB) initTables() error {
 
 	// model_token_usage 的建表、四个索引与历史回填都归 store.ModelTokenUsage，
 	// 由进程启动时那一次 ensureModelTokenUsageSchema 跑（表要先于时间线写入路径存在）。
+
+	// 结构补齐引擎按 schemas/application.sql 在内存参考库里比对实际库，只补缺表缺列、从不删改，
+	// 整个补齐在一个事务里。它跑在各自主人的 EnsureSchema 之后是有意安排的：放在前面，新装机会先按
+	// 上游那份定义建表，后面的 IF NOT EXISTS 全部空转，本线独有的列就永远建不出来；放在后面，两边
+	// 的列取并集，而老库该补的一样补得上。
+	if err := reconcileSchema(db.DB, applicationSchema); err != nil {
+		return err
+	}
+
+	// 这段历史外键迁移取上游那份：它从 application.sql 的最新定义派生新表，保留额外列、索引、触发器
+	// 与依赖行。store 侧原先自带一份写死的 CREATE TABLE vulnerabilities_new，同一次迁移留两个实现
+	// 就是留给漂移的口子，所以那份连同它的建表语句一起删掉了。
+	if err := migrateVulnerabilitiesConversationFK(db.DB, db.logger); err != nil {
+		return fmt.Errorf("迁移漏洞会话外键失败: %w", err)
+	}
+
+	// 数据迁移与结构补齐是两件事：这一句只回填历史行。它原先由 MigrateMessageColumns 顺手跑并
+	// 忽略错误，上游把回填失败改成拦启动，这里跟随——启动时写不进去，后面读到的是错的时间。
+	if err := store.NewSession(db.DB).BackfillMessageUpdatedAt(); err != nil {
+		return fmt.Errorf("回填消息更新时间失败: %w", err)
+	}
 	db.logger.Debug("数据库表初始化完成")
 	return nil
 }
 
 // NewKnowledgeDB 创建知识库数据库连接（只包含知识库相关的表）
 func NewKnowledgeDB(dbPath string, logger *zap.Logger) (*DB, error) {
-	sqlDB, err := sql.Open("sqlite3", dbPath+"?_journal_mode=WAL&_foreign_keys=1&_busy_timeout=5000&_synchronous=NORMAL")
+	sqlDB, err := sql.Open("sqlite3", sqliteOpenDSN(dbPath))
 	if err != nil {
 		return nil, fmt.Errorf("打开知识库数据库失败: %w", err)
 	}
@@ -335,6 +359,11 @@ func (db *DB) initKnowledgeTables() error {
 	// 两种拼法都由这张表的主人给出，见 internal/store/knowledge_retrieval.go。
 	if err := store.NewKnowledgeRetrieval(db.DB).EnsureStandaloneSchema(); err != nil {
 		return fmt.Errorf("创建knowledge_retrieval_logs表失败: %w", err)
+	}
+
+	// 同一台补齐引擎，比对的定义换成 schemas/knowledge.sql；和主库一样跑在主人建表之后，取并集。
+	if err := reconcileSchema(db.DB, knowledgeSchema); err != nil {
+		return err
 	}
 
 	db.logger.Info("知识库数据库表初始化完成")

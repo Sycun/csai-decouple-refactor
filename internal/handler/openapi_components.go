@@ -550,6 +550,7 @@ func openAPIComponents() map[string]interface{} {
 						"description": "修复建议",
 					},
 					"retest_notes": map[string]interface{}{"type": "string", "description": "复测方式"},
+					"retest_log":   map[string]interface{}{"type": "string", "description": "复测记录（只读，由复测流程追加）"},
 				},
 			},
 			"UpdateVulnerabilityRequest": map[string]interface{}{
@@ -593,6 +594,37 @@ func openAPIComponents() map[string]interface{} {
 						"description": "修复建议",
 					},
 					"retest_notes": map[string]interface{}{"type": "string", "description": "复测方式"},
+				},
+			},
+			"CreateVulnerabilityRetestRequest": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"prompt": map[string]interface{}{
+						"type":        "string",
+						"description": "复测提示词（最多 20000 字节），支持 {{vulnerability_id}}、{{conversation_id}}、{{source_conversation_id}} 占位符",
+					},
+				},
+				"required": []string{"prompt"},
+			},
+			"CreateVulnerabilityRetestResponse": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"conversation": map[string]interface{}{
+						"description": "新建的复测分支会话",
+						"$ref":        "#/components/schemas/Conversation",
+					},
+					"prompt": map[string]interface{}{
+						"type":        "string",
+						"description": "占位符解析后的复测提示词",
+					},
+					"vulnerability_id": map[string]interface{}{
+						"type":        "string",
+						"description": "被复测的漏洞ID",
+					},
+					"source_conversation_id": map[string]interface{}{
+						"type":        "string",
+						"description": "复测分支的原始对话ID",
+					},
 				},
 			},
 			"ListVulnerabilitiesResponse": map[string]interface{}{

@@ -211,7 +211,7 @@ System roles are immutable; create a custom role instead of modifying them.
 ### When changes take effect
 
 - Updating a user, password, enabled state, or role membership revokes that user's sessions; they must sign in again.
-- Updating or deleting a custom role revokes all sessions; all users must sign in again.
+- Changing a custom role's permissions or scope, or deleting it, revokes only its members' sessions; those users must sign in again. Unrelated users remain signed in. Name, description, and permission-order changes do not revoke sessions, and deleting a role with no members leaves existing sessions valid.
 - Robots resolve the bound user/service account on every message, so disablement and role changes affect the next message.
 - Background batch jobs resolve a Principal from the task owner rather than trusting frontend state.
 
@@ -372,7 +372,7 @@ Inspect the scope for that specific permission, not only the overall display sco
 
 ### Role changed but the user sees old access
 
-Role changes revoke sessions. Sign in again. Robots resolve again on the next message.
+Role permission or scope changes revoke that role's members' sessions. Affected users must sign in again. Robots resolve again on the next message.
 
 ### The built-in `admin` password is lost
 

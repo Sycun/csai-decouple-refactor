@@ -134,6 +134,67 @@ func boundary(ctx context.Context, p Principal, d Deps, resourceType, resourceID
 	return nil
 }
 
+// RetestAwareFinding is Resource over a finding plus the branch rule a retest needs.
+//
+// An ordinary conversation gets exactly what ResourceBoundary would give it. A retest branch is
+// narrower on purpose: it may reach the one finding it was snapshotted from and nothing else, and
+// only while the project scope it is running under still matches the one the snapshot was taken
+// from. Without the second half, a branch whose source conversation has since been rebound to
+// another project would keep writing evidence onto a finding that is no longer in scope.
+func RetestAwareFinding(permission, argument string) CheckFunc {
+	return func(ctx context.Context, p Principal, args map[string]any, d Deps) error {
+		if err := Resource(permission, "vulnerability", argument)(ctx, p, args, d); err != nil {
+			return err
+		}
+		id := argString(args, argument)
+		conversationID := d.ConversationID(ctx)
+		if conversationID == "" {
+			return boundary(ctx, p, d, "vulnerability", id)
+		}
+		snapshot, isRetest, err := d.RetestSnapshotOf(conversationID)
+		if err != nil {
+			return err
+		}
+		if !isRetest {
+			return boundary(ctx, p, d, "vulnerability", id)
+		}
+		if snapshot.FindingID != id {
+			return fmt.Errorf("no access to retest vulnerability %s", id)
+		}
+		if !d.CanAccessResource(p.UserID(), p.ScopeFor(permission), "conversation", conversationID) {
+			return fmt.Errorf("no access to retest conversation %s", conversationID)
+		}
+		switch filter := d.ProjectFilter(ctx); filter {
+		case "":
+		case ProjectFilterUnbound:
+			if snapshot.SourceProjectID != "" {
+				return fmt.Errorf("retest conversation conflicts with current project scope")
+			}
+		default:
+			if filter != snapshot.SourceProjectID {
+				return fmt.Errorf("retest conversation conflicts with current project scope")
+			}
+		}
+		// The branch's own conversation is the anchor: the snapshot records the project the source
+		// was bound to, and both it and the finding must still agree with where the branch sits now.
+		projectID, err := d.ConversationProjectID(conversationID)
+		if err != nil {
+			return err
+		}
+		if snapshot.SourceProjectID != projectID {
+			return fmt.Errorf("retest conversation project no longer matches vulnerability %s", id)
+		}
+		findingProjectID, found, err := d.FindingProjectID(id)
+		if err != nil {
+			return err
+		}
+		if !found || (findingProjectID != "" && findingProjectID != projectID) {
+			return fmt.Errorf("retest conversation project no longer matches vulnerability %s", id)
+		}
+		return nil
+	}
+}
+
 // Conversation requires access to a conversation taken from args, falling back
 // to the request context when the argument is absent.
 func Conversation(permission, argument string, fromContextOnly bool) CheckFunc {

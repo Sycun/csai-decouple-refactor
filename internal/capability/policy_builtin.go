@@ -36,7 +36,10 @@ func BuiltinSpecs() []*Spec {
 			Check: Conversation("vulnerability:read", "", true)},
 		{ID: "core.get_vulnerability", Name: "get_vulnerability", Title: "读取漏洞",
 			Class: ClassReadonly, Runtime: RuntimeGoBuiltin, Permission: "vulnerability:read", Approval: ApprovalNever,
-			Check: ResourceBoundary("vulnerability:read", "vulnerability", "id")},
+			Check: RetestAwareFinding("vulnerability:read", "id")},
+		{ID: "core.update_vulnerability_status", Name: "update_vulnerability_status", Title: "更新漏洞状态与复测结果",
+			Class: ClassMutating, Runtime: RuntimeGoBuiltin, Permission: "vulnerability:write",
+			Evidence: true, Check: RetestAwareFinding("vulnerability:write", "id")},
 
 		// Asset management
 		{ID: "core.create_asset", Name: "create_asset", Title: "创建资产",

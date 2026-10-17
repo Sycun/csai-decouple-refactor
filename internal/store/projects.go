@@ -314,3 +314,25 @@ func (s *Projects) ProjectLastActivity(id string) (time.Time, bool, error) {
 	}
 	return updated, true, nil
 }
+
+// Exists answers whether a project row is there. The findings form validates its project link with
+// this instead of a SELECT EXISTS written in the handler: projects has one owner, and a raw statement
+// in the transport layer is how the second writer starts.
+func (s *Projects) Exists(id string) (bool, error) {
+	if s == nil || s.db == nil {
+		return false, errors.New("store: projects requires a database")
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false, nil
+	}
+	var one int
+	err := s.db.QueryRow("SELECT 1 FROM projects WHERE id = ? LIMIT 1", id).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}

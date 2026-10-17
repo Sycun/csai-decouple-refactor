@@ -481,6 +481,62 @@ func openAPIPathsKnowledge() map[string]interface{} {
 				},
 			},
 		},
+		"/api/vulnerabilities/{id}/retest": map[string]interface{}{
+			"post": map[string]interface{}{
+				"tags":        []string{"漏洞管理"},
+				"summary":     "创建漏洞复测分支",
+				"description": "为指定漏洞创建独立的复测会话分支，继承原始对话的可见历史与审批策略；原始对话仍在执行时拒绝",
+				"operationId": "createVulnerabilityRetest",
+				"parameters": []map[string]interface{}{
+					{
+						"name":        "id",
+						"in":          "path",
+						"required":    true,
+						"description": "漏洞ID",
+						"schema": map[string]interface{}{
+							"type": "string",
+						},
+					},
+				},
+				"requestBody": map[string]interface{}{
+					"required": true,
+					"content": map[string]interface{}{
+						"application/json": map[string]interface{}{
+							"schema": map[string]interface{}{
+								"$ref": "#/components/schemas/CreateVulnerabilityRetestRequest",
+							},
+						},
+					},
+				},
+				"responses": map[string]interface{}{
+					"200": map[string]interface{}{
+						"description": "创建成功",
+						"content": map[string]interface{}{
+							"application/json": map[string]interface{}{
+								"schema": map[string]interface{}{
+									"$ref": "#/components/schemas/CreateVulnerabilityRetestResponse",
+								},
+							},
+						},
+					},
+					"400": map[string]interface{}{
+						"description": "复测提示词为空或超长",
+					},
+					"403": map[string]interface{}{
+						"description": "无权创建或执行该漏洞的复测分支",
+					},
+					"404": map[string]interface{}{
+						"description": "漏洞不存在",
+					},
+					"409": map[string]interface{}{
+						"description": "原始对话缺失、项目归属不一致或仍在执行",
+					},
+					"401": map[string]interface{}{
+						"description": "未授权",
+					},
+				},
+			},
+		},
 		"/api/attack-chain/{conversationId}": map[string]interface{}{
 			"get": map[string]interface{}{
 				"tags":        []string{"攻击链"},

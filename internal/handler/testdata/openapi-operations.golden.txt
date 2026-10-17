@@ -135,6 +135,7 @@ POST /api/system/update/rollback|rollbackUpdate|系统更新
 POST /api/system/update/source|saveUpdateSource|系统更新
 POST /api/terminal/run/stream|terminalRunStream|终端
 POST /api/terminal/run|terminalRun|终端
+POST /api/vulnerabilities/{id}/retest|createVulnerabilityRetest|漏洞管理
 POST /api/vulnerabilities|createVulnerability|漏洞管理
 POST /api/webshell/connections|createWebshellConnection|WebShell管理
 POST /api/webshell/exec|webshellExec|WebShell管理

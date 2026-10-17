@@ -75,7 +75,7 @@ func truncateRunes(s string, max int) string {
 }
 
 // BuildProjectBlackboardBlock 组合测试范围 + 事实黑板索引。
-func BuildProjectBlackboardBlock(db Store, projectID string, cfg config.ProjectConfig) (string, error) {
+func BuildProjectBlackboardBlock(db Store, projectID string, cfg config.ProjectConfig, conversationIDs ...string) (string, error) {
 	projectID = strings.TrimSpace(projectID)
 	if projectID == "" {
 		return "", nil
@@ -88,7 +88,7 @@ func BuildProjectBlackboardBlock(db Store, projectID string, cfg config.ProjectC
 	if scope := strings.TrimSpace(BuildScopeBlock(proj)); scope != "" {
 		parts = append(parts, scope)
 	}
-	index, err := BuildFactIndexBlock(db, projectID, cfg)
+	index, err := BuildFactIndexBlock(db, projectID, cfg, conversationIDs...)
 	if err != nil {
 		return "", err
 	}

@@ -33,8 +33,9 @@ type ConversationHandler struct {
 	conversations *store.Conversations
 	rbac          *store.RBAC
 	projects      *store.Projects
-	usage         *store.ModelTokenUsage // model_token_usage: 用量页唯一的读来源
-	execArgs      *store.Execution       // tool_executions: 历史渲染补全工具参数时唯一的读来源
+	retests       *store.VulnerabilityRetests // vulnerability_retests: 会话详情要报出它是不是复测分支
+	usage         *store.ModelTokenUsage      // model_token_usage: 用量页唯一的读来源
+	execArgs      *store.Execution            // tool_executions: 历史渲染补全工具参数时唯一的读来源
 	logger        *zap.Logger
 	audit         *audit.Service
 	taskStopper   ConversationTaskStopper
@@ -61,6 +62,7 @@ func (h *ConversationHandler) SetTaskStateProvider(provider ConversationTaskStat
 func NewConversationHandler(db *database.DB, logger *zap.Logger) *ConversationHandler {
 	return &ConversationHandler{
 		conversations: database.NewConversations(db), rbac: database.NewRBAC(db),
+		retests:  database.NewVulnerabilityRetests(db),
 		usage:    newModelTokenUsageStore(db),
 		execArgs: newExecutionStore(db),
 		logger:   logger,
@@ -246,6 +248,11 @@ func (h *ConversationHandler) GetConversation(c *gin.Context) {
 		return
 	}
 
+	conv.Retest, err = h.retests.Get(id)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取复测分支失败"})
+		return
+	}
 	c.JSON(http.StatusOK, conv)
 }
 

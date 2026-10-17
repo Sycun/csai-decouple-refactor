@@ -44,6 +44,11 @@ type depsAdapter struct {
 	rbac *store.RBAC
 	// conversations answers the project-scope lookups; the SQL lives in store.Conversations.
 	conversations *store.Conversations
+	// retests answers which finding a branch conversation was snapshotted from; the SQL lives in
+	// store.VulnerabilityRetests.
+	retests *store.VulnerabilityRetests
+	// findings answers what a finding is bound to; the SQL lives in store.Vulnerabilities.
+	findings *store.Vulnerabilities
 }
 
 func (d depsAdapter) CanAccessResource(userID string, scope capability.Scope, resourceType, id string) bool {
@@ -81,6 +86,37 @@ func (d depsAdapter) ConversationProjectID(conversationID string) (string, error
 		return "", fmt.Errorf("database is not available")
 	}
 	return d.conversations.GetConversationProjectID(conversationID)
+}
+
+// RetestSnapshotOf answers "not a retest branch" rather than an error when the process runs without a
+// database: the permission and resource checks have already denied by then, and a storage complaint
+// here would only obscure the reason the caller sees.
+func (d depsAdapter) RetestSnapshotOf(conversationID string) (capability.RetestSnapshot, bool, error) {
+	if d.db == nil || d.retests == nil {
+		return capability.RetestSnapshot{}, false, nil
+	}
+	r, err := d.retests.Get(conversationID)
+	if err != nil {
+		return capability.RetestSnapshot{}, false, err
+	}
+	if r == nil {
+		return capability.RetestSnapshot{}, false, nil
+	}
+	return capability.RetestSnapshot{FindingID: r.VulnerabilityID, SourceProjectID: r.SourceProjectID}, true, nil
+}
+
+func (d depsAdapter) FindingProjectID(findingID string) (string, bool, error) {
+	if d.db == nil || d.findings == nil {
+		return "", false, nil
+	}
+	v, err := d.findings.Get(findingID)
+	if err != nil {
+		return "", false, err
+	}
+	if v == nil {
+		return "", false, nil
+	}
+	return strings.TrimSpace(v.ProjectID), true, nil
 }
 
 // capabilityRuntime owns the one registry and the one evaluator the whole
@@ -265,7 +301,7 @@ func authorizeWithCapability(ctx context.Context, db *database.DB, toolName stri
 	if p, ok := authctx.PrincipalFromContext(ctx); ok {
 		ctx = capability.WithPrincipal(ctx, principalAdapter{p: p})
 	}
-	ctx = capability.WithRequestDeps(ctx, depsAdapter{db: db, c2: database.NewC2(db), executions: database.NewMonitor(db), rbac: database.NewRBAC(db), conversations: database.NewConversations(db)})
+	ctx = capability.WithRequestDeps(ctx, depsAdapter{db: db, c2: database.NewC2(db), executions: database.NewMonitor(db), rbac: database.NewRBAC(db), conversations: database.NewConversations(db), retests: database.NewVulnerabilityRetests(db), findings: database.NewFindings(db)})
 	decision := evaluatorFor().Decide(ctx, toolName, args)
 	switch decision.Outcome {
 	case capability.OutcomeAllow:

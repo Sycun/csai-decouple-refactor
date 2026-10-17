@@ -40,7 +40,7 @@ func workflowBugDB(t *testing.T) *database.DB {
 // engine takes that pair rather than the connection wrapper since the run ledger moved to store.
 func bugSheetEngineStore(db *database.DB) workflowrunner.Store {
 	return workflowrunner.Store{
-		Store:  project.NewStore(database.NewProjects(db), database.NewFacts(db)),
+		Store:  project.NewStore(database.NewProjects(db), database.NewFacts(db), database.NewFindings(db), database.NewConversations(db)),
 		Ledger: store.NewWorkflows(db.DB),
 	}
 }

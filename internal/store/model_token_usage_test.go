@@ -68,7 +68,7 @@ func writeDetail(t *testing.T, db *sql.DB, usage *ModelTokenUsage, conversationI
 }
 
 const usagePayload = `{"source":"agent","orchestration":"react","reason":"final","model":"gpt-test",` +
-	`"modelCalls":2,"promptTokens":100,"completionTokens":50,"totalTokens":150,"cachedTokens":7,"reasoningTokens":3}`
+	`"modelCalls":2,"promptTokens":100,"completionTokens":50,"totalTokens":150,"cachedTokens":7,"cacheWriteTokens":4,"reasoningTokens":3}`
 
 func TestModelTokenUsageEnsureSchemaIsIdempotent(t *testing.T) {
 	usage, db := newUsageStore(t)
@@ -156,6 +156,10 @@ func TestModelTokenUsageUpsertIsIdempotentPerProcessDetail(t *testing.T) {
 	}
 	if rows[0].ProjectID != "p-1" {
 		t.Fatalf("project_id = %q, want the conversation's p-1", rows[0].ProjectID)
+	}
+	// Every counter the payload carries has to come back off the row, including the cache-write one.
+	if rows[0].CacheWriteTokens != 4 || rows[0].CachedTokens != 7 {
+		t.Fatalf("cache counters read as %d/%d, want 4 written and 7 read", rows[0].CacheWriteTokens, rows[0].CachedTokens)
 	}
 }
 
@@ -248,8 +252,8 @@ func statsFixture(t *testing.T) (*ModelTokenUsage, *sql.DB) {
 		t.Fatal(err)
 	}
 	today := time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 0, 0, 0, 0, time.Now().Location())
-	writeDetailAt(t, db, usage, "c-own", "m-1", "d-1", today.AddDate(0, 0, -1).Format("2006-01-02 15:04:05"), `{"model":"gpt-a","promptTokens":10,"completionTokens":5,"totalTokens":15}`)
-	writeDetailAt(t, db, usage, "c-own", "m-2", "d-2", today.Add(9*time.Hour).Format("2006-01-02 15:04:05"), `{"orchestration":"react","promptTokens":20,"completionTokens":10,"totalTokens":30}`)
+	writeDetailAt(t, db, usage, "c-own", "m-1", "d-1", today.AddDate(0, 0, -1).Format("2006-01-02 15:04:05"), `{"model":"gpt-a","promptTokens":10,"completionTokens":5,"totalTokens":15,"cacheWriteTokens":2}`)
+	writeDetailAt(t, db, usage, "c-own", "m-2", "d-2", today.Add(9*time.Hour).Format("2006-01-02 15:04:05"), `{"orchestration":"react","promptTokens":20,"completionTokens":10,"totalTokens":30,"cacheWriteTokens":3}`)
 	writeDetailAt(t, db, usage, "c-other", "m-3", "d-3", today.Add(15*time.Hour).Format("2006-01-02 15:04:05"), `{"model":"gpt-a","totalTokens":7}`)
 	return usage, db
 }
@@ -295,6 +299,14 @@ func TestModelTokenUsageStatsGroupsAndToday(t *testing.T) {
 	if len(stats.ByDay) != 2 || stats.ByDay[0].Events != 2 {
 		t.Fatalf("byDay = %+v, want the newest day first with 2 events", stats.ByDay)
 	}
+	// cacheWriteTokens is one more counter in the payload, and every aggregate shape has to carry it:
+	// a dashboard tile reading a total the groupings do not is a tile nobody can reconcile.
+	if stats.Summary.CacheWriteTokens != 5 || stats.Today.CacheWriteTokens != 3 {
+		t.Fatalf("cache write totals = %+v and %+v, want 5 overall and 3 today", stats.Summary, stats.Today)
+	}
+	if stats.ByDay[0].CacheWriteTokens != 3 || stats.ByDay[1].CacheWriteTokens != 2 {
+		t.Fatalf("byDay cache write = %+v, want 3 today and 2 yesterday", stats.ByDay)
+	}
 	if len(stats.ByModel) != 2 {
 		t.Fatalf("byModel = %+v, want gpt-a and the no-model fallback", stats.ByModel)
 	}
@@ -306,6 +318,15 @@ func TestModelTokenUsageStatsGroupsAndToday(t *testing.T) {
 	}
 	if fallback == nil || fallback.Label != "Unknown" {
 		t.Fatalf("a row with no model must group under unknown/Unknown, got %+v", stats.ByModel)
+	}
+	var named *TokenUsageBreakdown
+	for i := range stats.ByModel {
+		if stats.ByModel[i].Key == "gpt-a" {
+			named = &stats.ByModel[i]
+		}
+	}
+	if named == nil || named.CacheWriteTokens != 2 {
+		t.Fatalf("byModel cache write = %+v, want gpt-a to carry yesterday's 2", stats.ByModel)
 	}
 	if len(stats.ByOrchestration) != 2 || stats.ByOrchestration[0].Key != "react" || stats.ByOrchestration[1].Key != "unknown" {
 		t.Fatalf("byOrchestration = %+v", stats.ByOrchestration)
@@ -328,6 +349,50 @@ func TestModelTokenUsageStatsGroupsAndToday(t *testing.T) {
 	}
 	if len(stats.Recent) != 3 {
 		t.Fatalf("recent = %d rows, want 3", len(stats.Recent))
+	}
+	// The rows are what the detail table prints, so the counter has to survive the round trip too;
+	// a payload that leaves it out reads as 0 rather than as a missing column.
+	cacheWriteByDetail := map[string]int64{}
+	for _, row := range stats.Recent {
+		cacheWriteByDetail[row.ProcessDetailID] = row.CacheWriteTokens
+	}
+	if len(cacheWriteByDetail) != 3 || cacheWriteByDetail["d-1"] != 2 || cacheWriteByDetail["d-2"] != 3 || cacheWriteByDetail["d-3"] != 0 {
+		t.Fatalf("recent rows lost the cache write counter: %+v", cacheWriteByDetail)
+	}
+}
+
+// Stats is the dashboard's single call, so the access clause has to hold in every shape it answers:
+// a summary counting somebody else's run is a leak even when the row list is right. The fixture's
+// other conversation belongs to another owner and shares a model name with this one, which is what
+// makes the grouping below a real check rather than a restatement of the row list.
+func TestModelTokenUsageStatsRespectConversationAccess(t *testing.T) {
+	usage, _ := statsFixture(t)
+	stats, err := usage.Stats(TokenUsageFilter{Access: Access{UserID: "u-own", Scope: ScopeOwn}, Days: 7, Limit: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Summary.Events != 2 || stats.Summary.TotalTokens != 45 || stats.Summary.CacheWriteTokens != 5 {
+		t.Fatalf("summary = %+v, want only c-own's two rows (45 tokens, 5 cache writes)", stats.Summary)
+	}
+	if len(stats.Recent) != 2 {
+		t.Fatalf("recent = %+v, want only c-own's two rows", stats.Recent)
+	}
+	for _, row := range stats.Recent {
+		if row.ConversationID != "c-own" {
+			t.Fatalf("a row from %s reached a caller scoped to c-own: %+v", row.ConversationID, row)
+		}
+	}
+	var gptA *TokenUsageBreakdown
+	for i := range stats.ByModel {
+		if stats.ByModel[i].Key == "gpt-a" {
+			gptA = &stats.ByModel[i]
+		}
+	}
+	if gptA == nil || gptA.TotalTokens != 15 || gptA.CacheWriteTokens != 2 {
+		t.Fatalf("byModel = %+v, want gpt-a to hold only c-own's 15 tokens and 2 cache writes", stats.ByModel)
+	}
+	if stats.Today.Events != 1 || stats.Today.TotalTokens != 30 {
+		t.Fatalf("today = %+v, want c-own's single row from today", stats.Today)
 	}
 }
 

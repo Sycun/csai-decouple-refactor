@@ -102,6 +102,23 @@ type Deps interface {
 	ResourceProjectID(resourceType, resourceID string) (projectID string, ok bool, err error)
 	// ConversationProjectID resolves the project a conversation is bound to.
 	ConversationProjectID(conversationID string) (string, error)
+	// RetestSnapshotOf describes the snapshot a retest conversation runs in. ok is
+	// false for a conversation that is not a retest branch.
+	RetestSnapshotOf(conversationID string) (RetestSnapshot, bool, error)
+	// FindingProjectID resolves the project a finding is bound to; ok is false when
+	// there is no such finding. It is not folded into ResourceProjectID on purpose:
+	// that one also answers whether a resource type is project-scoped at all, and
+	// findings deliberately answer "not scoped" there so the ordinary boundary check
+	// stays exactly as wide as the transport's own.
+	FindingProjectID(findingID string) (projectID string, ok bool, err error)
+}
+
+// RetestSnapshot is the binding a retest conversation carries: the finding it was
+// snapshotted from, and the project its source conversation was bound to at the
+// time. Both are what makes the branch's access narrower than RBAC alone.
+type RetestSnapshot struct {
+	FindingID       string
+	SourceProjectID string
 }
 
 // CheckFunc is an imperative policy check for capabilities whose decision depends

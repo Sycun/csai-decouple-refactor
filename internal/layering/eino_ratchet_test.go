@@ -38,21 +38,33 @@ var einoDebt = map[string]int{
 	// moved next to the ADK wrapper that already lives here. The Eino-facing file count did
 	// not grow overall: security lost exactly the file this package gained, and the repository
 	// total stayed at 104. Raising a baseline is a deliberate act, so the reason belongs here.
-	"internal/multiagent": 79,
+	//
+	// 79 -> 82 on 2026-10-17, merging upstream v1.7.24: the context-checkpoint work arrived as
+	// three new Eino-facing files here - eino_context_checkpoint.go, eino_generated_context.go
+	// and agentic_tool_call_arguments_sanitizer_middleware.go. They are ADK middleware and
+	// checkpoint plumbing, which is what this package exists for, so the honest choices were to
+	// raise the water mark or to hide them behind an adapter the upstream shape does not have.
+	// Raised; the three are named so the next shrink starts from a list instead of a guess.
+	"internal/multiagent": 82,
 	"internal/knowledge":  12,
 	"internal/workflow":   5,
 }
 
 // einoDebtPackageFloor and einoDebtFileFloor are the measured totals of the map above:
-// 5 packages, 97 files - down from 8 packages / 101 files at the start of the convergence.
+// 3 packages, 99 files - down from 8 packages / 101 files at the start of the convergence.
 // Three packages moved their Eino-facing code into an adapter rather than deleting it: the
 // vision model call into llm.DescribeImage, the Claude connection probe into
 // llm.PingAgentic, and internal/reasoning behind its own ChatModelTarget interface with the
-// SDK mapping in llm/reasoning_target.go. The total Eino-importing file count stayed flat at
-// 104 while the debt surface shrank, which is what a convergence looks like.
+// SDK mapping in llm/reasoning_target.go. The total Eino-importing file count stayed flat
+// while the debt surface shrank, which is what a convergence looks like.
+//
+// The file total moved 96 -> 99 on 2026-10-17 for the reason recorded on internal/multiagent
+// above, the first upward move since the convergence started. The package total did not move,
+// and that is the half that tracks the target: the growth landed inside the package that already
+// hosts the ADK runner instead of leaking into a new one.
 const (
 	einoDebtPackageFloor = 3
-	einoDebtFileFloor    = 96
+	einoDebtFileFloor    = 99
 )
 
 func moduleRoot(t *testing.T) string {

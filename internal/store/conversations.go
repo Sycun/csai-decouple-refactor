@@ -45,15 +45,16 @@ func (c *Conversations) SetSourceTagBackfill(fn func(conversationID string)) {
 
 // Conversation 对话
 type Conversation struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	ProjectID string    `json:"projectId,omitempty"`
-	RoleName  string    `json:"roleName,omitempty"`
-	AgentMode string    `json:"agentMode,omitempty"`
-	Pinned    bool      `json:"pinned"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
-	Messages  []Message `json:"messages,omitempty"`
+	ID        string               `json:"id"`
+	Title     string               `json:"title"`
+	ProjectID string               `json:"projectId,omitempty"`
+	RoleName  string               `json:"roleName,omitempty"`
+	AgentMode string               `json:"agentMode,omitempty"`
+	Pinned    bool                 `json:"pinned"`
+	CreatedAt time.Time            `json:"createdAt"`
+	UpdatedAt time.Time            `json:"updatedAt"`
+	Messages  []Message            `json:"messages,omitempty"`
+	Retest    *VulnerabilityRetest `json:"retest,omitempty"`
 }
 
 // Message 消息
@@ -1806,4 +1807,32 @@ func (c *Conversations) ListConversationPlanTasksSince(conversationID string, si
 		return []ConversationPlanTask{}, nil
 	}
 	return storage.ReadPlanTasks(filepath.Join(base, storage.ConversationPathSegment(conversationID)), since, nil)
+}
+
+// CloneSnapshotInto copies one conversation's identity columns into a new row inside a transaction the
+// caller opened, and answers an error when the source does not exist - which is how snapshotting a
+// deleted conversation reports itself instead of leaving an orphan branch behind.
+func (c *Conversations) CloneSnapshotInto(tx *sql.Tx, id, title, sourceConversationID string, now time.Time) (*Conversation, error) {
+	if c == nil || c.db == nil {
+		return nil, errors.New("store: conversations requires a database")
+	}
+	result, err := tx.Exec(`INSERT INTO conversations (id, title, project_id, role_name, agent_mode, last_react_input, last_react_output, created_at, updated_at)
+ SELECT ?, ?, project_id, role_name, agent_mode, last_react_input, last_react_output, ?, ? FROM conversations WHERE id = ?`,
+		id, title, now, now, sourceConversationID)
+	if err != nil {
+		return nil, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n != 1 {
+		return nil, fmt.Errorf("原始对话不存在")
+	}
+	conv := &Conversation{ID: id, Title: title, CreatedAt: now, UpdatedAt: now}
+	if err := tx.QueryRow(`SELECT COALESCE(project_id,''), role_name, agent_mode FROM conversations WHERE id=?`, id).
+		Scan(&conv.ProjectID, &conv.RoleName, &conv.AgentMode); err != nil {
+		return nil, err
+	}
+	return conv, nil
 }

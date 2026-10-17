@@ -52,8 +52,10 @@ CREATE TABLE IF NOT EXISTS hitl_conversation_configs (
 
 	_, _ = s.db.Exec(`ALTER TABLE hitl_interrupts ADD COLUMN decided_by TEXT NOT NULL DEFAULT 'human'`)
 	_, _ = s.db.Exec(`ALTER TABLE hitl_interrupts ADD COLUMN reviewer TEXT NOT NULL DEFAULT 'human'`)
-	_, _ = s.db.Exec(`UPDATE hitl_interrupts SET reviewer='audit_agent'
-		WHERE COALESCE(decided_by, '') IN ('audit_agent', 'agent', 'ai')`)
+	if _, err := s.db.Exec(`UPDATE hitl_interrupts SET reviewer='audit_agent'
+		WHERE COALESCE(decided_by, '') IN ('audit_agent', 'agent', 'ai')`); err != nil {
+		return 0, fmt.Errorf("backfill hitl reviewers: %w", err)
+	}
 	_, _ = s.db.Exec(`ALTER TABLE hitl_conversation_configs ADD COLUMN reviewer TEXT NOT NULL DEFAULT 'human'`)
 
 	res, err := s.db.Exec(`UPDATE hitl_interrupts SET status='cancelled', decision='reject',
@@ -303,4 +305,26 @@ func (s *HITL) HasConversationConfig(conversationID string) (bool, error) {
 		return false, fmt.Errorf("check hitl conversation config: %w", err)
 	}
 	return true, nil
+}
+
+// CopyConversationConfigInto carries a conversation's approval policy onto a branch without copying its
+// live interrupts: a pending approval belongs to the run that raised it, and answering it from the
+// branch would resolve a channel that no longer exists. The table itself is created by the start-up
+// schema repair, but a database from before that has none, and copying a policy is not the place to
+// fail on it.
+func (s *HITL) CopyConversationConfigInto(tx *sql.Tx, destinationConversationID, sourceConversationID string, now time.Time) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	var present int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='hitl_conversation_configs'`).Scan(&present); err != nil {
+		return err
+	}
+	if present == 0 {
+		return nil
+	}
+	_, err := tx.Exec(`INSERT INTO hitl_conversation_configs (conversation_id, enabled, mode, reviewer, sensitive_tools, timeout_seconds, updated_at)
+            SELECT ?, enabled, mode, reviewer, sensitive_tools, timeout_seconds, ? FROM hitl_conversation_configs WHERE conversation_id=?`,
+		destinationConversationID, now, sourceConversationID)
+	return err
 }

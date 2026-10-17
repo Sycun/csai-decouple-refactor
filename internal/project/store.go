@@ -21,21 +21,40 @@ type Projects interface {
 	GetProjectStatsCounts(projectID string) (*store.ProjectStats, error)
 }
 
+// Findings is the slice of the findings domain the resume preview reads: how many vulnerabilities a
+// project carries and the most recent few, so a resumed turn starts from the current count instead of
+// from whatever the last summary happened to say. Read-only on purpose - the blackboard never writes a
+// finding, and a write would belong to the store that owns the table.
+type Findings interface {
+	CountAll(filter store.VulnerabilityListFilter) (int, error)
+	ListAll(limit, offset int, filter store.VulnerabilityListFilter) ([]*store.Vulnerability, error)
+}
+
+// Conversations answers the one question the checkpoint path may not skip: which project the
+// conversation is bound to right now. A summarization run carries the project ID it started with, and
+// writing working memory under a stale binding would put it in a project the conversation has left.
+type Conversations interface {
+	GetConversationProjectID(conversationID string) (string, error)
+}
+
 type Store struct {
 	Projects
+	Findings
+	Conversations
 	database.BlackboardLedger
 }
 
-// NewStore pairs the two providers a blackboard call needs: the project rows still belong to the
-// connection wrapper, the fact and edge ledger belongs to store.Facts. Embedding rather than nesting
-// is what keeps every call site in this package unchanged - db.GetProject and db.UpsertProjectFact
-// resolve to whichever half answers them, and the compiler reports the overlap instead of guessing.
-func NewStore(rows Projects, ledger database.BlackboardLedger) Store {
-	return Store{Projects: rows, BlackboardLedger: ledger}
+// NewStore pairs the providers a blackboard call needs: the project rows still belong to the
+// connection wrapper, the fact and edge ledger belongs to store.Facts, and the resume preview reads
+// the findings domain. Embedding rather than nesting is what keeps every call site in this package
+// unchanged - db.GetProject and db.UpsertProjectFact resolve to whichever half answers them, and the
+// compiler reports the overlap instead of guessing.
+func NewStore(rows Projects, ledger database.BlackboardLedger, findings Findings, conversations Conversations) Store {
+	return Store{Projects: rows, BlackboardLedger: ledger, Findings: findings, Conversations: conversations}
 }
 
 // Missing reports an unwired half. A store built with one nil side would answer the promoted methods
 // of the other and quietly skip a write, so the callers that can check refuse early.
 func (s Store) Missing() bool {
-	return s.Projects == nil || s.BlackboardLedger == nil
+	return s.Projects == nil || s.BlackboardLedger == nil || s.Findings == nil || s.Conversations == nil
 }

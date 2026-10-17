@@ -21,7 +21,9 @@ var factKeyPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`)
 
 // ValidateFactKey 校验事实 key（项目内唯一标识）。
 func ValidateFactKey(key string) error {
-	key = strings.TrimSpace(key)
+	if key != strings.TrimSpace(key) {
+		return fmt.Errorf("fact_key 不允许首尾空白")
+	}
 	if key == "" {
 		return fmt.Errorf("fact_key 不能为空")
 	}
@@ -53,11 +55,29 @@ type ProjectFact struct {
 
 // ProjectFactListFilter 事实列表筛选。
 type ProjectFactListFilter struct {
-	Category               string
-	Confidence             string
-	Search                 string
-	RelatedVulnerabilityID string
-	ExcludeDeprecated      bool // 为 true 时排除 confidence=deprecated
+	Category                   string
+	Confidence                 string
+	Search                     string
+	RelatedVulnerabilityID     string
+	ExcludeDeprecated          bool // 为 true 时排除 confidence=deprecated
+	RestrictContextCheckpoints bool // MCP defaults: hide other/unknown conversation checkpoints before pagination.
+	ContextConversationID      string
+	SourceConversationID       string // Optional provenance filter; it does not widen project or memory scope.
+}
+
+// ContextCheckpointKeyPrefix is reserved for system-generated working memory.
+const ContextCheckpointKeyPrefix = "note/context-"
+
+// IsContextCheckpointKey distinguishes working memory from ordinary shared facts.
+func IsContextCheckpointKey(key string) bool {
+	return strings.HasPrefix(strings.TrimSpace(key), ContextCheckpointKeyPrefix)
+}
+
+// Conversation scope affects only automatic working memory, never ordinary
+// project facts. Unknown origins require an explicit historical read.
+func ContextCheckpointVisible(f *ProjectFact, conversationID string, includeHistory bool) bool {
+	return f != nil && (!IsContextCheckpointKey(f.FactKey) || includeHistory ||
+		(strings.TrimSpace(conversationID) != "" && f.SourceConversationID == strings.TrimSpace(conversationID)))
 }
 
 // ProjectFactSparseRow is one fact's sparse-check input. It used to be an anonymous struct in the

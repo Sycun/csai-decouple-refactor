@@ -94,21 +94,46 @@ CREATE INDEX IF NOT EXISTS idx_project_facts_project_id ON project_facts(project
 	CREATE INDEX IF NOT EXISTS idx_project_fact_edges_source ON project_fact_edges(project_id, source_fact_key);
 	CREATE INDEX IF NOT EXISTS idx_project_fact_edges_target ON project_fact_edges(project_id, target_fact_key);`
 
-// factColumns is the read shape every fact query uses. body is COALESCEd because the column is
-// nullable and the console concatenates it; the two source ids and the finding link are COALESCEd too,
-// and the link is what the caller compares against "" to decide whether to emit the JSON key at all.
+// factColumns is the read shape the fact queries that return a body use. body is COALESCEd because
+// the column is nullable and the console concatenates it; the two source ids and the finding link are
+// COALESCEd too, and the link is what the caller compares against "" to decide whether to emit the
+// JSON key at all.
 const factColumns = `id, project_id, fact_key, category, summary, COALESCE(body,''), confidence,
 			COALESCE(source_conversation_id,''), COALESCE(source_message_id,''), pinned,
 			COALESCE(related_vulnerability_id,''), created_at, updated_at`
 
+// factIndexColumns is the blackboard index's projection: factColumns with the body left blank. The
+// index renders summaries only, and the resume supplement re-reads the few bodies it actually shows,
+// so selecting every body here would load rows the index never prints.
+const factIndexColumns = `id, project_id, fact_key, category, summary, '', confidence,
+			COALESCE(source_conversation_id,''), COALESCE(source_message_id,''), pinned,
+			COALESCE(related_vulnerability_id,''), created_at, updated_at`
+
+// Match strings.TrimSpace for legacy keys without migrating or rewriting them.
+const factKeyTrimCharacters = "\t\n\v\f\r \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+
+// contextCheckpointScopeSQL keeps one conversation's automatic working memory out of another's reads.
+// It is applied in the WHERE clause, before LIMIT/OFFSET, so a hidden checkpoint cannot survive as a
+// gap a page already counted. Ordinary shared facts are never scoped, and an unknown origin stays
+// hidden unless the caller names its own conversation.
+func contextCheckpointScopeSQL(conversationID string) (string, []interface{}) {
+	return " AND (substr(trim(fact_key, ?), 1, ?) != ? OR (source_conversation_id = ? AND ? != ''))",
+		[]interface{}{factKeyTrimCharacters, len(ContextCheckpointKeyPrefix), ContextCheckpointKeyPrefix, strings.TrimSpace(conversationID), strings.TrimSpace(conversationID)}
+}
+
 // ListForIndex 列出用于黑板索引注入的事实（不含 deprecated，除非 includeDeprecated）。
-func (s *Facts) ListProjectFactsForIndex(projectID string, includeDeprecated bool) ([]*ProjectFact, error) {
+func (s *Facts) ListProjectFactsForIndex(projectID string, includeDeprecated bool, conversationIDs ...string) ([]*ProjectFact, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
-	query := `SELECT ` + factColumns + `
+	query := `SELECT ` + factIndexColumns + `
 		FROM project_facts WHERE project_id = ?`
 	args := []interface{}{projectID}
+	if len(conversationIDs) > 0 {
+		clause, values := contextCheckpointScopeSQL(conversationIDs[0])
+		query += clause
+		args = append(args, values...)
+	}
 	if !includeDeprecated {
 		query += " AND confidence != 'deprecated'"
 	}
@@ -132,6 +157,15 @@ func (s *Facts) ListProjectFacts(projectID string, filter ProjectFactListFilter,
 	query := `SELECT ` + factColumns + `
 		FROM project_facts WHERE project_id = ?`
 	args := []interface{}{projectID}
+	if filter.RestrictContextCheckpoints {
+		clause, values := contextCheckpointScopeSQL(filter.ContextConversationID)
+		query += clause
+		args = append(args, values...)
+	}
+	if source := strings.TrimSpace(filter.SourceConversationID); source != "" {
+		query += " AND source_conversation_id = ?"
+		args = append(args, source)
+	}
 	if c := strings.TrimSpace(filter.Category); c != "" {
 		query += " AND category = ?"
 		args = append(args, c)
@@ -225,8 +259,16 @@ func (s *Facts) UpsertProjectFact(f *ProjectFact) (*ProjectFact, error) {
 	if err := s.requireDB(); err != nil {
 		return nil, err
 	}
-	if err := ValidateFactKey(f.FactKey); err != nil {
-		return nil, err
+	keyErr := ValidateFactKey(f.FactKey)
+	if keyErr != nil && (f.ID == "" || ValidateFactKey(strings.TrimSpace(f.FactKey)) != nil) {
+		return nil, keyErr
+	}
+	existing, err := s.GetProjectFactByKey(f.ProjectID, f.FactKey)
+	// Older versions accepted and stored padded keys. Preserve their exact
+	// identity when editing a loaded record, without allowing new padded keys
+	// or silently renaming historical evidence and its relationship references.
+	if keyErr != nil && (err != nil || existing == nil || existing.ID != f.ID) {
+		return nil, keyErr
 	}
 	if strings.TrimSpace(f.Category) == "" {
 		f.Category = "note"
@@ -236,7 +278,6 @@ func (s *Facts) UpsertProjectFact(f *ProjectFact) (*ProjectFact, error) {
 	}
 	now := time.Now()
 
-	existing, err := s.GetProjectFactByKey(f.ProjectID, f.FactKey)
 	if err == nil && existing != nil {
 		f.ID = existing.ID
 		f.CreatedAt = existing.CreatedAt
@@ -284,6 +325,42 @@ func (s *Facts) UpsertProjectFact(f *ProjectFact) (*ProjectFact, error) {
 		return nil, fmt.Errorf("创建事实失败: %w", err)
 	}
 	return f, nil
+}
+
+// SaveContextCheckpoint tests project binding in the same SQLite write statement,
+// so a concurrent conversation rebind cannot slip between a read and an upsert.
+func (s *Facts) SaveContextCheckpoint(f *ProjectFact) error {
+	if err := s.requireDB(); err != nil {
+		return err
+	}
+	if f == nil || !IsContextCheckpointKey(f.FactKey) || strings.TrimSpace(f.SourceConversationID) == "" {
+		return fmt.Errorf("invalid context checkpoint")
+	}
+	if err := ValidateFactKey(f.FactKey); err != nil {
+		return err
+	}
+	now := time.Now()
+	result, err := s.db.Exec(`INSERT INTO project_facts
+		(id, project_id, fact_key, category, summary, body, confidence, source_conversation_id, pinned, created_at, updated_at)
+		SELECT ?, ?, ?, 'note', ?, ?, 'tentative', ?, 0, ?, ?
+		WHERE EXISTS (SELECT 1 FROM conversations WHERE id = ? AND project_id = ?)
+		ON CONFLICT(project_id, fact_key) DO UPDATE SET
+		category = 'note', summary = excluded.summary, body = excluded.body,
+		confidence = 'tentative', source_conversation_id = excluded.source_conversation_id,
+		pinned = 0, updated_at = excluded.updated_at`,
+		uuid.New().String(), f.ProjectID, f.FactKey, f.Summary, f.Body, f.SourceConversationID,
+		now, now, f.SourceConversationID, f.ProjectID)
+	if err != nil {
+		return err
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if changed == 0 {
+		return fmt.Errorf("checkpoint project does not match current conversation binding")
+	}
+	return nil
 }
 
 // Deprecate 将事实标记为 deprecated（关联边同步 deprecated）。

@@ -108,6 +108,11 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 		}
 	}
 
+	resolvedMessage, resolveErr := h.retests.ResolvePlaceholders(conversationID, req.Message)
+	if resolveErr != nil {
+		return nil, fmt.Errorf("解析对话占位符失败: %w", resolveErr)
+	}
+	req.Message = resolvedMessage
 	finalMessage := req.Message
 	var roleTools []string
 	if webshellID != "" {
@@ -136,6 +141,7 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 			builtin.ToolRecordVulnerability,
 			builtin.ToolListVulnerabilities,
 			builtin.ToolGetVulnerability,
+			builtin.ToolUpdateVulnerabilityStatus,
 			builtin.ToolUpsertProjectFact,
 			builtin.ToolGetProjectFact,
 			builtin.ToolListProjectFacts,
@@ -154,6 +160,21 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 		}
 	}
 
+	retest, retestErr := h.retests.Get(conversationID)
+	if retestErr != nil {
+		return nil, fmt.Errorf("读取复测上下文失败: %w", retestErr)
+	}
+	if retest != nil && len(roleTools) > 0 {
+		// Retesting requires these tools even when the inherited role has an
+		// older tool allowlist. MCP still enforces user and finding permissions.
+		roleTools = append(append([]string(nil), roleTools...), builtin.ToolGetVulnerability, builtin.ToolUpdateVulnerabilityStatus)
+	}
+
+	finalMessage, resolveErr = h.retests.ResolvePlaceholders(conversationID, finalMessage)
+	if resolveErr != nil {
+		return nil, fmt.Errorf("解析提示词占位符失败: %w", resolveErr)
+	}
+
 	var savedPaths []string
 	if len(req.Attachments) > 0 {
 		var aerr error
@@ -169,6 +190,11 @@ func (h *AgentHandler) prepareMultiAgentSession(req *ChatRequest, c *gin.Context
 	if uerr != nil {
 		h.logger.Error("保存用户消息失败", zap.Error(uerr))
 		return nil, fmt.Errorf("保存用户消息失败: %w", uerr)
+	}
+	if retest != nil {
+		if err := h.retests.SetPrompt(conversationID, ""); err != nil {
+			h.logger.Warn("清除已发送复测提示词失败", zap.Error(err))
+		}
 	}
 	userMessageID := ""
 	if userMsgRow != nil {

@@ -115,6 +115,9 @@ test('Agent 审查不进入人工审批弹窗、倒计时和项目计数', () =>
     assert.match(handler, /reviewer != "audit_agent"[\s\S]{0,120}m\.pending\[id\] = p/);
     assert.match(hitlLifecycle, /ADD COLUMN reviewer TEXT NOT NULL DEFAULT 'human'/);
     assert.match(hitlStore, /status = 'pending' AND COALESCE\(reviewer,'human'\) = 'human'/);
+    // The column is declared a second time in the start-up schema definitions; both are asserted
+    // because a database repaired by either path has to end up with the same reviewer default.
+    assert.match(fs.readFileSync('internal/database/schemas/application.sql', 'utf8'), /reviewer TEXT NOT NULL DEFAULT 'human'/);
     assert.match(monitor, /function isAgentReviewedHitl\(data\)/);
     assert.match(monitor, /if \(!data\.resolved && !isAgentReviewedHitl\(data\)\)/);
     assert.match(monitor, /if \(!isAgentReviewedHitl\(data\)\) \{[\s\S]{0,240}bindHitlApprovalCountdown/);
@@ -299,9 +302,9 @@ test('多对话并发时释放隐藏主流且旧请求不能覆盖新对话状�
     assert.match(chat, /let loadConversationAbortController = null/);
     assert.match(chat, /cancelPendingConversationLoad\(\);[\s\S]{0,900}const conversationLoadController = new AbortController\(\)/);
     assert.match(chat, /signal: conversationLoadController\.signal/);
-    assert.match(template, /monitor\.js\?v=20260907-blocked-1/);
+    assert.match(template, /monitor\.js\?v=20261011-token-usage/);
     assert.match(template, /chat-scroll\.js\?v=20260815-1/);
-    assert.match(template, /chat\.js\?v=20260907-blocked-1/);
+    assert.match(template, /chat\.js\?v=[A-Za-z0-9._-]+/);
     assert.match(template, /style\.css\?v=[A-Za-z0-9._-]+/);
 });
 

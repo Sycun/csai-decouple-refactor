@@ -97,7 +97,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 
 	progress := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, sendEvent)
 	result, err := workflowrunner.RunRoleBoundWorkflow(taskCtx, workflowrunner.RunArgs{
-		DB:                 workflowrunner.Store{Store: projectStore(h.projects, h.facts), Ledger: h.runs},
+		DB:                 workflowrunner.Store{Store: projectStore(h.projects, h.facts, h.findings, h.conversations), Ledger: h.runs},
 		Logger:             h.logger,
 		Role:               role,
 		AppCfg:             h.config,
@@ -135,7 +135,7 @@ func (h *AgentHandler) runRoleWorkflowStreamIfBound(
 			sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 			return true
 		}
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(context.Cause(taskCtx), context.DeadlineExceeded) {
+		if taskDeadlineExceeded(taskCtx) {
 			taskStatus = "timeout"
 			h.tasks.UpdateTaskStatus(conversationID, taskStatus)
 			timeoutMsg := "任务执行超时，已自动终止。"
@@ -236,7 +236,7 @@ func (h *AgentHandler) runRoleWorkflowJSONIfBound(c *gin.Context, req *ChatReque
 
 	progress := h.createProgressCallback(taskCtx, cancelWithCause, conversationID, assistantMessageID, nil)
 	result, err := workflowrunner.RunRoleBoundWorkflow(taskCtx, workflowrunner.RunArgs{
-		DB:                 workflowrunner.Store{Store: projectStore(h.projects, h.facts), Ledger: h.runs},
+		DB:                 workflowrunner.Store{Store: projectStore(h.projects, h.facts, h.findings, h.conversations), Ledger: h.runs},
 		Logger:             h.logger,
 		Role:               role,
 		AppCfg:             h.config,

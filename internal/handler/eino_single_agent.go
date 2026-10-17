@@ -212,7 +212,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 			runCfg,
 			&runCfg.MultiAgent,
 			h.agent,
-			projectStore(h.projects, h.facts),
+			projectStore(h.projects, h.facts, h.findings, h.conversations),
 			h.logger,
 			conversationID,
 			h.conversationProjectID(conversationID),
@@ -319,7 +319,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 			return
 		}
 
-		if errors.Is(runErr, context.DeadlineExceeded) || errors.Is(context.Cause(taskCtx), context.DeadlineExceeded) {
+		if taskDeadlineExceeded(taskCtx) {
 			taskStatus = "timeout"
 			h.tasks.UpdateTaskStatus(conversationID, taskStatus)
 			timeoutMsg := "任务执行超时，已自动终止。"
@@ -465,7 +465,7 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 			runCfg,
 			&runCfg.MultiAgent,
 			h.agent,
-			projectStore(h.projects, h.facts),
+			projectStore(h.projects, h.facts, h.findings, h.conversations),
 			h.logger,
 			prep.ConversationID,
 			h.conversationProjectID(prep.ConversationID),

@@ -4323,6 +4323,17 @@ window.CSAI.capabilities = [
     "source": "builtin"
   },
   {
+    "id": "core.update_vulnerability_status",
+    "name": "update_vulnerability_status",
+    "title": "更新漏洞状态与复测结果",
+    "class": "mutating",
+    "runtime": "go-builtin",
+    "permission": "vulnerability:write",
+    "approval": "inherited",
+    "evidence": true,
+    "source": "builtin"
+  },
+  {
     "id": "core.upsert_project_fact",
     "name": "upsert_project_fact",
     "title": "写入项目事实",
@@ -4861,7 +4872,7 @@ window.CSAI.capabilities = [
   }
 ]
 ;
-window.CSAI.capabilityNames = ["amass","analyze_image","angr","api-schema-analyzer","arjun","arp-scan","batch_task_add_task","batch_task_create","batch_task_delete","batch_task_get","batch_task_list","batch_task_pause","batch_task_remove_task","batch_task_rerun","batch_task_schedule_enabled","batch_task_start","batch_task_update_metadata","batch_task_update_schedule","batch_task_update_task","binwalk","bloodhound","c2_event","c2_file","c2_listener","c2_payload","c2_profile","c2_session","c2_task","c2_task_manage","cancel_tool_execution","checkov","checksec","clair","cloudmapper","complete_asset_scan","create_asset","dalfox","delete_asset","deprecate_project_fact","dirsearch","dnsenum","dnslog","dotdotpwn","edit_file","enum4linux-ng","exec","execute","execute-python-script","exiftool","falco","feroxbuster","ffuf","fierce","fofa_search","foremost","fscan","gau","gdb","get_asset","get_project_fact","get_tool_execution","get_vulnerability","ghidra","glob","gobuster","graphql-scanner","grep","hashcat","hashpump","http-framework-test","hydra","impacket","install-python-package","jaeles","john","jwt-analyzer","katana","kube-bench","kube-hunter","libc-database","lightx","linpeas","list_knowledge_risk_types","list_project_facts","list_vulnerabilities","ls","manage_webshell_add","manage_webshell_delete","manage_webshell_list","manage_webshell_test","manage_webshell_update","masscan","mcp:external:execute","metasploit","msfvenom","nbtscan","netexec","nikto","nmap","nuclei","objdump","one-gadget","pacu","paramspider","prowler","pwninit","pwntools","quake_search","query_assets","query_execution_result","radare2","read_file","record_vulnerability","responder","restore_project_fact","ropgadget","ropper","rpcclient","rustscan","scout-suite","search_knowledge_base","search_project_facts","shodan_search","smbmap","sqlmap","steghide","strings","subfinder","terrascan","trivy","update_asset","upsert_project_fact","virustotal_search","volatility3","wafw00f","wait_tool_execution","waybackurls","webshell_exec","webshell_file_list","webshell_file_read","webshell_file_write","wpscan","write_file","x8","xsser","xxd","zap","zoomeye_search","zsteg"];
+window.CSAI.capabilityNames = ["amass","analyze_image","angr","api-schema-analyzer","arjun","arp-scan","batch_task_add_task","batch_task_create","batch_task_delete","batch_task_get","batch_task_list","batch_task_pause","batch_task_remove_task","batch_task_rerun","batch_task_schedule_enabled","batch_task_start","batch_task_update_metadata","batch_task_update_schedule","batch_task_update_task","binwalk","bloodhound","c2_event","c2_file","c2_listener","c2_payload","c2_profile","c2_session","c2_task","c2_task_manage","cancel_tool_execution","checkov","checksec","clair","cloudmapper","complete_asset_scan","create_asset","dalfox","delete_asset","deprecate_project_fact","dirsearch","dnsenum","dnslog","dotdotpwn","edit_file","enum4linux-ng","exec","execute","execute-python-script","exiftool","falco","feroxbuster","ffuf","fierce","fofa_search","foremost","fscan","gau","gdb","get_asset","get_project_fact","get_tool_execution","get_vulnerability","ghidra","glob","gobuster","graphql-scanner","grep","hashcat","hashpump","http-framework-test","hydra","impacket","install-python-package","jaeles","john","jwt-analyzer","katana","kube-bench","kube-hunter","libc-database","lightx","linpeas","list_knowledge_risk_types","list_project_facts","list_vulnerabilities","ls","manage_webshell_add","manage_webshell_delete","manage_webshell_list","manage_webshell_test","manage_webshell_update","masscan","mcp:external:execute","metasploit","msfvenom","nbtscan","netexec","nikto","nmap","nuclei","objdump","one-gadget","pacu","paramspider","prowler","pwninit","pwntools","quake_search","query_assets","query_execution_result","radare2","read_file","record_vulnerability","responder","restore_project_fact","ropgadget","ropper","rpcclient","rustscan","scout-suite","search_knowledge_base","search_project_facts","shodan_search","smbmap","sqlmap","steghide","strings","subfinder","terrascan","trivy","update_asset","update_vulnerability_status","upsert_project_fact","virustotal_search","volatility3","wafw00f","wait_tool_execution","waybackurls","webshell_exec","webshell_file_list","webshell_file_read","webshell_file_write","wpscan","write_file","x8","xsser","xxd","zap","zoomeye_search","zsteg"];
 window.CSAI.capabilityByName = function (name) {
   var list = window.CSAI.capabilities || [];
   for (var i = 0; i < list.length; i++) { if (list[i].name === name) return list[i]; }

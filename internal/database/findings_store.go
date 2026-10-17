@@ -14,7 +14,13 @@ import (
 // domain) and the asset risk cache belongs to assets. Neither is the findings store's to reach into,
 // and this is also where the logger for the best-effort cache refresh lives - the same logger that
 // did it when the SQL sat in this package.
+//
+// Nil-safe the way every sibling wrapper is: a handler built without a database gets a nil store and
+// can tell it has none, which is what the narrowed-storage wiring gate asserts.
 func NewFindings(db *DB) *store.Vulnerabilities {
+	if db == nil {
+		return nil
+	}
 	return store.NewVulnerabilities(db.DB, findingEffects{db: db})
 }
 

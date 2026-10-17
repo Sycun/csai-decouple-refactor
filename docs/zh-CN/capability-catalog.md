@@ -136,6 +136,7 @@
 | `core.terrascan` | `terrascan` | readonly | recipe:exec | agent:execute | never | fs.read(workspace), process.exec(terrascan) |
 | `core.trivy` | `trivy` | readonly | recipe:exec | agent:execute | never | fs.read(workspace), process.exec(trivy) |
 | `core.update_asset` | `update_asset` | mutating | go-builtin | asset:write | inherited | — |
+| `core.update_vulnerability_status` | `update_vulnerability_status` | mutating | go-builtin | vulnerability:write | inherited | — |
 | `core.upsert_project_fact` | `upsert_project_fact` | mutating | go-builtin | project:write | inherited | — |
 | `core.virustotal_search` | `virustotal_search` | readonly | recipe:exec | agent:execute | never | net.connect(target), process.exec(python3) |
 | `core.volatility3` | `volatility3` | readonly | recipe:exec | agent:execute | never | fs.read(workspace), process.exec(volatility3) |
