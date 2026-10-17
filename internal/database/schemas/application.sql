@@ -232,6 +232,15 @@ CREATE TABLE c2_tasks (
     FOREIGN KEY (session_id) REFERENCES c2_sessions(id) ON DELETE CASCADE
 );
 
+-- Capability-market tables: this line's own, upstream has neither. A unit's on/off state and the
+-- record of which bundle installed it live here, so a restart can tell "declared" from "running".
+CREATE TABLE capability_unit_switches (
+    unit_id TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    enabled INTEGER NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE chat_upload_artifacts (
     relative_path TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,
@@ -280,6 +289,13 @@ CREATE TABLE hitl_interrupts (
     created_at DATETIME NOT NULL,
     decided_at DATETIME,
     decided_by TEXT NOT NULL DEFAULT 'human'
+);
+
+CREATE TABLE installed_bundles (
+    bundle_id TEXT PRIMARY KEY,
+    version TEXT NOT NULL,
+    units TEXT,
+    installed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE knowledge_retrieval_logs (
