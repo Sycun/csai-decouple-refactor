@@ -6628,6 +6628,13 @@
                     <small class="form-hint" data-i18n="roleModal.userPromptHint">此提示词会追加到用户消息前，用于指导AI的行为。注意：这不会修改系统提示词。</small>
                 </div>
                 <div class="form-group">
+                    <label for="role-ai-channel" data-i18n="roleModal.aiChannel">模型通道</label>
+                    <select id="role-ai-channel" class="role-form-select-native">
+                        <option value="" data-i18n="roleModal.noAIChannelBind">跟随默认通道</option>
+                    </select>
+                    <small class="form-hint" data-i18n="roleModal.aiChannelHint">为该角色指定专用模型通道；留空则跟随全局默认通道。对话页手动选择的通道优先于此处。</small>
+                </div>
+                <div class="form-group">
                     <label for="role-workflow-id" data-i18n="roleModal.bindWorkflow">绑定工作流</label>
                     <select id="role-workflow-id" class="role-form-select-native">
                         <option value="" data-i18n="roleModal.noWorkflowBind">不绑定工作流</option>

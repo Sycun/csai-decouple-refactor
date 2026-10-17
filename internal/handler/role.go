@@ -316,6 +316,9 @@ func (h *RoleHandler) writeRoleFile(role config.RoleConfig) error {
 	if strings.TrimSpace(role.Name) == "" {
 		return fmt.Errorf("角色名称不能为空")
 	}
+	// Stored canonical so the file holds a real ai.channels key. Both create and update funnel
+	// through here, which is why the normalisation lives in the writer rather than in each handler.
+	role.AIChannel = normalizeRoleAIChannel(role.AIChannel)
 
 	roleData, err := yaml.Marshal(&role)
 	if err != nil {

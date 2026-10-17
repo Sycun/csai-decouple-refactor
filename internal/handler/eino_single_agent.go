@@ -114,7 +114,7 @@ func (h *AgentHandler) EinoSingleAgentLoopStream(c *gin.Context) {
 		sendEvent("done", "", map[string]interface{}{"conversationId": conversationID})
 		return
 	}
-	runCfg, resolvedAIChannelID, err := h.configForAIChannel(req.AIChannelID)
+	runCfg, resolvedAIChannelID, err := h.configForAIChannel(req.AIChannelID, req.Role)
 	if err != nil {
 		taskStatus = "failed"
 		h.tasks.UpdateTaskStatus(conversationID, taskStatus)
@@ -445,7 +445,7 @@ func (h *AgentHandler) EinoSingleAgentLoop(c *gin.Context) {
 		respond(http.StatusInternalServerError, gin.H{"error": "服务器配置未加载"})
 		return
 	}
-	runCfg, _, err := h.configForAIChannel(req.AIChannelID)
+	runCfg, _, err := h.configForAIChannel(req.AIChannelID, req.Role)
 	if err != nil {
 		respond(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

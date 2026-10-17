@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,6 +64,9 @@ func LoadManifest(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("resolve bundle manifest %s: %w", path, err)
 	}
 	path = abs
+	if err := confineSource(filepath.Dir(path), path); err != nil {
+		return nil, fmt.Errorf("bundle manifest: %w", err)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read bundle manifest: %w", err)
@@ -128,6 +132,9 @@ func (m *Manifest) Resolve() (*Bundle, error) {
 		if err != nil {
 			return nil, fmt.Errorf("bundle %s: unit path %q is not usable: %w", b.ID, du.Path, err)
 		}
+		if err := confineSource(m.dir, abs); err != nil {
+			return nil, fmt.Errorf("bundle %s: unit path %q: %w", b.ID, du.Path, err)
+		}
 		info, err := os.Stat(abs)
 		if err != nil {
 			return nil, fmt.Errorf("bundle %s: unit %s path %q: %w", b.ID, kind, du.Path, err)
@@ -143,6 +150,19 @@ func (m *Manifest) Resolve() (*Bundle, error) {
 		}
 		if kind == KindSkill {
 			if _, err := skillpackage.ResolveSKILLPath(abs); err != nil {
+				return nil, fmt.Errorf("bundle %s: skill unit %q: %w", b.ID, du.Path, err)
+			}
+			// WalkDir does not follow links, so check their targets explicitly, including
+			// SKILL.md and resource directories the runtime can read later.
+			if err := filepath.WalkDir(abs, func(path string, entry fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if entry.Type()&os.ModeSymlink != 0 {
+					return confineSource(m.dir, path)
+				}
+				return nil
+			}); err != nil {
 				return nil, fmt.Errorf("bundle %s: skill unit %q: %w", b.ID, du.Path, err)
 			}
 		}
@@ -170,6 +190,24 @@ func (m *Manifest) Resolve() (*Bundle, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+// confineSource checks real filesystem targets, not just lexical path prefixes.
+// Keep the original path in the unit so declaration layout and unit identity remain stable.
+func confineSource(root, source string) error {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	realSource, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(realRoot, realSource)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("source %q resolves outside bundle directory", source)
+	}
+	return nil
 }
 
 // nameFromPath derives the capability name from its source file, the same rule the shipped

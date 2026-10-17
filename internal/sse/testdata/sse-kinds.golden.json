@@ -360,7 +360,7 @@
     {
       "Name": "done",
       "File": "internal/handler/agent.go",
-      "Line": 1467,
+      "Line": 1466,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -409,7 +409,7 @@
     {
       "Name": "eino_agent_reply_stream_delta",
       "File": "internal/handler/agent.go",
-      "Line": 1566,
+      "Line": 1565,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -423,7 +423,7 @@
     {
       "Name": "eino_agent_reply_stream_end",
       "File": "internal/handler/agent.go",
-      "Line": 1394,
+      "Line": 1393,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -437,7 +437,7 @@
     {
       "Name": "eino_agent_reply_stream_start",
       "File": "internal/handler/agent.go",
-      "Line": 1565,
+      "Line": 1564,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -507,7 +507,7 @@
     {
       "Name": "eino_trace_end",
       "File": "internal/handler/agent.go",
-      "Line": 1563,
+      "Line": 1562,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -521,7 +521,7 @@
     {
       "Name": "eino_trace_error",
       "File": "internal/handler/agent.go",
-      "Line": 1564,
+      "Line": 1563,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -535,7 +535,7 @@
     {
       "Name": "eino_trace_run",
       "File": "internal/handler/agent.go",
-      "Line": 1561,
+      "Line": 1560,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -549,7 +549,7 @@
     {
       "Name": "eino_trace_start",
       "File": "internal/handler/agent.go",
-      "Line": 1562,
+      "Line": 1561,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -710,14 +710,14 @@
     {
       "Name": "model_output_rejected",
       "File": "internal/handler/agent.go",
-      "Line": 968,
+      "Line": 967,
       "Mode": "handled",
       "Stream": "agent"
     },
     {
       "Name": "progress",
       "File": "internal/handler/agent.go",
-      "Line": 970,
+      "Line": 969,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -787,7 +787,7 @@
     {
       "Name": "reasoning_chain",
       "File": "internal/handler/agent.go",
-      "Line": 1535,
+      "Line": 1534,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -801,7 +801,7 @@
     {
       "Name": "reasoning_chain_stream_delta",
       "File": "internal/handler/agent.go",
-      "Line": 1503,
+      "Line": 1502,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -815,7 +815,7 @@
     {
       "Name": "reasoning_chain_stream_end",
       "File": "internal/handler/agent.go",
-      "Line": 1474,
+      "Line": 1473,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -829,7 +829,7 @@
     {
       "Name": "reasoning_chain_stream_start",
       "File": "internal/handler/agent.go",
-      "Line": 1481,
+      "Line": 1480,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -843,7 +843,7 @@
     {
       "Name": "response",
       "File": "internal/handler/agent.go",
-      "Line": 1462,
+      "Line": 1461,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -885,7 +885,7 @@
     {
       "Name": "response_delta",
       "File": "internal/handler/agent.go",
-      "Line": 1430,
+      "Line": 1429,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -906,7 +906,7 @@
     {
       "Name": "response_start",
       "File": "internal/handler/agent.go",
-      "Line": 1405,
+      "Line": 1404,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -927,35 +927,35 @@
     {
       "Name": "thinking",
       "File": "internal/handler/agent.go",
-      "Line": 1535,
+      "Line": 1534,
       "Mode": "handled",
       "Stream": "agent"
     },
     {
       "Name": "thinking_stream_delta",
       "File": "internal/handler/agent.go",
-      "Line": 1503,
+      "Line": 1502,
       "Mode": "handled",
       "Stream": "agent"
     },
     {
       "Name": "thinking_stream_end",
       "File": "internal/handler/agent.go",
-      "Line": 1474,
+      "Line": 1473,
       "Mode": "handled",
       "Stream": "agent"
     },
     {
       "Name": "thinking_stream_start",
       "File": "internal/handler/agent.go",
-      "Line": 1481,
+      "Line": 1480,
       "Mode": "handled",
       "Stream": "agent"
     },
     {
       "Name": "tool_call",
       "File": "internal/handler/agent.go",
-      "Line": 1163,
+      "Line": 1162,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -976,7 +976,7 @@
     {
       "Name": "tool_result",
       "File": "internal/handler/agent.go",
-      "Line": 1163,
+      "Line": 1162,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -997,7 +997,7 @@
     {
       "Name": "tool_result_delta",
       "File": "internal/handler/agent.go",
-      "Line": 1185,
+      "Line": 1184,
       "Mode": "handled",
       "Stream": "agent"
     },
@@ -1310,7 +1310,7 @@
     {
       "Name": "eino_agent_reply",
       "File": "handler/agent.go",
-      "Line": 1398,
+      "Line": 1397,
       "Mode": "literal",
       "Stream": "detail"
     },
@@ -1324,14 +1324,14 @@
     {
       "Name": "eino_empty_response_continue",
       "File": "handler/agent.go",
-      "Line": 1578,
+      "Line": 1577,
       "Mode": "forwarded",
       "Stream": "agent"
     },
     {
       "Name": "error",
       "File": "handler/agent.go",
-      "Line": 763,
+      "Line": 762,
       "Mode": "literal",
       "Stream": "detail"
     },
@@ -1373,7 +1373,7 @@
     {
       "Name": "finalization_auto_continue",
       "File": "handler/agent.go",
-      "Line": 1578,
+      "Line": 1577,
       "Mode": "forwarded",
       "Stream": "agent"
     },
@@ -1401,14 +1401,14 @@
     {
       "Name": "finalization_pending_tools_cancelled",
       "File": "handler/agent.go",
-      "Line": 1578,
+      "Line": 1577,
       "Mode": "forwarded",
       "Stream": "agent"
     },
     {
       "Name": "knowledge_retrieval",
       "File": "handler/agent.go",
-      "Line": 1346,
+      "Line": 1345,
       "Mode": "literal",
       "Stream": "detail"
     },
@@ -1422,14 +1422,14 @@
     {
       "Name": "planning",
       "File": "handler/agent.go",
-      "Line": 1099,
+      "Line": 1098,
       "Mode": "literal",
       "Stream": "detail"
     },
     {
       "Name": "thinking",
       "File": "handler/agent.go",
-      "Line": 1145,
+      "Line": 1144,
       "Mode": "local",
       "Stream": "detail"
     },
@@ -1485,7 +1485,7 @@
     {
       "Name": "user_interrupt_continue",
       "File": "handler/agent.go",
-      "Line": 1578,
+      "Line": 1577,
       "Mode": "forwarded",
       "Stream": "agent"
     }

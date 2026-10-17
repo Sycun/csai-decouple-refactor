@@ -23,11 +23,17 @@ const (
 // ordinary MCP tools. This keeps the agent loop native: the model calls a tool,
 // receives a bounded result, and may call wait_tool_execution again if needed.
 func RegisterExecutionControlTools(server *Server, external *ExternalMCPManager) {
-	if server == nil {
+	RegisterExecutionControlToolsInto(server, server, external)
+}
+
+// RegisterExecutionControlToolsInto collects definitions in target while keeping execution
+// lookups and cancellation bound to the live server during a staged directory rebuild.
+func RegisterExecutionControlToolsInto(target, server *Server, external *ExternalMCPManager) {
+	if target == nil || server == nil {
 		return
 	}
 
-	server.RegisterTool(Tool{
+	target.RegisterTool(Tool{
 		Name:             builtin.ToolGetToolExecution,
 		Description:      "查询后台工具 execution 的当前状态、结果和错误。用于外部 MCP 工具等待超时后，凭 execution_id 继续查看进度。",
 		ShortDescription: "查询后台工具执行状态",
@@ -52,7 +58,7 @@ func RegisterExecutionControlTools(server *Server, external *ExternalMCPManager)
 		return textToolResult(formatExecutionForModel(exec, executionFormatOptionsFromArgs(args)), false), nil
 	})
 
-	server.RegisterTool(Tool{
+	target.RegisterTool(Tool{
 		Name:             builtin.ToolWaitToolExecution,
 		Description:      "继续等待一个后台工具 execution 完成。每次等待都有 timeout_seconds 上限；若仍未完成，会返回当前状态，模型可稍后再次调用。",
 		ShortDescription: "有界等待后台工具执行",
@@ -86,7 +92,7 @@ func RegisterExecutionControlTools(server *Server, external *ExternalMCPManager)
 		return textToolResult(body, false), nil
 	})
 
-	server.RegisterTool(Tool{
+	target.RegisterTool(Tool{
 		Name:             builtin.ToolCancelToolExecution,
 		Description:      "取消一个后台工具 execution。用于外部 MCP 工具长时间运行、误调用或用户要求停止时。",
 		ShortDescription: "取消后台工具执行",

@@ -687,20 +687,43 @@ func openAPIComponents() map[string]interface{} {
 						"type":        "boolean",
 						"description": "是否启用",
 					},
-					"systemPrompt": map[string]interface{}{
+					"user_prompt": map[string]interface{}{
 						"type":        "string",
-						"description": "系统提示词",
+						"description": "用户提示词（追加到用户消息前）",
 					},
-					"userPrompt": map[string]interface{}{
+					"icon": map[string]interface{}{
 						"type":        "string",
-						"description": "用户提示词",
+						"description": "角色图标（emoji）",
 					},
 					"tools": map[string]interface{}{
 						"type":        "array",
-						"description": "工具列表",
+						"description": "工具列表；缺省表示使用 MCP 管理中已开启的全部工具",
 						"items": map[string]interface{}{
 							"type": "string",
 						},
+					},
+					"mcps": map[string]interface{}{
+						"type":        "array",
+						"description": "已废弃：关联的 MCP 服务器列表，请改用 tools",
+						"items": map[string]interface{}{
+							"type": "string",
+						},
+					},
+					"ai_channel": map[string]interface{}{
+						"type":        "string",
+						"description": "角色专用 AI 通道 ID（ai.channels 的键）；空表示跟随 ai.default_channel。对话请求显式指定的 aiChannelId 优先于此",
+					},
+					"workflow_id": map[string]interface{}{
+						"type":        "string",
+						"description": "绑定的工作流 ID",
+					},
+					"workflow_version": map[string]interface{}{
+						"type":        "string",
+						"description": "latest 或具体版本号；空等同 latest",
+					},
+					"workflow_policy": map[string]interface{}{
+						"type":        "string",
+						"description": "auto | off；空且 workflow_id 非空时按 auto",
 					},
 				},
 			},

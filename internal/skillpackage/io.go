@@ -33,6 +33,42 @@ func SafeRelPath(root, rel string) (string, error) {
 	if err != nil || relOut == ".." || strings.HasPrefix(relOut, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path escapes skill directory: %q", rel)
 	}
+	// Writes may create a new file or parent directories. Check the nearest existing
+	// ancestor as well as existing files so an in-package link cannot redirect them outside.
+	absoluteRoot, err := filepath.Abs(cleanRoot)
+	if err != nil {
+		return "", err
+	}
+	realRoot, err := filepath.EvalSymlinks(absoluteRoot)
+	if err != nil {
+		return "", err
+	}
+	ancestor, err := filepath.Abs(cleanAbs)
+	if err != nil {
+		return "", err
+	}
+	for {
+		realAncestor, resolveErr := filepath.EvalSymlinks(ancestor)
+		if resolveErr == nil {
+			realRel, err := filepath.Rel(realRoot, realAncestor)
+			if err != nil || realRel == ".." || strings.HasPrefix(realRel, ".."+string(filepath.Separator)) {
+				return "", fmt.Errorf("path resolves outside skill directory: %q", rel)
+			}
+			break
+		}
+		if !os.IsNotExist(resolveErr) {
+			return "", resolveErr
+		}
+		if _, statErr := os.Lstat(ancestor); statErr == nil {
+			// A dangling link is not a safe parent for a future write.
+			return "", resolveErr
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", resolveErr
+		}
+		ancestor = parent
+	}
 	return cleanAbs, nil
 }
 

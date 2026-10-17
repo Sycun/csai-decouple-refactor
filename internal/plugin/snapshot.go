@@ -2,12 +2,11 @@ package plugin
 
 import (
 	"fmt"
-	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // PreviousDirName is the directory under the bundles root where the install path keeps one copy
@@ -18,6 +17,9 @@ import (
 // every directory scanner in this package skips hidden entries, so a snapshot can never be read
 // as a shippable pack (the catalogue, the boot scan and the install endpoint all stay away).
 const PreviousDirName = ".previous"
+
+// Serialise replacement and listing of version slots and live pack directories.
+var snapshotMu sync.RWMutex
 
 // PreviousDirFor names the per-bundle snapshot parent inside one bundles root.
 func PreviousDirFor(root, bundleID string) (string, error) {
@@ -42,17 +44,38 @@ func PreviousVersionDir(root, bundleID, version string) (string, error) {
 	if !usableLayoutName(version) {
 		return "", fmt.Errorf("能力包 %s 的版本 %q 不能用作快照目录名", bundleID, version)
 	}
-	return filepath.Join(dir, version), nil
+	dest := filepath.Join(dir, version)
+	base, err := os.OpenRoot(root)
+	if err != nil {
+		return "", err
+	}
+	defer base.Close()
+	if err := rejectSnapshotLayoutLinks(base, filepath.Join(PreviousDirName, strings.TrimSpace(bundleID), version)); err != nil {
+		return "", err
+	}
+	_, err = base.Stat(filepath.Join(PreviousDirName, strings.TrimSpace(bundleID), version))
+	if err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("快照路径不安全: %w", err)
+	}
+	return dest, nil
 }
 
 // PreviousVersions lists the snapshot versions available for one bundle, sorted so the console
 // renders the same list twice.
 func PreviousVersions(root, bundleID string) []string {
-	dir, err := PreviousDirFor(root, bundleID)
+	snapshotMu.RLock()
+	defer snapshotMu.RUnlock()
+	parent, err := openSnapshotParent(root, bundleID, false)
 	if err != nil {
 		return nil
 	}
-	entries, err := os.ReadDir(dir)
+	defer parent.Close()
+	f, err := parent.Open(".")
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	entries, err := f.ReadDir(-1)
 	if err != nil {
 		return nil
 	}
@@ -76,54 +99,114 @@ func PreviousVersions(root, bundleID string) []string {
 // .previous is refused rather than followed, because the recursion has no meaning and silently
 // accepting it would fill the disk with nested copies.
 func SnapshotBundle(root, bundleID, version, srcDir string) (string, error) {
+	snapshotMu.Lock()
+	defer snapshotMu.Unlock()
 	dest, err := PreviousVersionDir(root, bundleID, version)
 	if err != nil {
 		return "", err
 	}
-	srcAbs, err := filepath.Abs(srcDir)
+	base, err := os.OpenRoot(root)
 	if err != nil {
-		return "", fmt.Errorf("解析能力包目录失败: %w", err)
+		return "", err
 	}
-	prevRoot, err := filepath.Abs(filepath.Join(root, PreviousDirName))
+	defer base.Close()
+	rel, err := livePackRel(root, srcDir)
 	if err != nil {
-		return "", fmt.Errorf("解析快照根目录失败: %w", err)
+		return "", err
 	}
-	if rel, relErr := filepath.Rel(prevRoot, srcAbs); relErr == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("拒绝把快照目录 %s 再快照一次", srcDir)
+	source, err := base.OpenRoot(rel)
+	if err != nil {
+		return "", fmt.Errorf("能力包目录不可用: %w", err)
 	}
-	if info, statErr := os.Stat(srcAbs); statErr != nil || !info.IsDir() {
-		return "", fmt.Errorf("能力包目录不可用: %s", srcDir)
+	defer source.Close()
+	parent, err := openSnapshotParent(root, bundleID, true)
+	if err != nil {
+		return "", err
 	}
-	// Replace, don't merge: a stale same-version snapshot with files the new one lacks would
-	// make a rollback restore something that was never installed.
-	if err := os.RemoveAll(dest); err != nil {
-		return "", fmt.Errorf("清理旧快照失败: %w", err)
+	defer parent.Close()
+	stage, err := tempDirectory(parent, ".snapshot-")
+	if err != nil {
+		return "", err
 	}
-	if err := os.MkdirAll(dest, 0o750); err != nil {
-		return "", fmt.Errorf("创建快照目录失败: %w", err)
+	defer parent.RemoveAll(stage)
+	target, err := parent.OpenRoot(stage)
+	if err != nil {
+		return "", err
 	}
-	if _, err := copyTree(srcAbs, dest); err != nil {
-		return "", fmt.Errorf("快照能力包失败: %w", err)
+	_, copyErr := copyTree(source, target)
+	target.Close()
+	if copyErr != nil {
+		return "", fmt.Errorf("快照能力包失败: %w", copyErr)
+	}
+	if err := replaceDirectory(parent, stage, strings.TrimSpace(version)); err != nil {
+		return "", err
 	}
 	return dest, nil
 }
 
-// RestoreBundle copies a snapshot back over the live pack directory. Files the snapshot contains
-// are overwritten; files it does not contain are left alone, the same way unplugging never deletes
-// the operator's files - a rollback replaces what the pack ships, not everything in the directory.
+// RestoreBundle prepares a complete replacement, preserving operator files absent from the
+// snapshot. Copy failures leave the live directory intact; rename failures restore its backup.
 func RestoreBundle(root, bundleID, version, destDir string) (int, error) {
-	snap, err := PreviousVersionDir(root, bundleID, version)
+	snapshotMu.Lock()
+	defer snapshotMu.Unlock()
+	if _, err := PreviousVersionDir(root, bundleID, version); err != nil {
+		return 0, err
+	}
+	snapParent, err := openSnapshotParent(root, bundleID, false)
 	if err != nil {
 		return 0, err
 	}
-	info, err := os.Stat(snap)
-	if err != nil || !info.IsDir() {
-		return 0, fmt.Errorf("能力包 %s 没有版本 %s 的快照", bundleID, version)
+	defer snapParent.Close()
+	source, err := snapParent.OpenRoot(strings.TrimSpace(version))
+	if err != nil {
+		return 0, fmt.Errorf("能力包 %s 没有版本 %s 的可用快照: %w", bundleID, version, err)
 	}
-	if strings.TrimSpace(destDir) == "" {
-		return 0, fmt.Errorf("能力包 %s 的目标目录为空", bundleID)
+	defer source.Close()
+	rel, err := livePackRel(root, destDir)
+	if err != nil {
+		return 0, err
 	}
-	return copyTree(snap, destDir)
+	base, err := os.OpenRoot(root)
+	if err != nil {
+		return 0, err
+	}
+	defer base.Close()
+	if err := base.MkdirAll(filepath.Dir(rel), 0o750); err != nil {
+		return 0, err
+	}
+	parent, err := base.OpenRoot(filepath.Dir(rel))
+	if err != nil {
+		return 0, err
+	}
+	defer parent.Close()
+	name := filepath.Base(rel)
+	stage, err := tempDirectory(parent, ".restore-")
+	if err != nil {
+		return 0, err
+	}
+	defer parent.RemoveAll(stage)
+	target, err := parent.OpenRoot(stage)
+	if err != nil {
+		return 0, err
+	}
+	defer target.Close()
+	if live, err := parent.OpenRoot(name); err == nil {
+		_, copyErr := copyTree(live, target)
+		live.Close()
+		if copyErr != nil {
+			return 0, fmt.Errorf("保留现有能力包文件失败: %w", copyErr)
+		}
+	} else if !os.IsNotExist(err) {
+		return 0, err
+	}
+	files, err := copyTree(source, target)
+	if err != nil {
+		return 0, fmt.Errorf("准备回滚文件失败: %w", err)
+	}
+	if err := replaceDirectory(parent, stage, name); err != nil {
+		return 0, err
+	}
+	return files, nil
 }
 
 // usableLayoutName reports whether a string can be one directory name inside the snapshot
@@ -142,74 +225,4 @@ func usableLayoutName(name string) bool {
 		return false
 	}
 	return true
-}
-
-// copyTree copies regular files, directories and symlinks from src to dst, preserving the file
-// mode (a plugin binary's executable bit is part of what makes the pack work). Anything else
-// (device, socket) is refused: a pack that ships one is not something a snapshot can faithfully
-// reproduce, and pretending otherwise would restore a different thing than was installed.
-func copyTree(src, dst string) (int, error) {
-	files := 0
-	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, relErr := filepath.Rel(src, path)
-		if relErr != nil {
-			return relErr
-		}
-		target := filepath.Join(dst, rel)
-		info, infoErr := d.Info()
-		if infoErr != nil {
-			return infoErr
-		}
-		switch {
-		case info.Mode()&fs.ModeSymlink != 0:
-			link, linkErr := os.Readlink(path)
-			if linkErr != nil {
-				return linkErr
-			}
-			_ = os.Remove(target)
-			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
-				return err
-			}
-			return os.Symlink(link, target)
-		case info.IsDir():
-			return os.MkdirAll(target, info.Mode().Perm()|0o700)
-		case info.Mode().IsRegular():
-			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
-				return err
-			}
-			if err := copyFile(path, target, info.Mode().Perm()); err != nil {
-				return err
-			}
-			files++
-			return nil
-		default:
-			return fmt.Errorf("不支持的条目类型: %s", path)
-		}
-	})
-	return files, err
-}
-
-func copyFile(src, dst string, mode os.FileMode) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode|0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return err
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	// OpenFile applies the mode only on create; an overwrite keeps the old mode, so set it again
-	// or a rollback could restore a binary without its executable bit.
-	return os.Chmod(dst, mode)
 }

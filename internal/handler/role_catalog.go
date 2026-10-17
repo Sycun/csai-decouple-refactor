@@ -165,13 +165,18 @@ func (h *RoleHandler) publishRoles() (int, error) {
 	return published, nil
 }
 
-// Reload rescans the built-in directory and republishes. Assembly calls it once at start-up;
-// the install/unplug path calls it so a bundle's roles land without a restart.
+// Publish rebuilds the catalog from the current table without reintroducing detached units
+// or replacing operator switches with the directory scanner's defaults.
+func (h *RoleHandler) Publish() (int, error) {
+	return h.publishRoles()
+}
+
+// Reload scans built-in files at startup and publishes the initial catalog.
 func (h *RoleHandler) Reload() (int, error) {
 	if err := h.scanRoles(); err != nil {
 		return 0, err
 	}
-	return h.publishRoles()
+	return h.Publish()
 }
 
 // bundleOwnedRole reports whether a role identity comes from an installed bundle, which is how

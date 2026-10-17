@@ -4109,7 +4109,11 @@
     "workflowPolicyOff": "关闭",
     "noWorkflowBind": "不绑定工作流",
     "workflowDisabledSuffix": "（已禁用）",
-    "workflowMissing": "不存在或不可用"
+    "workflowMissing": "不存在或不可用",
+    "aiChannel": "模型通道",
+    "aiChannelHint": "为该角色指定专用模型通道；留空则跟随全局默认通道。对话页手动选择的通道优先于此处。",
+    "noAIChannelBind": "跟随默认通道",
+    "aiChannelMissing": "不存在或不可用"
   },
   "workflows": {
     "title": "工作流",

@@ -442,21 +442,20 @@ type ChatRequest struct {
 	Orchestration string `json:"orchestration,omitempty"`
 }
 
-func (h *AgentHandler) configForAIChannel(channelID string) (*config.Config, string, error) {
+// configForAIChannel resolves the configuration one run executes with.
+//
+// roleName is what makes a role's own model binding take effect: when the caller did not name
+// a channel for this session, the role's ai_channel decides, and only then does the global
+// default apply. See role_model.go for the precedence and for why an explicit choice wins.
+func (h *AgentHandler) configForAIChannel(channelID, roleName string) (*config.Config, string, error) {
 	if h == nil || h.config == nil {
 		return nil, "", fmt.Errorf("服务器配置未加载")
 	}
 	live := currentConfig(h.config)
-	oa, resolvedID, ok := live.ResolveAIChannel(channelID)
-	if !ok {
-		return nil, resolvedID, fmt.Errorf("AI 通道不存在: %s", resolvedID)
+	if live == nil {
+		return nil, "", fmt.Errorf("服务器配置未加载")
 	}
-	// Cloned from the live snapshot, not from the boot config: everything downstream of this
-	// (sub-agent role bindings, tool sets a bundle adds) reads the copy, so this one line is
-	// what makes a plugged-in capability reach a run without a restart.
-	cfgCopy := *live
-	cfgCopy.OpenAI = oa
-	return &cfgCopy, resolvedID, nil
+	return resolveRunConfig(live, channelID, roleName, h.logger)
 }
 
 func chatReasoningToClientIntent(r *ChatReasoningRequest) *reasoning.ClientIntent {

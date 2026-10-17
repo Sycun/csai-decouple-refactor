@@ -123,7 +123,9 @@ its own assembly code.
   contains `KEY`, `TOKEN`, `SECRET` or `PASSWORD` is refused outright.
 - Egress: the child only receives the host-side CONNECT proxy address. What actually gets
   allowed is **manifest `grants` ∩ the operator-approved `(host, ports, method, valid_minutes)`
-  tuples**, and an empty approved set denies everything. Neither a store artifact nor the
+  tuples**, and an empty approved set denies everything. HTTP redirects are returned to the
+  caller so each subsequent request is checked again; default ports are 80 for HTTP and 443
+  for HTTPS. Closing the proxy also closes established CONNECT tunnels. Neither a store artifact nor the
   plugin can widen that set.
 - Unconfigured means refused: with `plugin_host.enabled: false`, a capability declaring a
   plugin runtime fails at execution rather than falling back to running the recipe in-process.
@@ -315,8 +317,17 @@ one identity scheme and one live table:
   `snapshot_error`, and no snapshot means no rollback button. Installed unit rows carry the
   install-time digest, the publisher and a `revoked` mark that uses the execution path's own
   `CheckProvenance` match; `GET /api/plugins` also carries the `revocations` view (source plus
-  entry counts) and each bundle's `rollbacks`. All of it is read-only: none of it changes what may
-  run.
+  entry counts) and each bundle's `rollbacks`. These status fields are read-only and do not change
+  what may run.
+  Plugin mutations are serialised across preflight, files, runtime provisioning, persistence and
+  catalog publication; state reads wait for an in-flight mutation. Rollback validates selection
+  and ownership before copying. Snapshot and restore prepare complete temporary trees first:
+  copy failures retain the old snapshot or live files, and failed publication attempts to restore
+  the backup. Restore preserves operator files absent from the snapshot. Snapshot storage
+  directories refuse symlinks. Copies use `os.Root`
+  to confine reads and writes, refuse escaping links and make internal absolute links relative
+  for relocation. These guarantees do not constitute a durable transaction across the database
+  and filesystem or automatic recovery from a crash between the two renames.
 - **Picking units one by one** (2026-10-08): a pack is a way to ship units together, not a rule that
   they must be installed together. `POST /api/plugins/install` takes an optional `units` list (e.g.
   `["skill/sink-driven-audit"]`) which is the **desired state** of that pack: units newly listed go
@@ -412,9 +423,11 @@ one identity scheme and one live table:
   table: `ToolLayer.Rebuild()` (a collaborator on `ConfigHandler.Tools`) is now the single rebuild entry for the recipe list and
   performs the same three steps `/config/apply` always performed - read paths from the table (fall
   back to the directory scan when the table holds no tool units), rebuild the recipe capability
-  layer, then `ClearTools` and re-register the whole tool surface. Install/unplug/switch trigger it
-  only when a tool unit is involved, because `ClearTools` wipes every built-in tool too, and the
-  sequence is serialised so one rebuild's `ClearTools` cannot land inside another's window. Two
+  layer, then register the complete tool surface in a temporary MCP directory. `ReplaceTools`
+  publishes it in one lock acquisition only after every registrar succeeds; failures retain the
+  previous served directory and return an error. Execution control handlers stay bound to the
+  live runtime, retaining execution state and non-tool resources. Install/unplug/switch trigger it
+  only when a tool unit is involved. Two
   rules are pinned by tests rather than prose: the live state is `file enabled AND table enabled`
   (a unit's default-true flag treated as an override would silently switch on recipes whose YAML
   says `enabled: false`), and the `PUT /config` loop that persists each tool's `enabled` back into
