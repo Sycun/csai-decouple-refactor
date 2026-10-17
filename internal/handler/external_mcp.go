@@ -74,12 +74,13 @@ func (h *ExternalMCPHandler) GetExternalMCPs(c *gin.Context) {
 	result := make(map[string]ExternalMCPResponse)
 	for name, cfg := range configs {
 		client, exists := h.manager.GetClient(name)
-		status := "disconnected"
+		// No client means the server is not running: it was never started (boot no longer starts
+		// anything) or a stop or the idle reap ended it. That is its own state - reporting
+		// "disconnected" here would read as a connection that once existed.
+		status := "stopped"
 		if exists {
 			status = client.GetStatus()
-		} else if h.isEnabled(cfg) {
-			status = "disconnected"
-		} else {
+		} else if !h.isEnabled(cfg) {
 			status = "disabled"
 		}
 
@@ -115,12 +116,10 @@ func (h *ExternalMCPHandler) GetExternalMCP(c *gin.Context) {
 	}
 
 	client, clientExists := h.manager.GetClient(name)
-	status := "disconnected"
+	status := "stopped"
 	if clientExists {
 		status = client.GetStatus()
-	} else if h.isEnabled(cfg) {
-		status = "disconnected"
-	} else {
+	} else if !h.isEnabled(cfg) {
 		status = "disabled"
 	}
 
@@ -436,6 +435,9 @@ func (h *ExternalMCPHandler) saveConfig() error {
 	if err := writeYAMLDocument(h.configPath, root); err != nil {
 		return fmt.Errorf("保存配置文件失败: %w", err)
 	}
+
+	// 与 ConfigHandler.saveConfig 同一个口径：文件写成功即为一次生效，同一份配置发布进活快照。
+	mirrorLiveConfig(h.config)
 
 	h.logger.Info("配置已保存", zap.String("path", h.configPath))
 	return nil

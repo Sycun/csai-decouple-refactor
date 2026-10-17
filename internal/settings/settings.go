@@ -75,6 +75,49 @@ func (s *Store) UpdateHitl(mutate func(hitl *config.HitlConfig)) {
 	s.Update(func(cfg *config.Config) { mutate(&cfg.Hitl) })
 }
 
+// MirrorFrom republishes the file-backed configuration a settings save just wrote, so readers of
+// the snapshot see the change without a restart. The copy is deliberate: the caller keeps writing
+// into its own object after the save returns, so no container the snapshot hands out may be one
+// that writer can still mutate.
+//
+// Two sections are kept from the current snapshot rather than copied from src: Roles (published by
+// the role catalog) and Hitl (published by the HITL writers). Neither has a file writer on this
+// path, so src still carries its boot-time copy - copying it back would silently undo the hot-plug
+// the snapshot exists for.
+func (s *Store) MirrorFrom(src *config.Config) {
+	if src == nil {
+		return
+	}
+	s.Update(func(live *config.Config) {
+		roles, hitl := live.Roles, live.Hitl
+		next := *src
+		next.Roles = roles
+		next.Hitl = hitl
+		next.Security.Tools = append([]config.ToolConfig(nil), src.Security.Tools...)
+		next.AI.Channels = cloneMap(src.AI.Channels)
+		next.Storage.Categories = cloneMap(src.Storage.Categories)
+		next.ExternalMCP.Servers = cloneExternalMCPServers(src.ExternalMCP.Servers)
+		if src.ToolGuard != nil {
+			guard := *src.ToolGuard
+			next.ToolGuard = &guard
+		}
+		*live = next
+	})
+}
+
+// cloneExternalMCPServers copies the outer map and the per-server maps a settings write mutates
+// in place (tool enable switches are written entry by entry).
+func cloneExternalMCPServers(in map[string]config.ExternalMCPServerConfig) map[string]config.ExternalMCPServerConfig {
+	out := cloneMap(in)
+	for name, srv := range out {
+		srv.Env = cloneMap(srv.Env)
+		srv.Headers = cloneMap(srv.Headers)
+		srv.ToolEnabled = cloneMap(srv.ToolEnabled)
+		out[name] = srv
+	}
+	return out
+}
+
 // clone copies the config by value and duplicates every field the process writes
 // at runtime. Assignment-only fields are already safe after a value copy; the
 // slices and pointers below are the known runtime-write surface, and sharing one

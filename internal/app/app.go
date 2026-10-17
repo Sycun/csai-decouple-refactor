@@ -274,8 +274,15 @@ func New(cfg *config.Config, log *logger.Logger, configPath string) (*App, error
 	mcp.RegisterExecutionControlTools(mcpServer, externalMCPMgr)
 	if cfg.ExternalMCP.Servers != nil {
 		externalMCPMgr.LoadConfigs(&cfg.ExternalMCP)
-		// 启动所有启用的外部MCP客户端
-		externalMCPMgr.StartAllEnabled()
+	}
+	// 外部 MCP 一律不在开机时启动。两个事实同一个规则：运行一个进程是操作员的动作（能力包
+	// 声明的服务器已是「开关才启动」，配置文件声明的走同一条规则，激活在 MCP 页），而只有
+	// 正在运行的服务器其工具才进入对话（在线才可见，没在跑的一台不占 token）。声明与运行
+	// 就此分离；无人调用的服务器由空闲回收兜底（见 externalMCPMgr.ConfigureIdleTimeout）。
+	idleTimeout := externalMCPMgr.ConfigureIdleTimeout(cfg.ExternalMCP.IdleTimeoutSeconds)
+	if n := len(cfg.ExternalMCP.Servers); n > 0 {
+		log.Logger.Info("外部 MCP 服务器已登记但均未启动（在 MCP 页显式启动；闲置自动回收）",
+			zap.Int("servers", n), zap.Duration("idle_timeout", idleTimeout))
 	}
 
 	execReconciler := monitor.NewExecutionReconciler(db, mcpServer, externalMCPMgr, log.Logger)

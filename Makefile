@@ -124,6 +124,11 @@ wiring-check:
 	$(GO) test -count=1 -run 'TestBootDeclaresPackServers' ./internal/app/
 	$(GO) test -count=1 -run 'TestPackDeclaration|TestReloadKeepsPackServers|TestOperatorSideWrites' ./internal/mcp/
 	$(GO) test -count=1 -run 'TestPackMCPDeclaration|TestLoadMCPDeclaration|TestExternalMCPPageCannotMutate|TestUninstallDoesNotRemove|TestPluginConsoleReportsAShadowed' ./internal/handler/
+	## 外部 MCP 生命周期（在线才可见）：开机/保存/应用配置都不启动；只有运行中的服务器工具进对话；
+	## 空闲回收不改 enable 标志、不被自愈重连拉回、有调用在途时推迟；列表把"未运行"报成 stopped 而非 disconnected
+	$(GO) test -count=1 -run 'TestBootLeavesEveryDeclaredServerStopped' ./internal/app/
+	$(GO) test -count=1 -run 'TestReapIdle|TestReapedServerIsNotReconnected|TestGetAllToolsCoversRunning|TestConfigureIdleTimeout|TestMarkUsedStamps|TestHasActiveExecutionWithToolPrefix' ./internal/mcp/
+	$(GO) test -count=1 -run 'TestExternalMCPListDistinguishesStoppedFromDisabled' ./internal/handler/
 	## 单元开关的持久化：只落"停用"、启动后按源路径复核、过期行清理；包声明的 MCP 开关如实说明重启回到停用
 	$(GO) test -count=1 ./internal/store/ -run 'TestSwitch|TestForget'
 	$(GO) test -count=1 -run 'TestPersistedSwitches|TestPersistedSwitchOn|TestStaleSwitchRows|TestSwitchStoreAccepts|TestAssembly' ./internal/app/
